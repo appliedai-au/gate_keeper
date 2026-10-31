@@ -7,8 +7,8 @@ const selection=process.env.GK_MODEL_PROVIDER||"default";
 console.log(JSON.stringify({
   executionRuntime:"TrueForge",
   connectionPolicy:"trueforge-first",
-  activeRoute:selection==="trueforge"?"trueforge-managed":selection==="deepseek"?"trueforge-configured-deepseek":selection==="default"?"agent-manifest":"invalid",
-  selectedModel:chosen||"agent/agent.json default",
+  activeRoute:selectionError?"blocked":selection==="trueforge"?"trueforge-managed":selection==="deepseek"?"trueforge-configured-deepseek":selection==="default"?"agent-manifest":"invalid",
+  selectedModel:selectionError?null:(chosen||"agent/agent.json default"),
   selectionError,
   credentialsExposedToGateKeeper:false,
   providers:{
