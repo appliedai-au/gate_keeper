@@ -74,9 +74,13 @@ test("DeepSeek official models and endpoint",()=>{
 test("DeepSeek routing requires TrueForge-confirmed names",()=>{
  assert.equal(resolveTrueForgeModel({}),undefined);
  assert.throws(()=>resolveTrueForgeModel({GK_MODEL_PROVIDER:"deepseek"}),/configured TrueForge model/);
+ assert.throws(()=>resolveTrueForgeModel({GK_MODEL_PROVIDER:"deepseek",
+  GK_TRUEFORGE_DEEPSEEK_ECONOMY_MODEL:"custom/deepseek-flash"}),/source-sharing approval/);
  assert.equal(resolveTrueForgeModel({GK_MODEL_PROVIDER:"deepseek",
+  GK_DEEPSEEK_CODE_SHARING_APPROVED:"1",
   GK_TRUEFORGE_DEEPSEEK_ECONOMY_MODEL:"custom/deepseek-flash"}),"custom/deepseek-flash");
  assert.equal(resolveTrueForgeModel({GK_MODEL_PROVIDER:"deepseek",GK_MODEL_TIER:"advanced",
+  GK_DEEPSEEK_CODE_SHARING_APPROVED:"1",
   GK_TRUEFORGE_DEEPSEEK_ADVANCED_MODEL:"custom/deepseek-v4-pro"}),"custom/deepseek-v4-pro");
  assert.throws(()=>resolveTrueForgeModel({GK_MODEL_PROVIDER:"chatgpt"}),/unapproved model provider/);
 });
