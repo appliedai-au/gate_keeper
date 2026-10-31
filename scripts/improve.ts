@@ -1,14 +1,9 @@
-// npm run improve [-- --run NN] [-- --coach] [-- --no-commit]
-//
-// The agent reads what went wrong in a run and rewrites its own instructions and skill.
-//   1. Takes the run's failed tasks (never the holdout ones) with the scorer's feedback.
-//   2. Opens a TrueForge session with the agent itself (or, with --coach, an inline coach agent on the same model)
-//      and asks it for new versions of agent/instructions.md and agent/skills/*/SKILL.md.
-//   3. Writes the files and commits them with the trailer "Agent-Session: <session_id>".
-// You review the commit (git show) and keep it or drop it (git reset --hard HEAD~1). You don't edit it.
+// Candidate-only TrueForge learning. Never write to active agent/ or publish private
+// evaluation transcripts. Promotion requires an independent signed qualification.
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname, join, normalize } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { validateCandidate, candidateDigest } from "./learning-policy.mjs";
+import { join, normalize } from "node:path";
 import type { TaskScore } from "../evals/score.ts";
 import {
   client,
@@ -140,7 +135,7 @@ for (const t of loadTasks()) {
   const quotes = [t.id, t.filename, ...t.expected.map((e) => t.code[e.line - 1].trim()).filter((l) => l.length >= 16)];
   for (const f of files) for (const q of quotes) if (f.text.includes(q)) leaks.push(`${f.path} quotes "${q}"`);
 }
-if (leaks.length && !flag("allow-leaks")) die(`The change quotes the eval tasks, so it would overfit:\n  ${leaks.join("\n  ")}\nRun improve again (or pass --allow-leaks to keep it anyway).`);
+if (leaks.length) die(`The change quotes the eval tasks, so it would overfit:\n  ${leaks.join("\n  ")}\nRun improve again; leakage is not overridable.`);
 
 for (const f of files.filter((f) => f.path.endsWith("/SKILL.md"))) {
   if (!/^---\n[\s\S]*?\bname:[\s\S]*?\bdescription:[\s\S]*?\n---\n/.test(f.text) || f.text.split("\n").length < 6) {
@@ -152,26 +147,19 @@ if (newInstructions && !newInstructions.text.includes('"findings"')) {
   die("The new instructions.md dropped the JSON output format the scorer needs. Run improve again.");
 }
 
-// ---------- write and commit ----------
-
-for (const f of files) {
-  mkdirSync(dirname(join(ROOT, f.path)), { recursive: true });
-  writeFileSync(join(ROOT, f.path), f.text);
-}
+// ---------- immutable private candidate, no active mutation ----------
+const candidateFiles = validateCandidate(files, instructions);
+const digest = candidateDigest(candidateFiles, instructions);
+writeJson(join(dir, "candidate.json"), {
+  schema: "gate-keeper-learning-candidate-v1",
+  source_commit: git("rev-parse", "HEAD"),
+  from_run: nn,
+  trueforge_session_id: session.id,
+  digest,
+  learned,
+  files: candidateFiles,
+  promotion: "BLOCKED_PENDING_INDEPENDENT_QUALIFICATION",
+});
 writeJson(join(dir, "improve-session.json"), await exportSession(tf, session.id));
-
-if (isClean("agent")) {
-  console.log("The agent sent back its files unchanged. Nothing to commit.");
-  process.exit(0);
-}
-console.log(git("diff", "--stat", "--", "agent"));
-
-const message = `agent: learn from run ${nn}\n\n${learned || "(no summary given)"}\n\nAgent-Session: ${session.id}`;
-if (flag("no-commit")) {
-  console.log(`\nFiles written, not committed. To commit:\n  git add agent runs && git commit -F- <<'EOF'\n${message}\nEOF`);
-} else {
-  git("add", "agent", join(dir, "improve-session.json"));
-  git("commit", "-q", "-m", message);
-  console.log(`\n✓ Committed the agent's change (Agent-Session: ${session.id}).`);
-  console.log("  Review it: git show    Drop it: git reset --hard HEAD~1    Then: npm run run-evals");
-}
+console.log("Candidate staged privately (" + digest + "); active agent and repository unchanged.");
+console.log("Independent holdout, signed verdict and reviewed promotion PR are required.");
