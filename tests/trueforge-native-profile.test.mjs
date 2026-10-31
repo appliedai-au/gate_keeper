@@ -26,7 +26,7 @@ test("native profile uses TrueForge sandbox and subagents, never a bespoke coord
   assert.equal(manifest.config.iteration_limit,50);
   assert.equal(manifest.mcp_servers.length,1);
   assert.deepEqual(manifest.mcp_servers[0].enable_tools,["@read-only"]);
-  assert.deepEqual(manifest.mcp_servers[0].require_approval_for_tools,["@all"]);
+  assert.deepEqual(manifest.mcp_servers[0].require_approval_for_tools,["@write","@destructive"]);
   assert.equal(manifest.mcp_servers[0].preload,false);
   assert.match(manifest.instructions,/second coordinator service/i);
   assert.match(manifest.instructions,/Architect/);
