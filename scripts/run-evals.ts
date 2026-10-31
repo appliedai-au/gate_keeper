@@ -1,14 +1,9 @@
-// npm run run-evals [-- --no-commit] [-- --allow-dirty]
-//
-// One run = one TrueForge session. Each task in evals/tasks/ is one root turn in that session
-// (so tasks don't see each other). Then:
-//   runs/run-NN/results.json   the agent's reply and score for each task
-//   runs/run-NN/score.json     the run score and per-task details
-//   runs/run-NN/session.json   the whole session, exported from TrueForge
-//   runs/summary.csv           one new row
-// and a commit "run NN: score X" (skip with --no-commit).
+// TrueForge manual evaluation: private results only, never automatic promotion.
+// Running evaluations requires an explicit operator authorisation; this alone
+// does not impose a hard provider spending limit.
 
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync, openSync, closeSync, unlinkSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { scoreRun, scoreTask } from "../evals/score.ts";
 import {
@@ -25,6 +20,9 @@ import {
   runTurn,
   sessionStats,
   SUMMARY_CSV,
+  PRIVATE_ROOT,
+  TASKS_DIR,
+  ROOT,
   syncAgent,
   taskPrompt,
   writeJson,
@@ -32,7 +30,22 @@ import {
 
 const HEADER = "run,session_id,agent_commit,score,date_utc,tasks_passed,tasks_total,tokens,tool_calls,duration_s";
 
-// 1. The agent and the eval must be committed, so agent_commit says exactly what ran.
+if(process.env.GATE_KEEPER_EVAL_AUTHORIZED!=="1") die("EVAL_NOT_AUTHORIZED: explicit model-evaluation approval required");
+const benchmarkFiles=readdirSync(TASKS_DIR).filter(x=>x.endsWith(".json")).sort();
+const benchmarkHash=createHash("sha256");
+for(const file of benchmarkFiles) {
+  benchmarkHash.update(file);
+  benchmarkHash.update(readFileSync(join(TASKS_DIR,file)));
+}
+benchmarkHash.update(readFileSync(join(ROOT,"evals","score.ts")));
+const benchmarkSha256=benchmarkHash.digest("hex");
+if(process.env.GK_FROZEN_BENCHMARK_SHA256 && process.env.GK_FROZEN_BENCHMARK_SHA256!==benchmarkSha256) die("Frozen benchmark identity mismatch");
+const benchmarkFrozen=process.env.GK_FROZEN_BENCHMARK_SHA256===benchmarkSha256;
+let lockFD:number;
+try {lockFD=openSync(join(PRIVATE_ROOT,"eval.lock"),"wx",0o600);}
+catch {die("Evaluation already active or unreconciled");}
+try {
+// 1. The agent and evaluation must be committed for reproducibility.
 if (!isClean("agent", "evals") && !flag("allow-dirty")) {
   die("agent/ or evals/ has uncommitted changes. Commit them first, so agent_commit points at what ran.");
 }
@@ -66,7 +79,7 @@ for (const task of tasks) {
   const turn = await runTurn(tf, session.id, taskPrompt(task));
   const scored = scoreTask(task, turn.text);
   results.push({ ...scored, turn_id: turn.turnId, status: turn.status, error: turn.error, reply: turn.text });
-  console.log(`${turn.status === "done" ? "" : `[${turn.status}${turn.error ? `: ${turn.error}` : ""}] `}${scored.score.toFixed(2)}${scored.passed ? "  pass" : ""}`);
+  console.log(`${turn.status === "done" ? "" : `[${turn.status}] `}${scored.score.toFixed(2)}${scored.passed ? "  pass" : ""}`);
 }
 const durationS = Math.round((Date.now() - started) / 1000);
 const total = scoreRun(results);
@@ -75,7 +88,9 @@ const total = scoreRun(results);
 const exp = await exportSession(tf, session.id);
 const stats = sessionStats(exp);
 writeJson(join(dir, "results.json"), results);
-writeJson(join(dir, "score.json"), { run, session_id: session.id, agent_commit: agentCommit, ...total, ...stats, duration_s: durationS });
+writeJson(join(dir, "score.json"), { run, session_id: session.id, agent_commit: agentCommit,
+  benchmark_sha256: benchmarkSha256, qualification: benchmarkFrozen ? "benchmark_frozen_only" : "unqualified",
+  ...total, ...stats, duration_s: durationS });
 writeJson(join(dir, "session.json"), exp);
 
 const date = new Date().toISOString().replace(/\.\d+Z$/, "Z");
@@ -86,9 +101,6 @@ appendFileSync(
 
 console.log(`\nRun ${nn} score: ${total.score} (${total.tasks_passed}/${total.tasks_total} tasks passed, ${stats.tokens} tokens)`);
 
-// 6. Commit the run, so git history reads: run 1 → agent change → run N.
-if (!flag("no-commit")) {
-  git("add", "runs");
-  git("commit", "-q", "-m", `run ${nn}: score ${total.score}`, "-m", `TrueForge session: ${session.id}\nagent_commit: ${agentCommit}`);
-  console.log(`✓ Committed ${dir.replace(/.*\/runs\//, "runs/")}. Next: npm run improve`);
-}
+// No raw TrueForge transcripts, tasks or learning state may enter this public repository.
+console.log("Private evaluation saved. No independent qualification or promotion.");
+} finally {closeSync(lockFD);unlinkSync(join(PRIVATE_ROOT,"eval.lock"));}
