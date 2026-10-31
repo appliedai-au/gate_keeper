@@ -97,7 +97,7 @@ async function login(){
     const callback=new Promise((resolve,reject)=>{
       const timeout=setTimeout(()=>reject(Error("authorization expired")),180000);
       timeout.unref();
-      server.once("request",(req,res)=>{
+      const onCallback=(req,res)=>{
         try{
           if(req.method!=="GET"||req.headers.host!=="127.0.0.1:"+addr.port)
             throw Error("wrong callback host");
@@ -105,13 +105,16 @@ async function login(){
           const verified=verifyCallback({callbackUrl:url.toString(),attempt});
           res.writeHead(200,{"Content-Type":"text/plain; charset=utf-8","Cache-Control":"no-store"});
           res.end("Gate Keeper authorization received. Return to the terminal.");
-          clearTimeout(timeout);resolve(verified);
+          clearTimeout(timeout);
+          server.off("request",onCallback);
+          resolve(verified);
         }catch(err){
           res.writeHead(400,{"Content-Type":"text/plain","Cache-Control":"no-store"});
           res.end("Authorization rejected.");
-          // Wrong callbacks must NOT terminate the intended pending request.
+          // Wrong callbacks must NOT consume the legitimate pending attempt.
         }
-      });
+      };
+      server.on("request",onCallback);
     });
     console.log("Open this URL in your local browser to authorise Gate Keeper:");
     console.log(attempt.url); // only state/nonce/PKCE challenge; no tokens or secrets
