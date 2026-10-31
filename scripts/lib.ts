@@ -10,6 +10,8 @@ import { dirname, join, resolve, relative, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TrueForge, TrueForgeApi } from "@truefoundry/trueforge-sdk";
 import { verifyBudgetLease } from "./learning-trust.mjs";
+import { resolveTrueForgeModel } from "./providers/registry.mjs";
+import { requireNoOAuthFallback } from "./providers/runtime-policy.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const AGENT_DIR = join(ROOT, "agent");
@@ -185,9 +187,20 @@ export interface SkillFile {
 }
 
 export function readAgent(): { agent: AgentFile; instructions: string; skills: SkillFile[] } {
+  // Selecting a user-owned ChatGPT OAuth account must NEVER silently fall back
+  // to the shared hosted Claude/DeepSeek provider while the adapter is absent.
+  requireNoOAuthFallback();
   const agent = JSON.parse(readFileSync(join(AGENT_DIR, "agent.json"), "utf8")) as AgentFile;
   if (process.env.TF_AGENT_NAME) agent.name = process.env.TF_AGENT_NAME;
+  if (process.env.TF_MODEL && process.env.GK_MODEL_PROVIDER && process.env.GK_MODEL_PROVIDER!=="default")
+    throw new Error("MODEL_CONFIG_REJECTED: TF_MODEL conflicts with provider routing");
   if (process.env.TF_MODEL) agent.model = { ...agent.model, name: process.env.TF_MODEL };
+  const routed = resolveTrueForgeModel();
+  if (routed) {
+    // Provider-specific parameters vary: do not forward Claude's temperature
+    // default to DeepSeek reasoning models.
+    agent.model = { name: routed };
+  }
   const instructions = readFileSync(join(AGENT_DIR, "instructions.md"), "utf8");
   const skillsDir = join(AGENT_DIR, "skills");
   const skills: SkillFile[] = [];
@@ -249,6 +262,13 @@ export function buildManifest(gitRef?: string): TrueForgeApi.AgentSpec {
  */
 export async function syncAgent(tf: TrueForge, gitRef: string): Promise<TrueForgeApi.Agent> {
   const { agent, skills } = readAgent();
+  // setup.ts is not the only caller. Verify a managed selection against the
+  // actual TrueForge catalog BEFORE mutating skills or agent records.
+  if (process.env.GK_MODEL_PROVIDER==="trueforge") {
+    const { data: models } = await tf.models.list();
+    if (!models.some(m=>m.name===agent.model.name))
+      throw new Error("MODEL_CONFIG_REJECTED: managed model not available in TrueForge; agent sync held");
+  }
   if ((agent.skill_mode ?? "inline") === "git") {
     if (!env.repoUrl) die("skill_mode is \"git\": set SKILL_REPO_URL in .env to your public GitHub repo URL.");
     const { data: caps } = await tf.server.getCapabilities();
