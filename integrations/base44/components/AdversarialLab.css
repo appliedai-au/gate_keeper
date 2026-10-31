@@ -81,7 +81,7 @@
 .al-mission-id span {font:750 9px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.1em;color:#6e8a92}
 .al-mission-id strong {font:650 11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#bed1d2}
 .al-timeline {display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin:42px 0 42px}
-.al-timestep {text-align:left;display:grid;grid-template-columns:auto 1fr;column-gap:10px;align-items:center;position:relative;background:transparent;border:0;color:#778c98;padding:0 0 19px;font:700 12px!important}
+.al-timestep {text-align:left;display:grid;grid-template-columns:auto 1fr;column-gap:10px;align-items:center;position:relative;background:transparent;border:0;color:#778c98;padding:0 0 19px;font-size:12px!important;font-weight:700!important}
 .al-timestep:after {position:absolute;content:"";height:2px;background:#344955;bottom:0;left:0;right:0}
 .al-step-title {white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .al-stage-left {min-width:0}
@@ -179,7 +179,7 @@
 .al-manifesto-foot {display:flex;justify-content:space-between;align-items:end;gap:20px;border-top:1px solid #6d954b;padding-top:19px}
 .al-manifesto-foot>span {font:750 10px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em}
 .al-manifesto-foot>div {display:flex;gap:18px;flex-wrap:wrap}
-.al-manifesto-foot button {border:1px solid #385c31;background:transparent;color:#19351f;padding:10px 13px;border-radius:6px;font:750 11px!important}
+.al-manifesto-foot button {border:1px solid #385c31;background:transparent;color:#19351f;padding:10px 13px;border-radius:6px;font-size:11px!important;font-weight:750!important}
 .al-manifesto-foot button:hover {background:#c4ed77}
 @media(max-width:1250px){
   .al-hero-grid {grid-template-columns:minmax(0,1fr) 330px;min-height:530px}
