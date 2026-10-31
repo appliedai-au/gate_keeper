@@ -90,4 +90,7 @@ test("TrueForge-native instructions retain the entire repair and learning loop",
  assert.match(instructions,/unseen.*holdouts/i);
  assert.match(instructions,/never use synthetic fixture results as proof/i);
  assert.match(instructions,/No human in the loop/);
+ for(const status of ["HELD","REVIEWED","CANDIDATE","REVERTED","QUALIFIED"]){
+  assert.match(instructions,new RegExp(status+" \\("),"distinct terminal status "+status+" required");
+ }
 });
