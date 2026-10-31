@@ -1,0 +1,15 @@
+# Disposable Gate Keeper source-only qualification. No TrueForge service,
+# database, model key, Git credentials, or network-capable agent executes here.
+FROM node:24.19.0-bookworm-slim
+WORKDIR /src
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --no-audit --no-fund
+COPY scripts ./scripts
+COPY evals ./evals
+COPY tests ./tests
+COPY agent ./agent
+RUN npm run typecheck && npm run score -- --selftest && npm run test:learning-policy
+RUN adduser --disabled-password --gecos '' --uid 10001 verifier
+USER verifier
+# Keep the isolated qualification container observable after its build-time tests.
+CMD ["node","-e","console.log('Gate Keeper source-only qualification image complete');setInterval(()=>{},60000)"]
