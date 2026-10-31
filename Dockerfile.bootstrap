@@ -1,0 +1,12 @@
+# A separate one-shot process for Gate Keeper model and agent registration.
+FROM node:24.19.0-bookworm-slim
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --no-audit --no-fund
+COPY agent ./agent
+COPY evals ./evals
+COPY scripts ./scripts
+RUN npm run typecheck && npm run score -- --selftest
+ENV NODE_ENV=production
+USER node
+CMD ["node", "scripts/bootstrap.mjs"]

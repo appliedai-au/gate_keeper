@@ -1,9 +1,11 @@
 {
-  "name": "code-reviewer",
-  "description": "Reviews a small code change and lists the real problems in it, as JSON.",
+  "name": "gate-keeper",
+  "description": "Read-only code review agent: identifies concrete problems in proposed code changes, without executing repairs or accessing production systems.",
   "model": {
     "name": "anthropic/claude-sonnet-4-6",
-    "params": { "temperature": 0 }
+    "params": {
+      "temperature": 0
+    }
   },
   "skill_mode": "inline"
 }
