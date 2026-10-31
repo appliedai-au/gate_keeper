@@ -42,6 +42,29 @@ npm run connect:chatgpt -- login <existing_client_id>
 
 The command stores individual account records under `~/.config/gate-keeper/chatgpt-oauth/` using owner-only permissions. Multiple authorised registrations can be stored without exposing the tokens in the status output.
 
+### Each user connects their own account
+
+Gate Keeper **does not have a global ChatGPT account**. Each person running the local OSS client signs in separately with their own ChatGPT identity and authorises their own ChatGPT-plan access. No user's credentials or quotas are shared with another user.
+
+To preselect an intended email address without hardcoding it into GitHub, run:
+
+```bash
+npm run connect:chatgpt -- login --email your-own-account@example.com
+npm run connect:chatgpt -- status
+```
+
+The email value is **only a sign-in selection check**. Gate Keeper verifies the OpenAI-signed ID token and requires the returned email to match the optional hint; account security identity remains the OIDC issuer, subject and registered client ID. The email alone never authorises model access. You can also omit `--email` and choose your account in OpenAI's browser dialog.
+
+If this local OS user has several ChatGPT registrations, switch between them explicitly:
+
+```bash
+npm run connect:chatgpt -- select <issued_client_id>
+```
+
+The active selection is saved in an owner-private `active.json` file containing only an account reference and a **ChatGPT-OAuth-only, no-fallback** policy. It does not contain tokens. Each local user home has a separate account store, and tokens remain bound to their verified registration and host. A shared or hosted Gate Keeper instance needs additional tenant/user/session isolation; the local filesystem is **not** a multi-tenant credential broker.
+
+**No silent fallback:** If ChatGPT-plan permission is declined, tokens expire, or the approved TrueForge OAuth inference bridge is unavailable, the ChatGPT-only path must stop. It must not silently charge the user's DeepSeek, Anthropic, OpenAI API, or another person's account. The hosted TrueForge OAuth bridge remains unavailable and cannot be represented as active yet.
+
 **Identity login is separate from ChatGPT-plan inference consent.** The local connection requests `openid profile email offline_access resource.invoke chatgpt.tokens.use.direct`; it reports whether `chatgpt.tokens.use.direct` and `resource.invoke` were granted. It never retrieves a user's OpenAI Platform API key, conversations or memories.
 
 ### Important activation limit
