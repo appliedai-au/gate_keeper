@@ -3,7 +3,7 @@
 // field names (previousTurnId, iterationLimit); the HTTP API and the docs' JSON use snake_case.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync, realpathSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync, realpathSync, chmodSync, openSync, closeSync, fsyncSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, relative, parse } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,25 +50,32 @@ export function assertPrivatePath(path:string):string {
   const rel=relative(PRIVATE_ROOT,full);
   if(!rel || rel===".." || rel.startsWith("../") || rel.startsWith("/") || rel.includes("\\"))
     throw new Error("PRIVATE_EVIDENCE_REJECTED: path escapes private state");
-  mkdirSync(dirname(full),{recursive:true,mode:0o700});
-  assertRealDirectory(dirname(full));
+  // Walk each directory from a trusted private root. Never mkdir -p through
+  // an unverified symlink: that could create files outside the protected root.
   let current=PRIVATE_ROOT;
   for(const part of relative(PRIVATE_ROOT,dirname(full)).split("/").filter(Boolean)) {
     current=join(current,part);
-    const st=lstatSync(current);
+    let st;
+    try {st=lstatSync(current);}
+    catch(err) {
+      if((err as NodeJS.ErrnoException).code!=="ENOENT") throw err;
+      mkdirSync(current,{mode:0o700});
+      st=lstatSync(current);
+    }
     if(st.isSymbolicLink() || !st.isDirectory() ||
        (process.getuid && st.uid!==process.getuid()))
       throw new Error("PRIVATE_EVIDENCE_REJECTED: directory owner or type");
-    // Older releases made runs/ and run-NN/ with 0755 on a 022 umask.
-    // Tighten ONLY verified owner-controlled, real directories.
     if(st.mode & 0o077) chmodSync(current,0o700);
   }
-  // Existing evidence must not be read through a symlink or other special file.
-  if(existsSync(full)) {
+  // existsSync follows dangling symlinks and falsely returns false. lstat
+  // detects these even when their target does not exist.
+  try {
     const st=lstatSync(full);
     if(st.isSymbolicLink() || !st.isFile() ||
        (process.getuid && st.uid!==process.getuid()))
       throw new Error("PRIVATE_EVIDENCE_REJECTED: unsafe existing file");
+  } catch(err) {
+    if((err as NodeJS.ErrnoException).code!=="ENOENT") throw err;
   }
   return full;
 }
@@ -353,7 +360,13 @@ export function sessionStats(exp: SessionExport): { tokens: number | null; toolC
 
 export function writeJson(path: string, value: unknown): void {
   const safe=assertPrivatePath(path);
-  writeFileSync(safe, JSON.stringify(value, null, 2) + "\n", {mode:0o600, flag:"wx"});
+  // Exclusive create and NOFOLLOW reject pre-existing files or final symlinks
+  // even if the final component changed after the lstat preflight.
+  const fd=openSync(safe,constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,0o600);
+  try {
+    writeFileSync(fd,JSON.stringify(value,null,2)+"\n");
+    fsyncSync(fd);
+  } finally {closeSync(fd);}
 }
 
 export function runDir(n: number): string {
