@@ -37,3 +37,13 @@ test("per-user ChatGPT plan must never be treated as managed TrueForge credentia
  assert.throws(()=>resolveTrueForgeModel({GK_MODEL_PROVIDER:"chatgpt",
    GK_TRUEFORGE_MODEL:"anthropic/claude-sonnet-4-6"}),/unapproved model provider/);
 });
+
+test("all TrueForge agent sync paths verify managed model before writing",()=>{
+ const lib=readFileSync(new URL("../scripts/lib.ts",import.meta.url),"utf8");
+ const start=lib.indexOf("export async function syncAgent(");
+ const check=lib.indexOf("if (process.env.GK_MODEL_PROVIDER===\"trueforge\")",start);
+ const mutations=lib.indexOf("await tf.settings.skills.createOrUpdate(",start);
+ assert.ok(start>=0&&check>start&&mutations>check,"model admission occurs before any TrueForge skill mutation");
+ assert.match(lib.slice(start,mutations),/models\.some\(m=>m\.name===agent\.model\.name\)/);
+ assert.match(lib.slice(start,mutations),/managed model not available in TrueForge/);
+});
