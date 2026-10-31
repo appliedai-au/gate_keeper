@@ -3,7 +3,7 @@
 **Result: BLOCKED.** No live comparison, repair drill or qualification was run, because none of the required live systems were reachable from the qualification session. This report publishes the exact blockers rather than substituting simulations or source tests. Nothing here supports a claim that Gate Keeper is better than, equal to or worse than a standard TrueForge reviewer.
 
 - Source revision: `d62ae2facaf15b35b8b5a0662c9d8defd385085b` (head of `feat/base44-gatekeeper-integration`, PR #7)
-- Structural check: `node scripts/proof/validate-public-proof.mjs proof/submissions/gk-proof-blocked-20261101/summary.json` returns valid. The validator checks structure only and authenticates nothing.
+- Structural check: `node scripts/proof/validate-public-proof.mjs proof/submissions/gk-proof-blocked-20261101/summary.json` returns valid **only with this PR's head**, which relaxes `fairness.*` to allow `null` when no arm ran (finding 3). At the pinned source revision `d62ae2f` the validator rejects those nulls, so the summary does not validate there. The validator checks structure only and authenticates nothing.
 - Unauthorised production changes: none. No merge, deploy, model call or write outside this proof branch.
 
 ## 1. What was checked (read-only)
@@ -11,7 +11,7 @@
 | Check | Outcome |
 |---|---|
 | Repo, PR #7, proof contract, request, validator read | Done |
-| `npm ci`, `npm run test:learning-policy` | 135 of 135 pass (source tests only, not live proof) |
+| `npm ci`, `npm run test:learning-policy` | 135 of 135 pass at `d62ae2f`; 136 of 136 at this PR's head, which adds one validator test (source tests only, not live proof) |
 | `npm run typecheck` | Clean |
 | `node scripts/trueforge/native-preflight.mjs` | HELD: `TRUEFORGE_HTTPS_URL_REQUIRED` |
 | `npm run providers:status` | TrueForge routing not configured; DeepSeek not configured in TrueForge; ChatGPT hosted inference NOT_AUTHORISED |
@@ -93,7 +93,8 @@ No private evidence exists for this run, so `evidence` is an empty array. Hashes
 ## 9. Reproduction
 
 ```bash
-git checkout d62ae2facaf15b35b8b5a0662c9d8defd385085b
+# source under test: d62ae2facaf15b35b8b5a0662c9d8defd385085b (this PR adds proof files and a validator relaxation on top)
+git checkout proof/gk-proof-blocked-20261101   # this PR's head
 npm ci
 npm run test:learning-policy
 npm run typecheck
