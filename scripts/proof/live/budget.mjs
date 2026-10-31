@@ -53,7 +53,13 @@ export class BudgetController {
     let cost = null, source = "reservation";
     if (metrics && Number.isFinite(metrics.totalCostInUsd)) { cost = metrics.totalCostInUsd; source = "trueforge_turn_metric"; }
     else if (metrics && this.price && Number.isFinite(metrics.totalInputTokens) && Number.isFinite(metrics.totalOutputTokens)) {
-      cost = (metrics.totalInputTokens * this.price[0] + metrics.totalOutputTokens * this.price[1]) / 1e6; source = "tokens_x_list_price";
+      // Cache tokens (when reported) are priced at the provider's cache rates: writes 1.25x and
+      // reads 0.1x the input price. Input tokens are assumed to EXCLUDE cache tokens (Anthropic
+      // usage semantics); if TrueForge folds them in, this over-counts, which is safe for a cap.
+      const cw = Number.isFinite(metrics.totalCacheWriteTokens) ? metrics.totalCacheWriteTokens : 0;
+      const cr = Number.isFinite(metrics.totalCacheReadTokens) ? metrics.totalCacheReadTokens : 0;
+      cost = (metrics.totalInputTokens * this.price[0] + cw * 1.25 * this.price[0] + cr * 0.1 * this.price[0] + metrics.totalOutputTokens * this.price[1]) / 1e6;
+      source = cw || cr ? "tokens_x_list_price_with_cache" : "tokens_x_list_price";
     }
     if (cost === null) cost = r.amount;
     this.reserved -= r.amount;

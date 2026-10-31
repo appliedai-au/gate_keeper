@@ -100,7 +100,7 @@ export function aggregateArm(arm, results, judgements, key, { holdoutOnly = null
   const lookup = new Map();
   for (const [id, k] of Object.entries(key)) lookup.set(`${k.arm}|${k.trial}|${k.task_id}|${k.index}`, id);
   let expected = 0, matchedFirst = 0, tp = 0, fp = 0, dup = 0, unlisted = 0, explOk = 0, sevOk = 0, unjudged = 0;
-  let parseFail = 0, detAgree = 0, detTotal = 0, tokens = 0, cost = 0, tokensKnown = true, costKnown = true;
+  let parseFail = 0, detAgree = 0, detTotal = 0, tokens = 0, cost = 0, tokensKnown = true, costKnown = true, cacheRead = 0, cacheWrite = 0, inputTok = 0;
   const latencies = [], perTaskSets = new Map(), perTrialRecall = new Map();
   for (const r of rows) {
     const ak = answerKey(r.task);
@@ -124,6 +124,9 @@ export function aggregateArm(arm, results, judgements, key, { holdoutOnly = null
     });
     latencies.push(r.latency_ms);
     const t = r.metrics?.totalTokens; if (Number.isFinite(t)) tokens += t; else tokensKnown = false;
+    cacheRead += Number.isFinite(r.metrics?.totalCacheReadTokens) ? r.metrics.totalCacheReadTokens : 0;
+    cacheWrite += Number.isFinite(r.metrics?.totalCacheWriteTokens) ? r.metrics.totalCacheWriteTokens : 0;
+    inputTok += Number.isFinite(r.metrics?.totalInputTokens) ? r.metrics.totalInputTokens : 0;
     const c = r.metrics?.totalCostInUsd; if (Number.isFinite(c)) cost += c; else costKnown = false;
     if (!perTaskSets.has(r.task.id)) perTaskSets.set(r.task.id, []);
     perTaskSets.get(r.task.id).push(seen);
@@ -145,6 +148,7 @@ export function aggregateArm(arm, results, judgements, key, { holdoutOnly = null
     severity_accuracy: ratio(sevOk, matchedFirst),
     median_latency_ms: median(latencies),
     total_tokens: tokensKnown && rows.length ? tokens : null,
+    input_tokens: inputTok, cache_read_tokens: cacheRead, cache_write_tokens: cacheWrite,
     trueforge_estimated_cost_usd: costKnown && rows.length ? Math.round(cost * 1e6) / 1e6 : null,
     expected_issues: expected, matched_issues: matchedFirst, true_positives: tp, false_positives: fp,
     duplicates: dup, unlisted_real_defects: unlisted, unjudged_findings: unjudged, unparseable_replies: parseFail,

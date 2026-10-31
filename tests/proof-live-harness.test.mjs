@@ -274,3 +274,14 @@ test("drill denylist: quoted strings like an allow-list are not imports; real im
 test("drill arms must include the default gate_keeper arm", () => {
   assert.throws(() => e2e({ trials: 1, env: { GK_PROOF_DRILL_ARMS: "baseline,gate_keeper_lean" } }), /DRILL_ARMS_INVALID/);
 });
+
+test("budget prices reported cache tokens at cache rates and aggregation reports them", () => {
+  const b = new BudgetController({ capUsd: 1, phaseShare: PHASES, model: "anthropic/claude-sonnet-4-6" });
+  const r = b.reserve("comparison", "c", 100, 100);
+  const cost = b.settle(r, { totalInputTokens: 1000, totalOutputTokens: 100, totalCacheReadTokens: 2000, totalCacheWriteTokens: 0 });
+  assert.equal(Math.round(cost * 1e6), Math.round((1000 * 3 + 2000 * 0.1 * 3 + 100 * 15)));
+  assert.equal(b.snapshot().cost_sources.tokens_x_list_price_with_cache, 1);
+  const task = { id: "t", holdout: false, expected: [{ line: 1, categories: ["bug"] }] };
+  const m = aggregateArm("baseline", [{ arm: "baseline", trial: 1, task, findings: [], latency_ms: 1, metrics: { totalTokens: 10, totalInputTokens: 8, totalCacheReadTokens: 5 } }], {}, {});
+  assert.equal(m.cache_read_tokens, 5); assert.equal(m.input_tokens, 8);
+});
