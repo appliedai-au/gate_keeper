@@ -1,24 +1,34 @@
-import {DEEPSEEK,CHATGPT,describeProviders,resolveTrueForgeModel} from "./registry.mjs";
+import {DEEPSEEK,describeProviders,resolveTrueForgeModel} from "./registry.mjs";
 const status=describeProviders();
 let chosen=null,selectionError=null;
 try {chosen=resolveTrueForgeModel();}
 catch(e){selectionError=e.message;}
+const selection=process.env.GK_MODEL_PROVIDER||"default";
 console.log(JSON.stringify({
   executionRuntime:"TrueForge",
+  connectionPolicy:"trueforge-first",
+  activeRoute:selection==="trueforge"?"trueforge-managed":selection==="deepseek"?"trueforge-configured-deepseek":selection==="default"?"agent-manifest":"invalid",
   selectedModel:chosen||"agent/agent.json default",
   selectionError,
+  credentialsExposedToGateKeeper:false,
   providers:{
+    trueforge:{
+      preferred:true,managedModelConfigured:status.trueforge.managedModelConfigured,
+      setup:"Choose an enabled model in TrueForge Settings -> Models; Gate Keeper never asks for a raw provider key",
+      underlyingModelCharges:"Owned by the configured model provider or TrueFoundry AI Gateway, not included by default",
+    },
     deepseek:{
-      apiBaseUrl:DEEPSEEK.baseUrl,models:DEEPSEEK.models,
+      availableAsOptionalTrueForgeProvider:true,
+      apiBaseUrl:DEEPSEEK.baseUrl,
+      modelIds:DEEPSEEK.models,
       configuredInTrueForge:status.deepseek.configuredInTrueForge,
-      credentialPresentLocally:status.deepseek.apiKeyPresentHere,
-      active:!!chosen && !selectionError,
+      requiresAdminSourceSharingApproval:true,
     },
     chatgpt:{
-      method:"OAuth2 + PKCE; open-source local client only",
-      localConnectionCommand:"npm run connect:chatgpt -- login",
-      hostedInference:"DISABLED_PENDING_PARTNER_AUTHORIZATION",
-      trueForgeModelRouting:"NOT_YET_CONNECTED",
+      localOpenSourcePlanConnection:"OPT_IN",
+      localCommand:"npm run connect:chatgpt -- login",
+      hostedInference:"NOT_AUTHORISED",
+      trueForgeHostedModelRouting:"NOT_CONFIGURED",
       consentRequired:true,
     },
   },
