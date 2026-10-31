@@ -96,8 +96,9 @@ function hostId() {
 function selectedRecord() {
   storeReady();
   const file=join(root,"active.json");
-  if(!existsSync(file))return null;
-  const st=lstatSync(file);
+  let st;
+  try{st=lstatSync(file);}
+  catch(err){if(err?.code==="ENOENT")return null;throw err;}
   if(!st.isFile()||st.isSymbolicLink()||(st.mode&0o077)||
      (process.getuid&&st.uid!==process.getuid()))
     throw Error("unsafe active account selector");
