@@ -260,3 +260,13 @@ test("offline e2e (synthetic fake): three-arm comparison reports the lean arm al
   assert.equal(data.drill.repair_success.gate_keeper.cycles, 6);
   assert.equal(data.budget.phase_caps_usd.drill, 3.5);
 });
+
+test("drill denylist: quoted strings like an allow-list are not imports; real imports of restricted modules are", async () => {
+  const work = mkdtempSync(join(tmpdir(), "gk-t-"));
+  const o = createFixtureRepo(fixture("escape"), work);
+  const src = readFileSync(join(o.repo, o.vmodel.file), "utf8");
+  const ok = applyBoundedPatch(cloneCandidate(o.repo, work, "allow"), o.vmodel, src + 'const SAFE = ["http", "https", "mailto"];\n');
+  assert.equal(ok.applied, true, ok.reason);
+  for (const evil of ['import fs from "fs";', 'import "node:http";', 'export { x } from "os";', 'const n = require ( "net" );'])
+    assert.match(applyBoundedPatch(cloneCandidate(o.repo, work, "x" + Math.random().toString(36).slice(2)), o.vmodel, evil + "\n" + src).reason || "", /FORBIDDEN_API/, evil);
+});

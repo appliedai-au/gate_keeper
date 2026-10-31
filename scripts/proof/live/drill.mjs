@@ -80,7 +80,9 @@ export function extractPatch(reply, source) {
 // Defence in depth only: the real boundary is the Node permission sandbox in runLevel.
 const FORBIDDEN = [
   [/\beval\s*\(|\bFunction\s*\(|\bimport\s*\(/, "dynamic code execution or import"],
-  [/["'](?:node:)?(?:fs|child_process|worker_threads|vm|net|http|https|http2|dgram|tls|dns|os|module|inspector|cluster|process|v8|wasi)(?:\/[^"']*)?["']/, "restricted core module"],
+  // Module names count only where something is imported (static import/export-from, side-effect
+  // import, require); a plain string such as an allow-list entry "http" is not an import.
+  [/(?:\bfrom\s*|\bimport\s*|\brequire\s*\(\s*)["'](?:node:)?(?:fs|child_process|worker_threads|vm|net|http|https|http2|dgram|tls|dns|os|module|inspector|cluster|process|v8|wasi)(?:\/[^"']*)?["']/, "restricted core module"],
   [/\bprocess\s*[.[]|\bglobalThis\b|\brequire\s*\(|\bfetch\s*\(|XMLHttpRequest|WebSocket|\bBun\b|\bDeno\b/, "process, global or network access"],
 ];
 
