@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { scoreTask } from "../../../evals/score.ts";
 import { assessLessonForCore, budgetAdmission, executionAdmission, nextExecutionState } from "../../execution/policy.mjs";
 import { validatePublicProof, REQUIRED_STAGES } from "../validate-public-proof.mjs";
-import { ARMS, DEFAULT_CAP_USD, OUTPUT_CONTRACT, REPAIR_OUTPUT_CONTRACT, PHASE_SHARE, REVIEW_PARAMS, ROOT, RUNTIME_CONFIG, TRUEFORGE_RUNTIME,
+import { ALL_ARMS, comparisonArms, DEFAULT_CAP_USD, OUTPUT_CONTRACT, REPAIR_OUTPUT_CONTRACT, PHASE_SHARE, REVIEW_PARAMS, ROOT, RUNTIME_CONFIG, TRUEFORGE_RUNTIME,
   armInstructions, gateKeeperMethodology, instructionHashes, sha256 } from "./config.mjs";
 import { BudgetController } from "./budget.mjs";
 import { aggregateArm, answerKey, blindTask, parseAdjudication, parseFindingsWithSeverity, shuffle, validFinding } from "./metrics.mjs";
@@ -20,6 +20,7 @@ import { applyBoundedPatch, cloneCandidate, createFixtureRepo, discardCandidate,
   repairBrief, startValidation, verifyOrigin } from "./drill.mjs";
 import { EvidenceStore } from "./evidence.mjs";
 
+export const REPAIR_FIXTURES = ["money", "uploads", "pagination", "escape", "redirect", "retry"];
 export const ADJUDICATOR = `You are an independent adjudicator for a code-review benchmark. You did not write any of the findings and you do not know who did.
 For EACH finding decide:
 - "matches": the expected_id of the answer-key issue it identifies (the same underlying defect; the line may differ slightly), or null.
@@ -103,7 +104,14 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_REGISTERED", model, available: modelNames });
     return { blocked: "MODEL_NOT_REGISTERED", preflight };
   }
-  const budget = new BudgetController({ capUsd, phaseShare: PHASE_SHARE, model, now });
+  let phaseShare = PHASE_SHARE;
+  if (env.GK_PROOF_PHASE_SHARE) {
+    const [c, a, d] = env.GK_PROOF_PHASE_SHARE.split(",").map(Number);
+    if (![c, a, d].every((x) => x > 0 && x < 1) || Math.abs(c + a + d - 1) > 1e-6) throw new Error("PHASE_SHARE_INVALID");
+    phaseShare = { comparison: c, adjudication: a, drill: d };
+  }
+  const budget = new BudgetController({ capUsd, phaseShare, model, now });
+  const compArms = comparisonArms(env);
 
   // ---------- model call wrapper: reserve -> create turn -> poll -> settle ----------
   async function newSession(spec, meta) {
@@ -158,11 +166,11 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   const completeTrials = [];
   for (let trial = 1; trial <= trialsWanted; trial++) {
     const sessionByArm = {};
-    for (const arm of ARMS) sessionByArm[arm] = await newSession(
+    for (const arm of compArms) sessionByArm[arm] = await newSession(
       { model: { name: model, params: REVIEW_PARAMS }, instructions: armInstructions(arm), config: RUNTIME_CONFIG }, { phase: "comparison", arm, trial });
     let complete = true;
     for (const task of shuffle(tasks)) {
-      for (const arm of shuffle(ARMS)) {
+      for (const arm of shuffle(compArms)) {
         const out = await callTurn("comparison", `${arm}/t${trial}/${task.id}`, sessionByArm[arm], taskPrompt(task), armInstructions(arm).length, REVIEW_PARAMS.maxTokens);
         if (out.refused) { complete = false; break; }
         const findings = out.status === "done" ? parseFindingsWithSeverity(out.text) : null;
@@ -205,7 +213,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   ev.put("private/blinding-key.json", blindKey, "unblinding_key");
 
   const arms = {};
-  for (const arm of ARMS) {
+  for (const arm of compArms) {
     arms[arm] = {
       all: aggregateArm(arm, scored, judgements, blindKey),
       public: aggregateArm(arm, scored, judgements, blindKey, { holdoutOnly: false }),
@@ -263,7 +271,8 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     evidence: [{ kind: "private_evidence_manifest", private_reference: upload.reference || "runner-local (upload failed)", sha256: manifest.sha256 }],
     blockers, limitations,
   };
-  for (const arm of ARMS) if (!completeTrials.length) summary.arms[arm] = emptyArm();
+  if (compArms.includes("gate_keeper_lean")) summary.arms.gate_keeper_lean = pick(arms.gate_keeper_lean.all) || emptyArm();
+  for (const arm of compArms) if (!completeTrials.length) summary.arms[arm] = emptyArm();
   if (!completeTrials.length) summary.fairness = { same_model: null, same_provider: null, same_inputs: null, same_scoring: null, same_limits: null };
   validatePublicProof(summary);
   const publicData = { preflight, complete_trials: completeTrials, arms, drill: drill.public, budget: budget.snapshot(), sessions: sessions.map((s) => ({ id: s.id, phase: s.phase, arm: s.arm, trial: s.trial })),
@@ -285,10 +294,13 @@ export function emitChunked(log, key, value) {
 // ---------- autonomous repair-loop drill ----------
 async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) {
   const work = mkdtempSync(join(tmpdir(), "gk-drill-"));
-  const fixtures = Object.fromEntries(["money", "uploads", "pagination", "escape", "archive"].map((id) => [id, join(ROOT, "proof", "fixtures", id)]));
+  const fixtures = Object.fromEntries([...REPAIR_FIXTURES, "archive"].map((id) => [id, join(ROOT, "proof", "fixtures", id)]));
   const params = { temperature: 0, maxTokens: 2500 };
   const cycles = [], lessons = [], events = [];
   let reAdjSession = null;
+  const drillArms = [...new Set((env.GK_PROOF_DRILL_ARMS || "baseline,gate_keeper").split(",").map((a) => a.trim()).filter(Boolean))];
+  if (!drillArms.length || drillArms.some((a) => !ALL_ARMS.includes(a))) throw new Error("DRILL_ARMS_INVALID");
+  events.push({ check: "drill_arms", arms: drillArms });
   const stage = Object.fromEntries(REQUIRED_STAGES.map((s) => [s, "NOT_RUN"]));
   const mark = (s, v) => { if (stage[s] !== "FAIL") stage[s] = v === "PASS" && stage[s] === "BLOCKED" ? "BLOCKED" : v; };
 
@@ -323,7 +335,7 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
     if (!findings.length) { state = nextExecutionState(state, "deny"); rec.states.push(state); rec.outcome = "REVIEWED_NO_FINDING"; return rec; }
     mark("adversarial_review", "PASS");
     state = nextExecutionState(state, "finding"); rec.states.push(state);
-    const repairInstr = (arm === "gate_keeper" ? gateKeeperMethodology("repair") : BASELINE_REPAIR) + "\n\n" + REPAIR_OUTPUT_CONTRACT + lessonText;
+    const repairInstr = (arm.startsWith("gate_keeper") ? gateKeeperMethodology("repair", arm === "gate_keeper_lean" ? "lean" : "adversarial") : BASELINE_REPAIR) + "\n\n" + REPAIR_OUTPUT_CONTRACT + lessonText;
     const repairSession = await newSession({ model: { name: model, params }, instructions: repairInstr, config: RUNTIME_CONFIG }, { phase: "drill", arm, fixture: fixtureId, role: "repair" });
     let feedback = "";
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -415,7 +427,7 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
     events.push({ check: "harness_negative_control", patch_applied: ncPatch.applied, verdict: ncVal.verdict, levels: ncVal.levels, discard: ncDiscard, origin: ncOrigin });
     mark("rollback_failure_drill", ncVal.verdict === "FAIL" && ncDiscard.discarded && ncOrigin.unchanged ? "PASS" : "FAIL");
 
-    for (const fixtureId of ["money", "uploads", "pagination", "escape"]) for (const arm of shuffle(ARMS)) cycles.push(await cycle(arm, fixtureId, { label: `${arm}-${fixtureId}` }));
+    for (const fixtureId of REPAIR_FIXTURES) for (const arm of shuffle(drillArms)) cycles.push(await cycle(arm, fixtureId, { label: `${arm}-${fixtureId}` }));
 
     // Capture tenant-private lessons from Gate Keeper's own runs.
     const lessonSession = await newSession({ model: { name: model, params: { temperature: 0, maxTokens: 400 } }, instructions: LESSON_WRITER, config: RUNTIME_CONFIG }, { phase: "drill", role: "lesson" });
@@ -454,7 +466,7 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
       verdict: a.validation?.verdict ?? null, levels: a.validation?.levels ?? null, polls: a.validation?.polls ?? null,
       re_review_blocking: a.re_review?.blocking ?? null, re_review_blocking_confirmed: a.re_review?.blocking_confirmed ?? null, discarded: a.discard?.discarded ?? a.retained_as_candidate_then_discarded?.discarded ?? null })),
     origin_unchanged: c.origin_check?.unchanged ?? null, source_sha: c.source_sha }));
-  const repairSuccess = Object.fromEntries(ARMS.map((arm) => { const cs = cycles.filter((c) => c.arm === arm && !c.label.includes("archive")); return [arm, { cycles: cs.length, candidates: cs.filter((c) => c.outcome === "CANDIDATE").length, first_attempt: cs.filter((c) => c.outcome === "CANDIDATE" && c.attempts.length === 1).length,
+  const repairSuccess = Object.fromEntries(drillArms.map((arm) => { const cs = cycles.filter((c) => c.arm === arm && !c.label.includes("archive")); return [arm, { cycles: cs.length, candidates: cs.filter((c) => c.outcome === "CANDIDATE").length, first_attempt: cs.filter((c) => c.outcome === "CANDIDATE" && c.attempts.length === 1).length,
     v_model_passing_patch: cs.filter((c) => c.attempts.some((a) => a.validation?.verdict === "PASS")).length,
     oversize_rejections: cs.reduce((n, c) => n + c.attempts.filter((a) => a.patch.reason === "PATCH_TOO_LARGE").length, 0),
     attempts: cs.reduce((n, c) => n + c.attempts.length, 0) }]; }));

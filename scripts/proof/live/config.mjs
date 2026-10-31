@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { composeReviewerInstructions } from "../../review-mode.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const read = (p) => readFileSync(join(ROOT, p), "utf8");
@@ -39,8 +40,8 @@ export const BASELINE_ROLE = "You are a code reviewer. Review the code you are g
 // run-evals ships it: the lean reviewer instructions (with severity rubric)
 // plus the review-checklist skill. The TrueForge-native operator contract
 // (agent/native-trueforge-instructions.md) is NOT part of the runtime prompt.
-export function gateKeeperMethodology(mode = "review") {
-  const reviewer = read("agent/instructions.md").trim();
+export function gateKeeperMethodology(mode = "review", reviewMode = "adversarial") {
+  const reviewer = composeReviewerInstructions(join(ROOT, "agent"), reviewMode);
   const skill = read("agent/skills/review-checklist/SKILL.md").replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
   if (mode === "repair") return [
     "You are Gate Keeper's repair role. Repair scope IS granted for one disposable, tenant-isolated candidate workspace. No merge, deploy or production access is granted.",
@@ -65,10 +66,19 @@ Keep each \`find\` short but unique. Make the smallest change that fixes the fin
 
 export function armInstructions(arm) {
   if (arm === "baseline") return BASELINE_ROLE + "\n\n" + OUTPUT_CONTRACT;
-  if (arm === "gate_keeper") return gateKeeperMethodology() + "\n\n" + OUTPUT_CONTRACT;
+  if (arm === "gate_keeper") return gateKeeperMethodology("review", "adversarial") + "\n\n" + OUTPUT_CONTRACT;
+  if (arm === "gate_keeper_lean") return gateKeeperMethodology("review", "lean") + "\n\n" + OUTPUT_CONTRACT;
   throw new Error("UNKNOWN_ARM");
 }
 
+// Comparison arms. gate_keeper = adversarial mode (the default product
+// reviewer); gate_keeper_lean = the same reviewer without the adversarial module.
+export const ALL_ARMS = ["baseline", "gate_keeper", "gate_keeper_lean"];
+export function comparisonArms(env = process.env) {
+  const arms = (env.GK_PROOF_ARMS || "baseline,gate_keeper").split(",").map((a) => a.trim()).filter(Boolean);
+  if (!arms.includes("baseline") || !arms.includes("gate_keeper") || arms.some((a) => !ALL_ARMS.includes(a))) throw new Error("PROOF_ARMS_INVALID");
+  return [...new Set(arms)];
+}
 export const ARMS = ["baseline", "gate_keeper"];
 
 // Same params and runtime config for every candidate call.
@@ -118,6 +128,7 @@ export function instructionHashes() {
   return {
     baseline_instructions_sha256: sha256(armInstructions("baseline")),
     gate_keeper_instructions_sha256: sha256(armInstructions("gate_keeper")),
+    gate_keeper_lean_instructions_sha256: sha256(armInstructions("gate_keeper_lean")),
     output_contract_sha256: sha256(OUTPUT_CONTRACT),
     repair_contract_sha256: sha256(REPAIR_OUTPUT_CONTRACT),
     gate_keeper_repair_sha256: sha256(gateKeeperMethodology("repair")),

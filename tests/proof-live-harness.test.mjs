@@ -214,7 +214,10 @@ test("lean Gate Keeper reviewer excludes the TrueForge operator contract but kee
   assert.ok(!/One coordinator, on-demand specialists|Non-negotiable closed-loop/.test(g));
   assert.match(g, /## Severity/);
   assert.match(g, /review-checklist/);
-  assert.match(g, /## Adversarial method/, "the adversarial review method must stay in the Gate Keeper reviewer");
+  assert.match(g, /## Adversarial method/, "the adversarial review method must stay in the default Gate Keeper reviewer");
+  const lean = armInstructions("gate_keeper_lean");
+  assert.ok(!/## Adversarial method/.test(lean) && /## Severity/.test(lean));
+  assert.ok(g.indexOf("## Adversarial method") < g.indexOf("## Severity") && g.indexOf("## Severity") < g.indexOf("## Output"));
   assert.match(g, /untrusted input/); assert.match(g, /tenant and permission boundaries/);
   const native = readFileSync(join(ROOT, "agent", "native-trueforge-instructions.md"), "utf8");
   assert.match(native, /V-model validation/); assert.match(native, /Adversarial reviewer/);
@@ -233,4 +236,27 @@ test("offline e2e (synthetic fake): a poll failure settles the reservation and t
   assert.equal(data.budget.reserved_usd, 0);
   assert.ok(r.lines.some((l) => l.startsWith("GK_PROOF_DONE=")));
   assert.equal(validatePublicProof(decodeChunks(r.lines, "GK_PROOF_PUBLIC_SUMMARY")).valid, true);
+});
+
+test("review mode is selectable, defaults to adversarial and fails closed on unknown values", async () => {
+  const { resolveReviewMode, composeReviewerInstructions, DEFAULT_REVIEW_MODE } = await import("../scripts/review-mode.mjs");
+  assert.equal(DEFAULT_REVIEW_MODE, "adversarial");
+  assert.equal(resolveReviewMode({}), "adversarial");
+  assert.equal(resolveReviewMode({ GK_REVIEW_MODE: "lean" }), "lean");
+  assert.throws(() => resolveReviewMode({ GK_REVIEW_MODE: "fast" }), /REVIEW_MODE_REJECTED/);
+  const dir = join(ROOT, "agent");
+  assert.match(composeReviewerInstructions(dir, "adversarial"), /## Adversarial method/);
+  assert.doesNotMatch(composeReviewerInstructions(dir, "lean"), /## Adversarial method/);
+});
+
+test("offline e2e (synthetic fake): three-arm comparison reports the lean arm alongside the default arm", () => {
+  const r = e2e({ trials: 1, env: { GK_PROOF_ARMS: "baseline,gate_keeper,gate_keeper_lean", GK_PROOF_DRILL_ARMS: "gate_keeper,gate_keeper_lean", GK_PROOF_PHASE_SHARE: "0.5,0.15,0.35" } });
+  const summary = decodeChunks(r.lines, "GK_PROOF_PUBLIC_SUMMARY");
+  assert.equal(validatePublicProof(summary).valid, true);
+  assert.equal(summary.arms.gate_keeper_lean.trials, 1);
+  const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
+  assert.deepEqual(Object.keys(data.arms).sort(), ["baseline", "gate_keeper", "gate_keeper_lean"]);
+  assert.deepEqual(Object.keys(data.drill.repair_success).sort(), ["gate_keeper", "gate_keeper_lean"]);
+  assert.equal(data.drill.repair_success.gate_keeper.cycles, 6);
+  assert.equal(data.budget.phase_caps_usd.drill, 3.5);
 });

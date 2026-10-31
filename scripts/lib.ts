@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { TrueForge, TrueForgeApi } from "@truefoundry/trueforge-sdk";
 import { verifyBudgetLease } from "./learning-trust.mjs";
 import { resolveTrueForgeModel } from "./providers/registry.mjs";
+import { composeReviewerInstructions, resolveReviewMode } from "./review-mode.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const AGENT_DIR = join(ROOT, "agent");
@@ -197,7 +198,7 @@ export function readAgent(): { agent: AgentFile; instructions: string; skills: S
     // default to other providers' reasoning models.
     agent.model = { name: routed };
   }
-  const instructions = readFileSync(join(AGENT_DIR, "instructions.md"), "utf8");
+  const instructions = composeReviewerInstructions(AGENT_DIR, resolveReviewMode());
   const skillsDir = join(AGENT_DIR, "skills");
   const skills: SkillFile[] = [];
   if (existsSync(skillsDir)) {
