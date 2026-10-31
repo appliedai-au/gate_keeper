@@ -103,11 +103,12 @@ async function fetchLimited(url,options={}) {
   if(text.length>350000)throw Error("authorization response too large");
   return JSON.parse(text);
 }
-async function login(){
+async function login(existingClientId){
   if(process.env.RAILWAY_PROJECT_ID||process.env.RAILWAY_ENVIRONMENT_ID)
     throw Error("hosted Railway OAuth is not eligible for the local loopback flow");
   if(process.env.CI)throw Error("interactive local OAuth is forbidden in CI");
   const host=hostId();
+  const selected=findExistingClient(existingClientId);
   // Bind exclusively to local loopback; no public callback, no external tunnel.
   const server=createServer();
   try{
@@ -118,7 +119,7 @@ async function login(){
     const addr=server.address();
     if(!addr||typeof addr==="string")throw Error("invalid loopback listener");
     const redirectUri="http://127.0.0.1:"+addr.port+"/auth/callback";
-    const attempt=createOAuthAttempt({hostId:host,redirectUri});
+    const attempt=createOAuthAttempt({hostId:host,redirectUri,clientId:selected?.record.client_id||"dynamic_agent_client"});
     const callback=new Promise((resolve,reject)=>{
       const timeout=setTimeout(()=>reject(Error("authorization expired")),180000);
       timeout.unref();
@@ -156,16 +157,22 @@ async function login(){
     if(!token.id_token||!token.access_token)throw Error("no valid token response");
     const jwks=await fetchLimited(CHATGPT_OIDC.jwks);
     const account=validateIdToken({idToken:token.id_token,jwks,clientId,nonce:attempt.nonce});
+    if(selected && (account.subject!==selected.record.subject ||
+        account.issuer!==selected.record.issuer || clientId!==selected.record.client_id))
+      throw Error("reconnected OAuth identity does not match selected account");
     const scopes=parseGrantedScopes(token.scope);
     const key=createHash("sha256").update(clientId+"\0"+account.issuer+"\0"+account.subject).digest("hex");
     const expiresAt=new Date(Date.now()+(Number(token.expires_in)||3600)*1000).toISOString();
-    storeNew("account-"+key+".json",{
+    const record={
       issuer:account.issuer,subject:account.subject,email:account.email,
       client_id:clientId,ext_agent_host_id:host,
       id_token:token.id_token,access_token:token.access_token,
       refresh_token:token.refresh_token||null,scopes,
       expires_at:expiresAt,saved_at:new Date().toISOString(),
-    });
+    };
+    if(selected && selected.filename!=="account-"+key+".json")
+      throw Error("existing OAuth account identity changed");
+    storeNew("account-"+key+".json",record,{replaceExisting:!!selected});
     console.log("ChatGPT identity connected locally.");
     console.log(canUseChatGPTPlan(scopes)?"ChatGPT plan usage permission granted; TrueForge adapter still disabled.":"Identity connected, but ChatGPT plan usage was NOT granted.");
   }finally{await new Promise(resolve=>server.close(()=>resolve()));}
@@ -173,6 +180,6 @@ async function login(){
 const cmd=process.argv[2]||"status";
 try{
  if(cmd==="status")status();
- else if(cmd==="login")await login();
- else throw Error("Usage: npm run connect:chatgpt -- login | status");
+ else if(cmd==="login")await login(process.argv[3]);
+ else throw Error("Usage: npm run connect:chatgpt -- login [existing_client_id] | status");
 }catch(err){die(err instanceof Error?err.message:"connection failed");}
