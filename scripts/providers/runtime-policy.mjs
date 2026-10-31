@@ -3,7 +3,7 @@
  * A local OAuth login is NOT a TrueForge model adapter. Until an approved
  * adapter exists, it is unsafe to run a different model behind the user's back.
  */
-import {existsSync,lstatSync,readFileSync} from "node:fs";
+import {lstatSync,readFileSync} from "node:fs";
 import {homedir} from "node:os";
 import {join} from "node:path";
 
@@ -13,8 +13,14 @@ export function requireNoOAuthFallback({
  const explicit=env.GK_MODEL_PROVIDER==="chatgpt"||env.GK_MODEL_PROVIDER==="chatgpt_oauth";
  const path=join(home,".config","gate-keeper","chatgpt-oauth","active.json");
  let selected=false;
- if(existsSync(path)) {
-   const st=lstatSync(path);
+ // existsSync follows symlinks. A dangling selector would appear absent and
+ // silently fall back to another billing provider; lstat must decide.
+ let st;
+ try{st=lstatSync(path);}
+ catch(err){
+   if(err?.code!=="ENOENT")throw Error("CHATGPT_OAUTH_HELD: selector unreadable");
+ }
+ if(st){
    if(st.isSymbolicLink()||!st.isFile()||(st.mode&0o077)||
       (process.getuid&&st.uid!==process.getuid()))
      throw Error("CHATGPT_OAUTH_HELD: unsafe account selection file");
