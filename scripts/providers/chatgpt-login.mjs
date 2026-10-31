@@ -46,13 +46,13 @@ function findExistingClient(clientId) {
 }
 function storeNew(filename,record,{replaceExisting=false}={}) {
   storeReady();
-  if(!/^[a-zA-Z0-9-]{1,100}\\.json$/.test(filename))
+  if(!/^[a-zA-Z0-9-]{1,100}\.json$/.test(filename))
     throw Error("invalid credential filename");
   const path=join(root,filename);
   const temp=join(root,"tmp-"+randomUUID()+".json");
   const fd=openSync(temp,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
   try {
-    try{writeFileSync(fd,JSON.stringify(record)+"\\n");fsyncSync(fd);}finally{closeSync(fd);}
+    try{writeFileSync(fd,JSON.stringify(record)+"\n");fsyncSync(fd);}finally{closeSync(fd);}
     if(replaceExisting){
       const old=lstatSync(path);
       if(!old.isFile()||old.isSymbolicLink()||(old.mode&0o077)||
