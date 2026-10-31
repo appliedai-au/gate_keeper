@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,symlinkSync,statSync,rmSync,writeFileSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,symlinkSync,statSync,rmSync,writeFileSync,realpathSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
@@ -11,7 +11,7 @@ function run(js, privateRoot) {
     {cwd:root,env:{...process.env,GATE_KEEPER_STATE_DIR:privateRoot},encoding:'utf8',timeout:15000});
 }
 function fixture() {
-  const folder=mkdtempSync(join(tmpdir(),'gk-private-test-'));
+  const folder=mkdtempSync(join(realpathSync(tmpdir()),'gk-private-test-'));
   return {folder,state:join(folder,'state'),cleanup:()=>rmSync(folder,{recursive:true,force:true})};
 }
 
@@ -52,7 +52,7 @@ test('existing file symlink is rejected as an evidence read target',()=>{
     const result=run(`import {assertPrivatePath} from './scripts/lib.ts';
       assertPrivatePath(process.env.GATE_KEEPER_STATE_DIR+'/runs/score.json');`,f.state);
     assert.notEqual(result.status,0,'existing file symlink unexpectedly accepted');
-    assert.match(result.stderr,/PRIVATE_EVIDENCE_REJECTED/);
+    assert.match(result.stderr,/PRIVATE_EVIDENCE_REJECTED: unsafe existing file/);
   } finally {f.cleanup();}
 });
 
@@ -62,6 +62,6 @@ test('paths outside canonical private root are refused',()=>{
     const result=run(`import {assertPrivatePath} from './scripts/lib.ts';
       assertPrivatePath('/tmp/should-not-write-gk-private-test.json');`,f.state);
     assert.notEqual(result.status,0);
-    assert.match(result.stderr,/PRIVATE_EVIDENCE_REJECTED/);
+    assert.match(result.stderr,/PRIVATE_EVIDENCE_REJECTED: path escapes private state/);
   } finally {f.cleanup();}
 });
