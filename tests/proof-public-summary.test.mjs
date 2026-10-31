@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {validatePublicProof,REQUIRED_STAGES} from "../scripts/proof/validate-public-proof.mjs";
+import {readFileSync} from "node:fs";
 
 const H="a".repeat(64),SHA="b".repeat(40);
 const emptyMeasures=()=>({
@@ -77,4 +78,16 @@ test("proof rejects claims that benchmark comparison was not fair",()=>{
  for(const field of ["same_model","same_provider","same_inputs","same_scoring","same_limits"]){
   rejected(d=>(d.fairness[field]=false,d));
  }
+});
+
+test("TrueForge-native instructions retain the entire repair and learning loop",()=>{
+ const instructions=readFileSync(new URL("../agent/native-trueforge-instructions.md",import.meta.url),"utf8");
+ for(const phrase of ["Scope and budget admission","Review:","Repair:","V-model validation",
+   "Poll and challenge again","Re-evaluate:","Capture user lesson","Select core candidates",
+   "Independent qualification","Controlled promotion and next cycle"]){
+    assert.ok(instructions.includes(phrase),"missing loop step: "+phrase);
+ }
+ assert.match(instructions,/unseen.*holdouts/i);
+ assert.match(instructions,/never use synthetic fixture results as proof/i);
+ assert.match(instructions,/No human in the loop/);
 });
