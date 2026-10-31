@@ -110,6 +110,24 @@ function selectClient(clientId) {
   selectAccount(selected.record);
   console.log("Selected local ChatGPT account. OAuth inference through TrueForge remains disabled.");
 }
+function deselectAccount() {
+  storeReady();
+  const file=join(root,"active.json");
+  let st;
+  try {st=lstatSync(file);}
+  catch(err) {
+    if(err?.code==="ENOENT"){
+      console.log("No ChatGPT account selected.");
+      return;
+    }
+    throw err;
+  }
+  if(!st.isFile()||st.isSymbolicLink()||(st.mode&0o077)||
+      (process.getuid&&st.uid!==process.getuid()))
+    throw Error("unsafe active account selector");
+  unlinkSync(file);
+  console.log("ChatGPT-only selection cleared. Existing account credentials remain private.");
+}
 function status(){
   storeReady();
   const accounts=readdirSync(root).filter(n=>n.startsWith("account-")&&n.endsWith(".json"));
@@ -258,8 +276,11 @@ try{
  }else if(cmd==="login"){
    const args=parseLoginArgs(process.argv.slice(3));
    await login(args.existingClientId,args.expectedEmail);
+ }else if(cmd==="deselect"){
+   if(process.argv.length!==3)throw Error("Deselect takes no arguments");
+   deselectAccount();
  }else if(cmd==="select"){
    if(process.argv.length!==4)throw Error("Select requires one issued client ID");
    selectClient(process.argv[3]);
- }else throw Error("Usage: npm run connect:chatgpt -- login [existing_client_id] [--email your@email] | select <client_id> | status");
+ }else throw Error("Usage: npm run connect:chatgpt -- login [existing_client_id] [--email your@email] | select <client_id> | deselect | status");
 }catch(err){die(err instanceof Error?err.message:"connection failed");}
