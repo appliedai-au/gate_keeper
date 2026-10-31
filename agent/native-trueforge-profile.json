@@ -4,7 +4,7 @@
   "model_source": "agent/agent.json",
   "github_connector_name": "github",
   "github_tools": ["@read-only"],
-  "mcp_approval": ["@all"],
+  "mcp_approval": ["@write", "@destructive"],
   "config": {
     "sandbox": { "enabled": true, "file_downloads": false },
     "dynamic_sub_agents": { "enabled": true },
