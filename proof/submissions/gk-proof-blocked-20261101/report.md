@@ -55,7 +55,7 @@ No private evidence exists for this run, so `evidence` is an empty array. Hashes
 | `agent/native-trueforge-instructions.md` (Arm B instructions) | `737280171cd0c48c5c2ca4cf84f5c52977e13f15e1127b5d302ad98627c97b83` |
 | `agent/instructions.md` (original starter reviewer) | `e01318b867c47d6458534c942d95cc0782aee9d641f0507a05329940388525ef` |
 | `evals/score.ts` (frozen scorer) | `8096f1c871b327ba425ff3368cec34fbac400f777a4061f2ff7ae6ac55aecefd` |
-| `evals/tasks/*.json` combined (sha256 of the sorted per-file `sha256sum` listing) | `8dc469adbc4e0606cfa8d891af99fd07f4d3b6dc3fd246e2d3c9c8f2709549d7` |
+| `evals/tasks/*.json` combined (`cd evals/tasks && sha256sum *.json \| sha256sum`, filename/glob order, no extra `sort`) | `8dc469adbc4e0606cfa8d891af99fd07f4d3b6dc3fd246e2d3c9c8f2709549d7` |
 
 ## 6. Findings from reading the code (not live proof)
 

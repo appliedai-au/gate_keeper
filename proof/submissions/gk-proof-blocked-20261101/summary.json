@@ -17,7 +17,7 @@
     "sandbox_provider": "not-connected"
   },
   "benchmark": {
-    "id": "evals/tasks 01-04 (public, frozen at d62ae2f); no owner-private holdout supplied",
+    "id": "evals/tasks 01-04 (public, frozen at d62ae2f; digest = `cd evals/tasks && sha256sum *.json | sha256sum`); no owner-private holdout supplied",
     "sha256": "8dc469adbc4e0606cfa8d891af99fd07f4d3b6dc3fd246e2d3c9c8f2709549d7",
     "holdout_private": true
   },
