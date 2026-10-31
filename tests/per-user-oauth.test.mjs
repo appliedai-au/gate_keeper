@@ -51,6 +51,7 @@ function withHome(fn){
  try {
   const dir=join(home,".config","gate-keeper","chatgpt-oauth");
   mkdirSync(dir,{recursive:true,mode:0o700});
+  writeFileSync(join(dir,"host.json"),JSON.stringify({hostId:host}),{mode:0o600});
   for(const [i,x] of [first,second].entries())writeFileSync(join(dir,"account-"+i+".json"),JSON.stringify(x),{mode:0o600});
   return fn(home);
  }finally{rmSync(home,{recursive:true,force:true});}
