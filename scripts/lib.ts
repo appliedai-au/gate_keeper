@@ -87,7 +87,8 @@ export function assertPrivatePath(path:string):string {
  * same-volume replay, but is NOT a substitute for gateway-side accounting.
  */
 export function requireSignedBudgetLease(action:"eval"|"improve",
-  source_commit:string,benchmark_sha256:string,model:string,run_id:string) {
+  source_commit:string,benchmark_sha256:string,model:string,run_id:string,
+  required_calls:number=1) {
   const leasePath=process.env.GK_BUDGET_LEASE_FILE;
   const pubkeyPath=process.env.GK_VERIFIER_PUBKEY_FILE;
   const trustPin=process.env.GK_VERIFIER_SPKI_SHA256;
@@ -100,6 +101,11 @@ export function requireSignedBudgetLease(action:"eval"|"improve",
     publicKeyPem:key,pinnedFingerprint:trustPin,
     expected:{action,source_commit,benchmark_sha256,model,
       gateway_id:gateway,run_id,purpose:action==="eval"?"private_eval":"private_improve"}});
+  // Check the complete planned invocation count BEFORE consuming this
+  // one-time signed lease or writing any replay claim.
+  if(!Number.isSafeInteger(required_calls) || required_calls<1 ||
+     required_calls>permit.max_calls)
+    throw new Error("BUDGET_REJECTED: planned model calls exceed signed lease ceiling");
   const id=source.body.gateway_lease_id;
   if(!id || typeof id!=="string") throw new Error("BUDGET_REJECTED: lease id missing");
   const ledgerId=createHash("sha256").update(gateway+":"+id).digest("hex");
