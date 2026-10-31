@@ -123,7 +123,13 @@ async function login(existingClientId){
     const callback=new Promise((resolve,reject)=>{
       const timeout=setTimeout(()=>reject(Error("authorization expired")),180000);
       timeout.unref();
+      let accepted=false;
       const onCallback=(req,res)=>{
+        if(accepted){
+          res.writeHead(410,{"Content-Type":"text/plain","Connection":"close"});
+          res.end("Authorization already handled.");
+          return;
+        }
         try{
           if(req.method!=="GET"||req.headers.host!=="127.0.0.1:"+addr.port)
             throw Error("wrong callback host");
@@ -132,7 +138,7 @@ async function login(existingClientId){
           res.writeHead(200,{"Content-Type":"text/plain; charset=utf-8","Cache-Control":"no-store"});
           res.end("Gate Keeper authorization received. Return to the terminal.");
           clearTimeout(timeout);
-          server.off("request",onCallback);
+          accepted=true;
           resolve(verified);
         }catch(err){
           res.writeHead(400,{"Content-Type":"text/plain","Cache-Control":"no-store"});
@@ -175,7 +181,10 @@ async function login(existingClientId){
     storeNew("account-"+key+".json",record,{replaceExisting:!!selected});
     console.log("ChatGPT identity connected locally.");
     console.log(canUseChatGPTPlan(scopes)?"ChatGPT plan usage permission granted; TrueForge adapter still disabled.":"Identity connected, but ChatGPT plan usage was NOT granted.");
-  }finally{await new Promise(resolve=>server.close(()=>resolve()));}
+  }finally{
+    server.closeAllConnections?.();
+    await new Promise(resolve=>server.close(()=>resolve()));
+  }
 }
 const cmd=process.argv[2]||"status";
 try{
