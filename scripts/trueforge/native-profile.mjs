@@ -9,6 +9,14 @@ const config = JSON.parse(load("native-trueforge-profile.json"));
 const reviewer = JSON.parse(load("agent.json"));
 const instructions = load("native-trueforge-instructions.md");
 
+export function validateApprovalTools(value) {
+  if (!Array.isArray(value) || value.length!==2 ||
+      !value.includes("@write") || !value.includes("@destructive") ||
+      new Set(value).size!==2)
+    throw new Error("NATIVE_PROFILE_REJECTED: write/destructive approvals required");
+  return [...value];
+}
+
 export function buildNativeTrueForgeSpec({
   registeredGithubConnector = null,
   sandboxProviderVerified = false,
@@ -24,13 +32,14 @@ export function buildNativeTrueForgeSpec({
   if (!Array.isArray(config.github_tools) || config.github_tools.length!==1 ||
       config.github_tools[0] !== "@read-only")
     throw new Error("NATIVE_PROFILE_REJECTED: unexpected GitHub tool permissions");
+  const approval = validateApprovalTools(config.mcp_approval);
   const manifest = {
     model: { ...reviewer.model },
     instructions: instructions.trim(),
     mcp_servers: [{
       name: registeredGithubConnector,
       enable_tools: ["@read-only"],
-      require_approval_for_tools: config.mcp_approval,
+      require_approval_for_tools: approval,
       preload: false,
     }],
     config: JSON.parse(JSON.stringify(config.config)),
