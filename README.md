@@ -3,6 +3,15 @@
 > **Learning safety notice (2026-10-31):** This is an experimental TrueForge self-improvement harness, not a qualified production self-learning service. `run-evals` requires explicit operator authorisation and saves results outside the public Git repository; `improve` creates only a private candidate. No model-generated revision is promoted automatically. An independent verifier, protected holdouts, and a reviewed release are required. Legacy quickstart steps below are historical and do not override these restrictions.
 
 
+
+## Model providers: DeepSeek API and ChatGPT OAuth
+
+Gate Keeper supports a DeepSeek OpenAI-compatible provider profile through TrueForge (economy `deepseek-flash`; advanced `deepseek-v4-pro`) and a **local open-source** ChatGPT OAuth account connection. The current Claude model remains the default.
+
+Run `npm run providers:status` to inspect configuration, or `npm run connect:chatgpt -- login` on a local installation to authorise a ChatGPT identity and eligible plan-usage scopes. Signing in does **not** yet route ChatGPT OAuth inference through TrueForge; the hosted commercial integration is disabled pending approval and independent budget verification.
+
+See [provider setup and security constraints](docs/providers.md).
+
 Starter repo for the **Stranger Builds** challenge *"Build an agent that gets better every time it runs"* (sponsor: [TrueForge](https://trueforge.dev) by TrueFoundry).
 
 It gives you a working loop on day one, so you spend the week on the agent:
