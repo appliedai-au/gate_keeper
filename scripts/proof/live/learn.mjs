@@ -85,18 +85,27 @@ const pick = (a) => a && ({ turns: a.turns, expected_issues: a.expected_issues, 
   precision: a.precision, severity_accuracy: a.severity_accuracy, explanation_correctness: a.explanation_correctness, total_tokens: a.total_tokens,
   unjudged_findings: a.unjudged_findings, unparseable_replies: a.unparseable_replies });
 
-/** Per-tenant matched/false-positive counts plus security key issues matched. */
-function perTenant(arm, results, adj) {
+/** Per-tenant counts plus the exact key issues matched (task:expected_id), so swaps are visible. */
+export function perTenant(arm, results, adj) {
   const out = {};
   for (const r of results.filter((x) => x.arm === arm)) {
-    const t = (out[r.task.tenant] ||= { matched: 0, false_positives: 0, expected: 0, security_matched: 0 });
+    const t = (out[r.task.tenant] ||= { matched: 0, false_positives: 0, expected: 0, matchedIds: new Set(), securityIds: new Set() });
     const { falseAlarms, misses } = reviewErrors(r, adj.judgements, adj.blindKey);
     const key = answerKey(r.task), missed = new Set(misses.map((m) => m.expected_id));
-    t.expected += key.length; t.matched += key.length - missed.size; t.false_positives += falseAlarms.length;
-    t.security_matched += key.filter((e) => !missed.has(e.expected_id) && e.categories.includes("security")).length;
+    t.expected += key.length; t.false_positives += falseAlarms.length;
+    for (const e of key) if (!missed.has(e.expected_id)) {
+      t.matched++; t.matchedIds.add(`${r.task.id}:${e.expected_id}`);
+      if (e.categories.includes("security")) t.securityIds.add(`${r.task.id}:${e.expected_id}`);
+    }
   }
   return out;
 }
+
+/** Key issues matched before and missing after, per tenant (identity, not counts). */
+export function lostIssues(before, after, tenants, field) {
+  return Object.fromEntries(tenants.map((t) => [t, [...(before[t]?.[field] || [])].filter((id) => !after[t]?.[field]?.has(id))]));
+}
+const countsOnly = (x) => x && { matched: x.matched, false_positives: x.false_positives, expected: x.expected, security_matched: x.securityIds.size };
 
 export async function runLearning({ env, model, publicTasks, budget, callTurn, newSession, ev, emit, limitations }) {
   const dev = decodeHoldout(env.GK_DEV_HOLDOUT_B64);
@@ -152,7 +161,8 @@ export async function runLearning({ env, model, publicTasks, budget, callTurn, n
     const out = await callTurn("learn", `capture/${tenant}/${r.task.id}`, captureSession[tenant], prompt, LEARN_CAPTURE.length, 900);
     if (out.refused) { captureRefused = true; limitations.push("learn: tenant lesson capture stopped early (budget or deadline); later stages not run"); break; }
     ev.put(`private/learn/tenants/${tenant}/capture-${r.task.id}.json`, { reply: out.text, turn_id: out.turnId }, "tenant_private_lesson");
-    for (const l of parseJsonBlock(out.text)?.lessons || []) {
+    const lessons = parseJsonBlock(out.text)?.lessons;
+    for (const l of Array.isArray(lessons) ? lessons : []) {
       if (!l || typeof l.rule !== "string") continue;
       lessonsByTenant[tenant].push({ error: l.error === "miss" ? "miss" : "false_alarm", rule: l.rule.slice(0, 400), applies_when: String(l.applies_when || "").slice(0, 200), turn_id: out.turnId });
     }
@@ -174,7 +184,8 @@ export async function runLearning({ env, model, publicTasks, budget, callTurn, n
   const selOut = await callTurn("learn", "population-select", selectSession, "Contributed lessons:\n```json\n" + JSON.stringify(pool, null, 1) + "\n```", LEARN_SELECT.length, 1500);
   if (selOut.refused) { stages.population_ingestion = "INCOMPLETE"; return done(); }
   ev.put("private/learn/population-selection.json", { reply: selOut.text, turn_id: selOut.turnId, labels: Object.fromEntries(labelToTenant) }, "population_selection");
-  const proposed = (parseJsonBlock(selOut.text)?.rules || []).filter((r) => r && typeof r.rule === "string").slice(0, MAX_RULES * 2);
+  const rawRules = parseJsonBlock(selOut.text)?.rules;
+  const proposed = (Array.isArray(rawRules) ? rawRules : []).filter((r) => r && typeof r.rule === "string").slice(0, MAX_RULES * 2);
   const screened = proposed.map((r) => {
     const support = verifiedSupport(r.tenants, labelToTenant, contributors);
     const rejection = ruleRejection(r.rule, devTasks) || (support.length < POPULATION_MIN_TENANTS ? "INSUFFICIENT_TENANT_SUPPORT" : null);
@@ -199,10 +210,11 @@ export async function runLearning({ env, model, publicTasks, budget, callTurn, n
   const after = aggregateArm("gate_keeper_learned", q.results, qAdj.judgements, qAdj.blindKey);
   ev.put("private/learn/qualify-replies.json", q.results.map(({ task, ...r }) => ({ ...r, task_id: task.id, tenant: task.tenant })), "candidate_replies");
   const tBefore = perTenant("gate_keeper", a.results, aAdj), tAfter = perTenant("gate_keeper_learned", q.results, qAdj);
-  const tenantRegressions = tenants.filter((t) => (tAfter[t]?.matched ?? 0) < (tBefore[t]?.matched ?? 0));
-  const securityLost = tenants.reduce((n, t) => n + Math.max(0, (tBefore[t]?.security_matched ?? 0) - (tAfter[t]?.security_matched ?? 0)), 0);
+  const lost = lostIssues(tBefore, tAfter, tenants, "matchedIds"), lostSec = lostIssues(tBefore, tAfter, tenants, "securityIds");
+  const tenantRegressions = tenants.filter((t) => lost[t].length);
+  const securityLost = tenants.reduce((n, t) => n + lostSec[t].length, 0);
   pub.dev_after = pick(after);
-  pub.per_tenant = Object.fromEntries(tenants.map((t) => [t, { before: tBefore[t], after: tAfter[t] }]));
+  pub.per_tenant = Object.fromEntries(tenants.map((t) => [t, { before: countsOnly(tBefore[t]), after: countsOnly(tAfter[t]), issues_lost: lost[t].length }]));
   pub.tenant_regressions = tenantRegressions.length;
   pub.security_issues_lost = securityLost;
   const qualified = !after.unjudged_findings && after.false_positives < before.false_positives && tenantRegressions.length === 0 && securityLost === 0;

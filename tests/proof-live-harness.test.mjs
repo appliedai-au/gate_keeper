@@ -348,3 +348,12 @@ test("learning: anonymisation filter, tenancy and verified support", async () =>
   assert.throws(() => e2e({ env: { GK_PROOF_MODE: "learn", GK_PRIVATE_HOLDOUT_B64: "" } }), /UNSEEN_HOLDOUT_REQUIRED/);
   assert.throws(() => e2e({ env: { GK_PROOF_MODE: "fast" } }), /PROOF_MODE_INVALID/);
 });
+
+test("learning: qualification detects a swapped key issue (identity, not counts), including security", async () => {
+  const { lostIssues } = await import("../scripts/proof/live/learn.mjs");
+  const before = { "tenant-a": { matchedIds: new Set(["t1:E1", "t1:E2"]), securityIds: new Set(["t1:E1"]) } };
+  const after = { "tenant-a": { matchedIds: new Set(["t1:E2", "t1:E3"]), securityIds: new Set() } };
+  assert.deepEqual(lostIssues(before, after, ["tenant-a"], "matchedIds"), { "tenant-a": ["t1:E1"] });
+  assert.deepEqual(lostIssues(before, after, ["tenant-a"], "securityIds"), { "tenant-a": ["t1:E1"] });
+  assert.deepEqual(lostIssues(before, { "tenant-a": { matchedIds: new Set(["t1:E1", "t1:E2"]) } }, ["tenant-a"], "matchedIds"), { "tenant-a": [] });
+});
