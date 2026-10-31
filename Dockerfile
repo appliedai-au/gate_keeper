@@ -12,5 +12,5 @@ ENV NODE_ENV=production \
 USER node
 EXPOSE 8790
 HEALTHCHECK --interval=20s --timeout=5s --start-period=60s --retries=5 \
-    CMD node -e "fetch('http://127.0.0.1:8790/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+    CMD node -e "fetch('http://127.0.0.1:'+ (process.env.PORT || '8790') +'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "node_modules/@truefoundry/trueforge/dist/main.js"]
