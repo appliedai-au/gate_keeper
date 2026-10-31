@@ -2,7 +2,7 @@ import React,{useEffect,useMemo,useRef,useState} from "react";
 import "./ControlDeck.css";
 
 // Product controls exercise deterministic examples only. The actual repair
-// implementation lives separately in scripts/execution/isolated-runner.mjs.
+// Execution is delegated to TrueForge native sandbox/subagents; no parallel runner.
 const CASES={
  security:{title:"Tenant isolation",risk:"Invoice query is not tenant-scoped",extra:"Negative cross-tenant test is missing",patch:"Add tenantId to query predicate",check:"Cross-tenant access is denied"},
  privacy:{title:"Data privacy",risk:"Customer email written into logs",extra:"Redaction regression is missing",patch:"Replace PII log with trace ID",check:"Logs contain no customer identifiers"},
@@ -111,13 +111,13 @@ export default function ControlDeck(){
    <div className="cd-card cd-exec-card">
     <h3><span>04</span> Built-in executor</h3>
     <div className="cd-exec-belt"><span>REVIEW</span><span>FIX</span><span>TEST</span><span>POLL</span><span>KEEP / REVERT</span></div>
-    <p className="cd-exec-desc">Isolated repair code is implemented in the repository. This control room visualises its lifecycle; it does not connect to the live worker.</p>
+    <p className="cd-exec-desc">TrueForge supplies the native sandbox, tool loop and subagents. This control room simulates their lifecycle; it is not yet connected to a verified live repair session.</p>
     <div className="cd-exec-result" aria-live="polite"><span className={"cd-status-lamp "+status}/><strong>{copy[status]}</strong></div>
     {status==="approval"&&<button type="button" className="cd-approve" onClick={advance}>Approve simulated fix →</button>}
     <div className="cd-run-actions"><button type="button" className="cd-run" onClick={begin}>Run configured example ↗</button><button type="button" className="cd-reset" onClick={()=>reset()}>Reset</button></div>
-    <div className="cd-exec-foot">PATCH / {scenario.patch}<br/>VALIDATION / {scenario.check}<br/>WORKER / NOT YET DEPLOYED</div>
+    <div className="cd-exec-foot">PATCH / {scenario.patch}<br/>VALIDATION / {scenario.check}<br/>NATIVE TRUEFORGE EXECUTION / NOT YET QUALIFIED</div>
    </div>
   </div>
-  <div className="cd-footnote">All outcomes on this page are deterministic demonstration fixtures. A production job needs a signed budget lease, tenant-scoped authorization, an isolated runner, a verified test result and independent evidence before a patch may be retained.</div>
+  <div className="cd-footnote">All outcomes on this page are deterministic demonstration fixtures. A production job needs a signed budget lease, tenant-scoped authorization, a qualified TrueForge sandbox, a verified test result and independent evidence before a patch may be retained.</div>
  </section>;
 }
