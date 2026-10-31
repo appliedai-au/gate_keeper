@@ -1,5 +1,7 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import "./AdversarialLab.css";
+import ControlDeck from "./ControlDeck";
+import LearningLab from "./LearningLab";
 
 /**
  * Interactive scripted product walkthrough: no TrueForge API requests.
@@ -146,6 +148,7 @@ export default function AdversarialLab({ onReview, onControls }) {
   const [phase,setPhase]=useState(0);
   const [playing,setPlaying]=useState(false);
   const [expanded,setExpanded]=useState(false);
+  const missionRef=useRef(null);
   const step=SCENES[phase];
 
   useEffect(()=>{
@@ -155,7 +158,10 @@ export default function AdversarialLab({ onReview, onControls }) {
     return ()=>clearTimeout(id);
   },[phase,playing]);
 
-  const start=useCallback(()=>{setExpanded(true);setPhase(1);setPlaying(true);},[]);
+  const start=useCallback(()=>{
+    setExpanded(true);setPhase(1);setPlaying(true);
+    missionRef.current?.scrollIntoView({behavior:"smooth",block:"start"});
+  },[]);
   const jump=useCallback((index)=>{setExpanded(true);setPlaying(false);setPhase(index);},[]);
   const advance=useCallback(()=>{setExpanded(true);setPlaying(false);setPhase(p=>Math.min(4,p+1));},[]);
 
@@ -176,7 +182,8 @@ export default function AdversarialLab({ onReview, onControls }) {
               <button className="al-start" type="button" onClick={start} aria-label={phase>0?"Replay scripted investigation":"Start scripted investigation"}>
                 <span className="al-start-disc">{phase>0?"↻":"▶"}</span>{phase>0?"Replay investigation":"Run the investigation"}<span className="al-action-arrow">↗</span>
               </button>
-              <button className="al-secondary" type="button" onClick={()=>{setExpanded(true);setPhase(3);setPlaying(false);}}>Jump to the evidence ↗</button>
+              <button className="al-secondary" type="button" onClick={()=>{setExpanded(true);setPhase(3);setPlaying(false);missionRef.current?.scrollIntoView({behavior:"smooth",block:"start"});}}>Jump to the evidence ↗</button>
+              <button className="al-secondary" type="button" onClick={()=>document.getElementById("gatekeeper-control-deck")?.scrollIntoView({behavior:"smooth",block:"start"})}>Configure executor ↗</button>
             </div>
             <p className="al-disclosure"><strong>DEMONSTRATION MODE.</strong> This is a scripted educational scenario, not a live TrueForge inference, penetration test or verified learning result.</p>
           </div>
@@ -191,7 +198,7 @@ export default function AdversarialLab({ onReview, onControls }) {
         </div>
         <div className="al-hero-foot"><span>01 &nbsp; / &nbsp; OBSERVE THE FAILURE PATH</span><span>SCROLL TO EXPLORE <b>↓</b></span></div>
       </section>
-      <section className={"al-mission"+(expanded?" al-mission-active":"")} aria-label="Interactive sample adversarial investigation">
+      <section ref={missionRef} className={"al-mission"+(expanded?" al-mission-active":"")} aria-label="Interactive sample adversarial investigation">
         <div className="al-mission-title">
           <div><span className="al-overline">MISSION CONTROL / SIMULATED WALKTHROUGH</span><h2>One line. <em>One broken boundary.</em></h2></div>
           <div className="al-mission-id"><span>SPECIMEN</span><strong>INV-001 / INVOICE ACCESS</strong></div>
@@ -229,6 +236,8 @@ export default function AdversarialLab({ onReview, onControls }) {
           </div>
         </div>
       </section>
+      <div id="gatekeeper-control-deck"><ControlDeck /></div>
+      <LearningLab />
       <section className="al-manifesto">
         <div className="al-manifesto-label"><span>OUR PRINCIPLE</span><span>PROOF / BEFORE / PROMOTION</span></div>
         <p>A finding isn't intelligence <em>until you can inspect the evidence.</em></p>
