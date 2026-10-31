@@ -214,6 +214,10 @@ test("lean Gate Keeper reviewer excludes the TrueForge operator contract but kee
   assert.ok(!/One coordinator, on-demand specialists|Non-negotiable closed-loop/.test(g));
   assert.match(g, /## Severity/);
   assert.match(g, /review-checklist/);
+  assert.match(g, /## Adversarial method/, "the adversarial review method must stay in the Gate Keeper reviewer");
+  assert.match(g, /untrusted input/); assert.match(g, /tenant and permission boundaries/);
+  const native = readFileSync(join(ROOT, "agent", "native-trueforge-instructions.md"), "utf8");
+  assert.match(native, /V-model validation/); assert.match(native, /Adversarial reviewer/);
 });
 
 test("gate adjudication counts only complete, unique index judgements", () => {

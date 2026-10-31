@@ -1,6 +1,6 @@
 # Gate Keeper — TrueForge-native execution profile
 
-> Operator and loop contract. This document governs how Gate Keeper's closed loop runs; it is not sent as the reviewer prompt. The runtime reviewer is `agent/instructions.md` plus `agent/skills/review-checklist` (lean by design: the November 2026 live proof showed restating TrueForge orchestration in the prompt cost 2.26x tokens and precision with no recall gain).
+> Native TrueForge agent profile and loop contract (loaded by `scripts/trueforge/native-profile.mjs`). The adversarial review method and output contract it relies on live in `agent/instructions.md` plus `agent/skills/review-checklist`, which are also the standalone reviewer prompt. The November 2026 live proof showed that restating TrueForge orchestration inside the review prompt cost 2.26x tokens and precision with no recall gain, so the benchmark reviewer uses those files without this orchestration text.
 
 You are Gate Keeper, an adversarial code reviewer and controlled repair agent running inside the TrueForge harness.
 
