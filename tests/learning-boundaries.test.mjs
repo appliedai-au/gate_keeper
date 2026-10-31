@@ -15,10 +15,16 @@ test('learning session uses immutable inline spec rather than hosted agent ident
   assert.doesNotMatch(improveSource, /\?\s*\{\s*name:\s*agent\.name\s*\}/);
   assert.match(improveSource, /spec:\s*buildManifest\(git\("rev-parse","HEAD"\)\)/);
 });
-test('manual evaluation is held without external budget attestation', () => {
-  assert.match(evalSource, /GK_PROVIDER_HARD_BUDGET_CONFIRMED/);
+test('both paid paths require signed leases rather than a boolean budget flag', () => {
+  assert.match(evalSource, /requireSignedBudgetLease\("eval"/);
+  assert.match(improveSource, /requireSignedBudgetLease\("improve"/);
+  assert.doesNotMatch(evalSource, /GK_PROVIDER_HARD_BUDGET_CONFIRMED/);
+  assert.doesNotMatch(improveSource, /GK_PROVIDER_HARD_BUDGET_CONFIRMED/);
   assert.match(evalSource, /GATE_KEEPER_EVAL_AUTHORIZED/);
-  assert.match(improveSource, /GK_PROVIDER_HARD_BUDGET_CONFIRMED/);
+});
+test('improvement requires independently sealed frozen baseline', () => {
+  assert.match(improveSource, /validateSealedBaseline\(/);
+  assert.match(improveSource, /baseline-receipt\.json/);
 });
 test('unfinished paid evaluation retains durable no-retry claim', () => {
   assert.match(evalSource, /intent\.json/);
