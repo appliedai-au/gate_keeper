@@ -9,6 +9,7 @@ import {
  normalizeEmail,verifyExpectedAccount,accountRef,
  assertActiveAccount,requireUserScopedInference
 } from "../scripts/providers/account-identity.mjs";
+import {requireNoOAuthFallback} from "../scripts/providers/runtime-policy.mjs";
 
 const host="urn:uuid:"+randomUUID();
 const account=(id,sub,email)=>({
@@ -85,4 +86,11 @@ test("an unknown ChatGPT account cannot be selected by email or fabricated clien
  assert.match(result.stderr,/account missing|existing account/i);
  const noEmailLogin=cli(home,"select","first@example.com");
  assert.equal(noEmailLogin.status,2);
+}));
+
+test("selected local ChatGPT account blocks all implicit TrueForge fallback",()=>withHome(home=>{
+ assert.equal(requireNoOAuthFallback({env:{},home}),true);
+ assert.throws(()=>requireNoOAuthFallback({env:{GK_MODEL_PROVIDER:"chatgpt"},home}),/no model fallback/);
+ assert.equal(cli(home,"select",first.client_id).status,0);
+ assert.throws(()=>requireNoOAuthFallback({env:{},home}),/no model fallback/);
 }));
