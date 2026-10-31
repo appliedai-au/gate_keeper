@@ -59,9 +59,9 @@ Deno.serve(async (request) => {
       connected: upstream.ok,
       runtime: upstream.ok ? "reachable" : "unavailable",
       checkedAt: new Date().toISOString(),
-    }, { status: upstream.ok ? 200 : 503 });
+    }, upstream.ok ? 200 : 503);
   } catch {
-    return Response.json({
+    return respond({
       connected: false,
       runtime: "unavailable",
       checkedAt: new Date().toISOString(),
