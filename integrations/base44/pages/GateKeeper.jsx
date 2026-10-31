@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import GateKeeperConnectionPanel from "../components/GateKeeperConnectionPanel";
+import AdversarialLab from "../components/AdversarialLab";
 import "./GateKeeper.css";
 
 // A product walkthrough fixture, not output from TrueForge. Never display it
@@ -101,61 +102,6 @@ function Finding({ item, index, active, onChoose }) {
       <span className="gk-finding-title">{item.title}</span>
       <span className="gk-finding-type">{item.type} · lines {item.lines.join(", ")}</span>
     </button>
-  );
-}
-
-function Overview({ onSample, onControls }) {
-  return (
-    <>
-      <div className="gk-hero">
-        <div className="gk-hero-copy">
-          <Eyebrow>AN ADVERSARIAL REVIEW AGENT</Eyebrow>
-          <h1>Find the flaw.<br /><em>Before it ships.</em></h1>
-          <p className="gk-hero-subtitle">
-            A second set of eyes for the changes that matter. Gate Keeper examines proposed code,
-            traces concrete risks, and explains what needs attention—without taking control of your repository.
-          </p>
-          <div className="gk-hero-actions">
-            <button className="gk-button gk-button-primary" type="button" onClick={onSample}>
-              Explore a sample review <span aria-hidden="true">↗</span>
-            </button>
-            <button className="gk-button gk-button-quiet" type="button" onClick={onControls}>
-              How the safeguards work <span aria-hidden="true">→</span>
-            </button>
-          </div>
-          <div className="gk-hero-trust"><span className="gk-trust-check">✓</span> Read-only reviews <span className="gk-trust-divider">/</span> Human-approved changes <span className="gk-trust-divider">/</span> TrueForge engine</div>
-        </div>
-        <div className="gk-hero-visual">
-          <div className="gk-review-float gk-review-float-top"><span className="gk-tag-circle" /> REVIEW / 001 <span>FIXTURE</span></div>
-          <MiniCode />
-          <div className="gk-review-float gk-review-float-bottom">
-            <span className="gk-alert-symbol">!</span>
-            <span><strong>2 findings illustrated</strong><small>1 high · 1 medium</small></span>
-            <span className="gk-float-arrow">↗</span>
-          </div>
-        </div>
-      </div>
-      <div className="gk-bottom-label"><span>THE REVIEW LOOP</span><span>01 — 03</span></div>
-      <div className="gk-steps">
-        {[
-          ["01", "Inspect", "Examine the proposed change, not just the happy path."],
-          ["02", "Challenge", "Look for broken boundaries, hidden assumptions and failure modes."],
-          ["03", "Explain", "Return concrete, inspectable findings for a human decision."],
-        ].map(([number, title, detail]) => (
-          <div className="gk-step" key={number}>
-            <span className="gk-step-number">{number}</span>
-            <span className="gk-step-line" aria-hidden="true" />
-            <h3>{title}</h3>
-            <p>{detail}</p>
-          </div>
-        ))}
-      </div>
-      <div className="gk-overview-note">
-        <span className="gk-label-small">ENGINE & OWNERSHIP</span>
-        <p><strong>Powered by TrueForge.</strong> The agent runs on Railway. This Base44 interface is the control surface, not a replacement AI engine.</p>
-        <button type="button" onClick={onControls}>View operating boundaries <span>↗</span></button>
-      </div>
-    </>
   );
 }
 
@@ -279,7 +225,7 @@ export default function GateKeeper() {
           </div>
         </aside>
         <main id="gk-main-content" className="gk-content">
-          {page === "Overview" && <Overview onSample={() => navigate("Review")} onControls={() => navigate("Settings")} />}
+          {page === "Overview" && <AdversarialLab onReview={() => navigate("Review")} onControls={() => navigate("Settings")} />}
           {page === "Review" && <Review onControls={() => navigate("Settings")} />}
           {(page === "Runs" || page === "Evidence") && <EmptyView kind={page} onDemo={() => navigate("Review")} />}
           {page === "Settings" && <Settings />}
