@@ -24,6 +24,7 @@ import {
   TASKS_DIR,
   ROOT,
   buildManifest,
+  requireSignedBudgetLease,
   taskPrompt,
   writeJson,
 } from "./lib.ts";
@@ -31,9 +32,9 @@ import {
 const HEADER = "run,session_id,agent_commit,score,date_utc,tasks_passed,tasks_total,tokens,tool_calls,duration_s";
 
 if(process.env.GATE_KEEPER_EVAL_AUTHORIZED!=="1") die("EVAL_NOT_AUTHORIZED: explicit model-evaluation approval required");
-// Attestation is NOT a budget mechanism. Controller must independently verify the
-// provider-side ceiling before setting it; without that evidence no paid calls.
-if(process.env.GK_PROVIDER_HARD_BUDGET_CONFIRMED!=="1") die("BUDGET_UNVERIFIED: externally enforced spend ceiling required");
+// A boolean assertion is not an enforced budget. Require a source-bound
+// signed lease from an independent gateway before any paid TrueForge call.
+if(!process.env.GK_RUN_ID) die("BUDGET_UNVERIFIED: signed run identity missing");
 if((readAgent().agent.skill_mode ?? "inline")!=="inline") die("EVAL_UNSUPPORTED: only tool-free inline agent evaluation is qualified");
 const benchmarkFiles=readdirSync(TASKS_DIR).filter(x=>x.endsWith(".json")).sort();
 const benchmarkHash=createHash("sha256");
@@ -68,18 +69,20 @@ const rows = readFileSync(SUMMARY_CSV, "utf8").trim().split("\n").slice(1).filte
 const run = rows.length + 1;
 const dir = runDir(run);
 const nn = String(run).padStart(2, "0");
-// Persist intent before making any paid request; an uncertain run retains the
-// lock and cannot be rerun without explicit operator reconciliation.
+// All deterministic pre-spend refusals happen while the run lock is held,
+// but BEFORE writing intent.json or retaining that lock. A rejected lease
+// must not strand the lock or consume an undersized one-time grant.
+const agent = readAgent().agent;
+const manifest = buildManifest(agentCommit);
+const tasks = loadTasks();
+const tf = client();
+const permit=requireSignedBudgetLease("eval",agentCommit,benchmarkSha256,
+  agent.model.name,process.env.GK_RUN_ID!,tasks.length);
+// A successful claim must remain non-retryable after any subsequent failure.
+// Persist intent before making any paid request; an uncertain run retains it.
+retainClaim=true;
 writeJson(join(dir, "intent.json"), {run, agent_commit:agentCommit, benchmark_sha256:benchmarkSha256,
   status:"admitted_no_verdict", budget:"externally_attested", promotion:"DISABLED"});
-retainClaim=true;
-
-// Evaluations must not modify the shared hosted TrueForge agent.
-// The inline agent manifest is tied to this immutable local source snapshot.
-const tf = client();
-const agent = readAgent().agent;
-const manifest = buildManifest(headSha());
-const tasks = loadTasks();
 console.log(`Run ${nn}: isolated TrueForge spec for "${agent.name}" at ${agentCommit.slice(0, 7)}, ${tasks.length} tasks`);
 
 // 3. One session for the whole run. https://trueforge.dev/api/overview#session

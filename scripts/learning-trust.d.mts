@@ -1,0 +1,5 @@
+export interface EvidenceSignature {body:Record<string,any>;signature:string}
+export declare function digest(value:string|Uint8Array):string;
+export declare function verifyEnvelope(input:{body:Record<string,any>;signature:string;publicKeyPem:string;pinnedFingerprint:string|undefined}):Record<string,any>;
+export declare function verifyBudgetLease(input:{body:Record<string,any>;signature:string;publicKeyPem:string;pinnedFingerprint:string|undefined;expected:{action:string;source_commit:string;benchmark_sha256:string;model:string;gateway_id:string|undefined;purpose:string;run_id:string};now?:number}):Readonly<{max_calls:number;max_usd:number;lease_id:string;expires_at:string}>;
+export declare function verifyBaselineReceipt(input:{body:Record<string,any>;signature:string;publicKeyPem:string;pinnedFingerprint:string|undefined;expected:{run:number;source_commit:string;benchmark_sha256:string;score_sha256:string;results_sha256:string;scorer_sha256:string;session_id:string}}):Readonly<{run:number;source_commit:string;benchmark_sha256:string;session_id:string}>;

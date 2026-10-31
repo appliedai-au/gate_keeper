@@ -3,26 +3,122 @@
 // field names (previousTurnId, iterationLimit); the HTTP API and the docs' JSON use snake_case.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync, realpathSync, chmodSync, openSync, closeSync, fsyncSync, constants } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, relative, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TrueForge, TrueForgeApi } from "@truefoundry/trueforge-sdk";
+import { verifyBudgetLease } from "./learning-trust.mjs";
 import { resolveTrueForgeModel } from "./providers/registry.mjs";
 import { requireNoOAuthFallback } from "./providers/runtime-policy.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const AGENT_DIR = join(ROOT, "agent");
 export const TASKS_DIR = join(ROOT, "evals", "tasks");
-// Never put provider transcripts or private evaluation evidence in this public Git checkout.
+// Private records are never authorised to land in a public Git checkout.
+const canonicalRoot=realpathSync(ROOT);
 export const PRIVATE_ROOT = resolve(process.env.GATE_KEEPER_STATE_DIR || join(homedir(), ".local", "state", "gate-keeper"));
-if (PRIVATE_ROOT === ROOT || PRIVATE_ROOT.startsWith(ROOT + "/")) throw new Error("private state must be outside checkout");
+if (PRIVATE_ROOT === ROOT || PRIVATE_ROOT.startsWith(ROOT + "/"))
+  throw new Error("PRIVATE_EVIDENCE_REJECTED: state directory inside checkout");
 mkdirSync(PRIVATE_ROOT, {recursive:true, mode:0o700});
+// Reject every symlinked ancestor; a symlink above the private root could
+// otherwise point all the nominally external evidence into the public repo.
+function assertRealDirectory(path:string):void {
+  const full=resolve(path);
+  const anchor=parse(full).root;
+  let current=anchor;
+  for (const part of full.slice(anchor.length).split("/").filter(Boolean)) {
+    current=join(current,part);
+    const st=lstatSync(current);
+    if(st.isSymbolicLink() || !st.isDirectory()) throw new Error("PRIVATE_EVIDENCE_REJECTED: symlink or non-directory ancestor");
+  }
+}
+assertRealDirectory(PRIVATE_ROOT);
+const realPrivate=realpathSync(PRIVATE_ROOT);
+if(realPrivate===canonicalRoot || realPrivate.startsWith(canonicalRoot+"/"))
+  throw new Error("PRIVATE_EVIDENCE_REJECTED: canonical checkout containment");
 const privateStat=lstatSync(PRIVATE_ROOT);
-if(!privateStat.isDirectory() || privateStat.isSymbolicLink() || (privateStat.mode & 0o077) ||
-  (process.getuid && privateStat.uid!==process.getuid())) throw new Error("private state must be an owner-only real directory");
-export const RUNS_DIR = join(PRIVATE_ROOT, "runs");
-export const SUMMARY_CSV = join(PRIVATE_ROOT, "summary.csv");
+if(process.getuid && privateStat.uid!==process.getuid())
+  throw new Error("PRIVATE_EVIDENCE_REJECTED: private directory owner");
+if(privateStat.mode & 0o077) chmodSync(PRIVATE_ROOT,0o700);
+export const RUNS_DIR=join(PRIVATE_ROOT,"runs");
+export const SUMMARY_CSV=join(PRIVATE_ROOT,"summary.csv");
+
+/** Every private output path must resolve inside the private root, without a
+ * symlinked path component. The final file is created exclusively (never
+ * replaced) so failed or duplicate model runs cannot overwrite evidence.
+ */
+export function assertPrivatePath(path:string):string {
+  const full=resolve(path);
+  const rel=relative(PRIVATE_ROOT,full);
+  if(!rel || rel===".." || rel.startsWith("../") || rel.startsWith("/") || rel.includes("\\"))
+    throw new Error("PRIVATE_EVIDENCE_REJECTED: path escapes private state");
+  // Walk each directory from a trusted private root. Never mkdir -p through
+  // an unverified symlink: that could create files outside the protected root.
+  let current=PRIVATE_ROOT;
+  for(const part of relative(PRIVATE_ROOT,dirname(full)).split("/").filter(Boolean)) {
+    current=join(current,part);
+    let st;
+    try {st=lstatSync(current);}
+    catch(err) {
+      if((err as NodeJS.ErrnoException).code!=="ENOENT") throw err;
+      mkdirSync(current,{mode:0o700});
+      st=lstatSync(current);
+    }
+    if(st.isSymbolicLink() || !st.isDirectory() ||
+       (process.getuid && st.uid!==process.getuid()))
+      throw new Error("PRIVATE_EVIDENCE_REJECTED: directory owner or type");
+    if(st.mode & 0o077) chmodSync(current,0o700);
+  }
+  // existsSync follows dangling symlinks and falsely returns false. lstat
+  // detects these even when their target does not exist.
+  try {
+    const st=lstatSync(full);
+    if(st.isSymbolicLink() || !st.isFile() ||
+       (process.getuid && st.uid!==process.getuid()))
+      throw new Error("PRIVATE_EVIDENCE_REJECTED: unsafe existing file");
+  } catch(err) {
+    if((err as NodeJS.ErrnoException).code!=="ENOENT") throw err;
+  }
+  return full;
+}
+
+/** Bounded, signed admission for individual TrueForge experiments.
+ * The signer and gateway must be independent. Claiming locally prevents
+ * same-volume replay, but is NOT a substitute for gateway-side accounting.
+ */
+export function requireSignedBudgetLease(action:"eval"|"improve",
+  source_commit:string,benchmark_sha256:string,model:string,run_id:string,
+  required_calls:number=1) {
+  const leasePath=process.env.GK_BUDGET_LEASE_FILE;
+  const pubkeyPath=process.env.GK_VERIFIER_PUBKEY_FILE;
+  const trustPin=process.env.GK_VERIFIER_SPKI_SHA256;
+  const gateway=process.env.GK_APPROVED_GATEWAY_ID;
+  if(!leasePath || !pubkeyPath || !trustPin || !gateway || !run_id)
+    throw new Error("BUDGET_REJECTED: independent gateway configuration missing");
+  const source=JSON.parse(readFileSync(assertPrivatePath(leasePath),"utf8"));
+  const key=readFileSync(pubkeyPath,"utf8");
+  const permit=verifyBudgetLease({body:source.body,signature:source.signature,
+    publicKeyPem:key,pinnedFingerprint:trustPin,
+    expected:{action,source_commit,benchmark_sha256,model,
+      gateway_id:gateway,run_id,purpose:action==="eval"?"private_eval":"private_improve"}});
+  // Check the complete planned invocation count BEFORE consuming this
+  // one-time signed lease or writing any replay claim.
+  if(!Number.isSafeInteger(required_calls) || required_calls<1 ||
+     required_calls>permit.max_calls)
+    throw new Error("BUDGET_REJECTED: planned model calls exceed signed lease ceiling");
+  const id=source.body.gateway_lease_id;
+  if(!id || typeof id!=="string") throw new Error("BUDGET_REJECTED: lease id missing");
+  const ledgerId=createHash("sha256").update(gateway+":"+id).digest("hex");
+  // Atomic create-only local replay record; crash leaves a claim, never
+  // silently refreshes the spend allowance. Multi-worker uniqueness must be
+  // enforced separately by the gateway.
+  writeJson(join(PRIVATE_ROOT,"lease-claims",ledgerId+".json"),
+    {gateway,lease_id:id,run_id,action,source_commit,benchmark_sha256,
+      state:"consumed_pending_gateway_settlement"});
+  return permit;
+}
 
 // ---------- config ----------
 
@@ -321,8 +417,14 @@ export function sessionStats(exp: SessionExport): { tokens: number | null; toolC
 }
 
 export function writeJson(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(value, null, 2) + "\n", {mode:0o600, flag:"wx"});
+  const safe=assertPrivatePath(path);
+  // Exclusive create and NOFOLLOW reject pre-existing files or final symlinks
+  // even if the final component changed after the lstat preflight.
+  const fd=openSync(safe,constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,0o600);
+  try {
+    writeFileSync(fd,JSON.stringify(value,null,2)+"\n");
+    fsyncSync(fd);
+  } finally {closeSync(fd);}
 }
 
 export function runDir(n: number): string {

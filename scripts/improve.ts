@@ -1,8 +1,10 @@
 // Candidate-only TrueForge learning. Never write to active agent/ or publish private
 // evaluation transcripts. Promotion requires an independent signed qualification.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { validateCandidate, candidateDigest } from "./learning-policy.mjs";
+import { validateSealedBaseline } from "./learning-baseline.mjs";
 import { join, normalize } from "node:path";
 import type { TaskScore } from "../evals/score.ts";
 import {
@@ -18,6 +20,8 @@ import {
   option,
   readAgent,
   ROOT,
+  assertPrivatePath,
+  requireSignedBudgetLease,
   runDir,
   runTurn,
   SUMMARY_CSV,
@@ -34,20 +38,40 @@ const dir = runDir(run);
 const nn = String(run).padStart(2, "0");
 if (!existsSync(join(dir, "results.json"))) die(`No results for run ${nn} in ${dir}`);
 if (!isClean("agent", "evals")) die("Training requires a committed, frozen agent and benchmark");
-if(process.env.GATE_KEEPER_EVAL_AUTHORIZED!=="1" || process.env.GK_PROVIDER_HARD_BUDGET_CONFIRMED!=="1")
-  die("IMPROVEMENT_HELD: operator approval and externally enforced provider spend ceiling required");
+if(process.env.GATE_KEEPER_EVAL_AUTHORIZED!=="1" || !process.env.GK_RUN_ID)
+  die("IMPROVEMENT_HELD: operator approval and signed run identity required");
 if((readAgent().agent.skill_mode ?? "inline")!=="inline")
   die("IMPROVEMENT_HELD: only tool-free inline agent improvement is qualified");
-const saved = JSON.parse(readFileSync(join(dir, "score.json"), "utf8"));
-if(saved.run!==run || saved.agent_commit!==git("rev-parse","HEAD") ||
-  !/^[0-9a-f]{64}$/.test(saved.benchmark_sha256||""))
-  die("IMPROVEMENT_HELD: evaluation source or benchmark provenance mismatch");
+// Do not let the learner grade its own history. Only a detached verifier can
+// attest that the frozen baseline, score, raw result and scorer match.
+const trustedKeyFile=process.env.GK_VERIFIER_PUBKEY_FILE;
+const trustedFingerprint=process.env.GK_VERIFIER_SPKI_SHA256;
+if(!trustedKeyFile || !trustedFingerprint)
+  die("IMPROVEMENT_HELD: independent verifier trust configuration missing");
+const scoreBytes=readFileSync(assertPrivatePath(join(dir,"score.json")));
+const resultsBytes=readFileSync(assertPrivatePath(join(dir,"results.json")));
+const receiptBytes=readFileSync(assertPrivatePath(join(dir,"baseline-receipt.json")));
+const scorerBytes=readFileSync(join(ROOT,"evals","score.ts"));
+const benchmarkHash=createHash("sha256");
+for(const file of readdirSync(join(ROOT,"evals","tasks")).filter(x=>x.endsWith(".json")).sort()) {
+  benchmarkHash.update(file);
+  benchmarkHash.update(readFileSync(join(ROOT,"evals","tasks",file)));
+}
+benchmarkHash.update(scorerBytes);
+const sourceCommit=git("rev-parse","HEAD");
+validateSealedBaseline({
+  scoreBytes, resultsBytes, receiptBytes, scorerBytes,
+  publicKeyPem:readFileSync(trustedKeyFile,"utf8"),
+  pinnedFingerprint:trustedFingerprint,
+  sourceCommit, benchmarkDigest:benchmarkHash.digest("hex"), run
+});
+const saved=JSON.parse(scoreBytes.toString("utf8"));
 if(existsSync(join(dir,"candidate.json")) || existsSync(join(dir,"improve-session.json")) ||
   existsSync(join(dir,"improve-intent.json")))
   die("IMPROVEMENT_HELD: previous attempt exists; reconcile before any paid retry");
 
 type Result = TaskScore & { reply: string };
-const results = JSON.parse(readFileSync(join(dir, "results.json"), "utf8")) as Result[];
+const results = JSON.parse(resultsBytes.toString("utf8")) as Result[];
 const tasks = new Map(loadTasks().map((t) => [t.id, t]));
 const failed = results.filter((r) => !r.passed && !r.holdout);
 if (!failed.length) {
@@ -116,7 +140,11 @@ ${feedback}
 
 // ---------- ask the agent ----------
 
-// Persist no-retry intent *before* invoking a paid TrueForge session.
+// Consume the independent budget lease *before* any paid TrueForge session.
+const permit=requireSignedBudgetLease("improve",sourceCommit,
+  saved.benchmark_sha256,agent.model.name,process.env.GK_RUN_ID!);
+if(permit.max_calls<1) die("IMPROVEMENT_HELD: no authorised model calls");
+// Persist no-retry intent before invoking a paid TrueForge session.
 writeJson(join(dir,"improve-intent.json"), {from_run:run, agent_commit:saved.agent_commit,
   benchmark_sha256:saved.benchmark_sha256, state:"admitted_unsettled", promotion:"DISABLED"});
 const tf = client();
