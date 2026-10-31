@@ -54,7 +54,10 @@ export async function runChatGPTPlanSmoke({accessToken,model,fetchImpl=fetch}){
  for await(const chunk of response.body){
    bytes+=chunk.length;
    if(bytes>300000)held("event stream exceeded safe bound");
-   buffer+=decoder.decode(chunk,{stream:true}).replaceAll("\r\n","\n");
+   // Normalise after combining chunks: an SSE CRLF separator may be split
+   // with "\\r" at the end of one TCP chunk and "\\n" at the next.
+   buffer+=decoder.decode(chunk,{stream:true});
+   buffer=buffer.replaceAll("\r\n","\n");
    let pos;
    while((pos=buffer.indexOf("\n\n"))>=0){
      const event=buffer.slice(0,pos);buffer=buffer.slice(pos+2);
