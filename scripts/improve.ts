@@ -7,6 +7,7 @@ import { join, normalize } from "node:path";
 import type { TaskScore } from "../evals/score.ts";
 import {
   client,
+  buildManifest,
   die,
   exportSession,
   flag,
@@ -28,10 +29,22 @@ import {
 const rows = existsSync(SUMMARY_CSV) ? readFileSync(SUMMARY_CSV, "utf8").trim().split("\n").slice(1).filter(Boolean) : [];
 if (!rows.length) die("No runs yet. Run npm run run-evals first.");
 const run = Number(option("run") ?? rows.length);
+if(!Number.isSafeInteger(run) || run<1 || run>rows.length) die("Invalid training run identifier");
 const dir = runDir(run);
 const nn = String(run).padStart(2, "0");
 if (!existsSync(join(dir, "results.json"))) die(`No results for run ${nn} in ${dir}`);
-if (!isClean("agent")) die("agent/ has uncommitted changes. Commit or discard them first: the agent's change must be its own.");
+if (!isClean("agent", "evals")) die("Training requires a committed, frozen agent and benchmark");
+if(process.env.GATE_KEEPER_EVAL_AUTHORIZED!=="1" || process.env.GK_PROVIDER_HARD_BUDGET_CONFIRMED!=="1")
+  die("IMPROVEMENT_HELD: operator approval and externally enforced provider spend ceiling required");
+if((readAgent().agent.skill_mode ?? "inline")!=="inline")
+  die("IMPROVEMENT_HELD: only tool-free inline agent improvement is qualified");
+const saved = JSON.parse(readFileSync(join(dir, "score.json"), "utf8"));
+if(saved.run!==run || saved.agent_commit!==git("rev-parse","HEAD") ||
+  !/^[0-9a-f]{64}$/.test(saved.benchmark_sha256||""))
+  die("IMPROVEMENT_HELD: evaluation source or benchmark provenance mismatch");
+if(existsSync(join(dir,"candidate.json")) || existsSync(join(dir,"improve-session.json")) ||
+  existsSync(join(dir,"improve-intent.json")))
+  die("IMPROVEMENT_HELD: previous attempt exists; reconcile before any paid retry");
 
 type Result = TaskScore & { reply: string };
 const results = JSON.parse(readFileSync(join(dir, "results.json"), "utf8")) as Result[];
@@ -103,13 +116,17 @@ ${feedback}
 
 // ---------- ask the agent ----------
 
+// Persist no-retry intent *before* invoking a paid TrueForge session.
+writeJson(join(dir,"improve-intent.json"), {from_run:run, agent_commit:saved.agent_commit,
+  benchmark_sha256:saved.benchmark_sha256, state:"admitted_unsettled", promotion:"DISABLED"});
 const tf = client();
 const coach = flag("coach");
 const { data: session } = await tf.sessions.create({
   // The agent itself (by name), or a coach: an inline TrueForge agent on the same model.
+  // Never reference or update the shared hosted agent during a learning trial.
   agent: coach
-    ? { spec: { model: agent.model, instructions: "You coach a code-review agent: you rewrite its instruction files from its failed runs.", config: { askUserQuestions: { enabled: false }, generativeUi: { enabled: false } } } }
-    : { name: agent.name },
+    ? { spec: { model: agent.model, instructions: "You coach a code-review agent; propose general rules without access to evaluators or code execution.", config: { askUserQuestions: { enabled: false }, generativeUi: { enabled: false } } } }
+    : { spec: buildManifest(git("rev-parse","HEAD")) },
   metadata: { purpose: "improve", learned_from_run: nn },
 });
 await tf.sessions.update(session.id, { title: `improve from run ${nn}` });
@@ -122,7 +139,7 @@ if (turn.status !== "done") die(`The turn ended with status ${turn.status}${turn
 
 const files = [...turn.text.matchAll(/<<<FILE ([^\n]+)\n([\s\S]*?)\n>>>/g)].map((m) => ({ path: normalize(m[1].trim()), text: m[2].trimEnd() + "\n" }));
 const learned = turn.text.match(/<<<LEARNED\n([\s\S]*?)\n>>>/)?.[1].trim() ?? "";
-if (!files.length) die(`The agent proposed no files. Its reply:\n\n${turn.text}`);
+if (!files.length) die("The learning model did not return valid candidate files");
 
 const allowed = /^agent\/(instructions\.md|skills\/[a-z0-9][a-z0-9-]*\/SKILL\.md)$/;
 for (const f of files) {
