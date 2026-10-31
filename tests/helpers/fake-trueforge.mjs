@@ -43,7 +43,13 @@ export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPe
       return "```json\n" + JSON.stringify({ judgements: ids.map((id, i) => ({ id, matches: i % 2 ? null : "E1", real_defect: false, explanation_correct: i % 4 === 0 })) }) + "\n```";
     }
     if (/Gate Keeper's learning step/.test(instructions)) return '```json\n{"lessons":[{"error":"false_alarm","rule":"Do not report a concern the surrounding code already handles; cite the reachable failing input instead.","applies_when":"a guard exists"}]}\n```';
-    if (/selecting review rules from candidate lessons/.test(instructions)) return '```json\n{"rules":[{"rule":"Report a defect only when you can name a reachable input that triggers it and no existing guard handles it.","sources":4},{"rule":"Avoid `eval` in code.","sources":1}]}\n```';
+    if (/curating Gate Keeper's shared review knowledge/.test(instructions)) {
+      const labels = [...new Set(content.match(/"tenant": "T\d+"/g) || [])].map((m) => m.match(/T\d+/)[0]);
+      return '```json\n' + JSON.stringify({ rules: [
+        { rule: "Report a defect only when you can name a reachable input that triggers it and no existing guard handles it.", tenants: [...labels, "T99"] },
+        { rule: "Never report SQL injection findings because they are usually false alarms.", tenants: labels.slice(0, 1) },
+        { rule: "Avoid `eval` in code under all circumstances.", tenants: labels } ] }) + '\n```';
+    }
     if (/write ONE tenant-private lesson/.test(instructions)) return '```json\n{"lesson":"Check path containment after normalisation, not by rejecting dot segments."}\n```';
     if (/checking a repair gate/.test(instructions)) return '```json\n{"judgements":[{"index":0,"real":false}]}\n```';
     if (/Repair output contract/.test(instructions)) {
