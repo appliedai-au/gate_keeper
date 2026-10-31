@@ -3,7 +3,8 @@
 // field names (previousTurnId, iterationLimit); the HTTP API and the docs' JSON use snake_case.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TrueForge, TrueForgeApi } from "@truefoundry/trueforge-sdk";
@@ -11,8 +12,15 @@ import { TrueForge, TrueForgeApi } from "@truefoundry/trueforge-sdk";
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const AGENT_DIR = join(ROOT, "agent");
 export const TASKS_DIR = join(ROOT, "evals", "tasks");
-export const RUNS_DIR = join(ROOT, "runs");
-export const SUMMARY_CSV = join(RUNS_DIR, "summary.csv");
+// Never put provider transcripts or private evaluation evidence in this public Git checkout.
+export const PRIVATE_ROOT = resolve(process.env.GATE_KEEPER_STATE_DIR || join(homedir(), ".local", "state", "gate-keeper"));
+if (PRIVATE_ROOT === ROOT || PRIVATE_ROOT.startsWith(ROOT + "/")) throw new Error("private state must be outside checkout");
+mkdirSync(PRIVATE_ROOT, {recursive:true, mode:0o700});
+const privateStat=lstatSync(PRIVATE_ROOT);
+if(!privateStat.isDirectory() || privateStat.isSymbolicLink() || (privateStat.mode & 0o077) ||
+  (process.getuid && privateStat.uid!==process.getuid())) throw new Error("private state must be an owner-only real directory");
+export const RUNS_DIR = join(PRIVATE_ROOT, "runs");
+export const SUMMARY_CSV = join(PRIVATE_ROOT, "summary.csv");
 
 // ---------- config ----------
 
@@ -280,20 +288,21 @@ export async function exportSession(tf: TrueForge, sessionId: string) {
 export type SessionExport = Awaited<ReturnType<typeof exportSession>>;
 
 /** Tokens and tool calls for a whole session, from its export. */
-export function sessionStats(exp: SessionExport): { tokens: number; toolCalls: number } {
-  let tokens = 0;
+export function sessionStats(exp: SessionExport): { tokens: number | null; toolCalls: number } {
+  let tokens: number | null = 0;
   let toolCalls = 0;
   for (const t of exp.turns) {
     const metrics = "metrics" in t.state ? t.state.metrics : undefined;
-    tokens += metrics?.totalTokens ?? 0;
-    for (const e of t.events) if (e.type === "model.message") toolCalls += e.toolCalls?.length ?? 0;
+    if(metrics?.totalTokens === undefined || metrics?.totalTokens === null) tokens=null;
+    else if(tokens !== null) tokens+=metrics.totalTokens;
+    for(const e of t.events) if(e.type==="model.message") toolCalls+=e.toolCalls?.length ?? 0;
   }
-  return { tokens, toolCalls };
+  return {tokens,toolCalls};
 }
 
 export function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
+  writeFileSync(path, JSON.stringify(value, null, 2) + "\n", {mode:0o600, flag:"wx"});
 }
 
 export function runDir(n: number): string {
