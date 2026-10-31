@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TrueForge, TrueForgeApi } from "@truefoundry/trueforge-sdk";
+import { resolveTrueForgeModel } from "./providers/registry.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const AGENT_DIR = join(ROOT, "agent");
@@ -91,7 +92,15 @@ export interface SkillFile {
 export function readAgent(): { agent: AgentFile; instructions: string; skills: SkillFile[] } {
   const agent = JSON.parse(readFileSync(join(AGENT_DIR, "agent.json"), "utf8")) as AgentFile;
   if (process.env.TF_AGENT_NAME) agent.name = process.env.TF_AGENT_NAME;
+  if (process.env.TF_MODEL && process.env.GK_MODEL_PROVIDER && process.env.GK_MODEL_PROVIDER!=="default")
+    throw new Error("MODEL_CONFIG_REJECTED: TF_MODEL conflicts with provider routing");
   if (process.env.TF_MODEL) agent.model = { ...agent.model, name: process.env.TF_MODEL };
+  const routed = resolveTrueForgeModel();
+  if (routed) {
+    // Provider-specific parameters vary: do not forward Claude's temperature
+    // default to DeepSeek reasoning models.
+    agent.model = { name: routed };
+  }
   const instructions = readFileSync(join(AGENT_DIR, "instructions.md"), "utf8");
   const skillsDir = join(AGENT_DIR, "skills");
   const skills: SkillFile[] = [];
