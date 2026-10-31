@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
 import {listChatGPTPlanModels,runChatGPTPlanSmoke} from "../scripts/providers/chatgpt-plan-smoke.mjs";
 
 const accessToken="test_token_not_real_1234567890123";
@@ -104,4 +105,16 @@ test("stream completion tolerates CRLF frame boundaries split between TCP chunks
   const result=await runChatGPTPlanSmoke({accessToken,model:"model-eligible-1",fetchImpl});
   assert.equal(result.completed,true);
   assert.equal(result.outputMatchesExpected,true);
+});
+
+test("completed stream with wrong answer is not a successful smoke verdict",async()=>{
+ const fetchImpl=async()=>new Response(sse([
+   'data: {"type":"response.output_text.delta","delta":"unexpected answer"}\n\n',
+   'data: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+ ]),{status:200});
+ const result=await runChatGPTPlanSmoke({accessToken,model:"model-eligible-1",fetchImpl});
+ assert.equal(result.completed,true);
+ assert.equal(result.outputMatchesExpected,false);
+ const cli=readFileSync(new URL("../scripts/providers/chatgpt-subscription-test.mjs",import.meta.url),"utf8");
+ assert.match(cli,/if\(!verdict\.outputMatchesExpected\)fail/);
 });
