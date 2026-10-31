@@ -3,7 +3,7 @@
 // field names (previousTurnId, iterationLimit); the HTTP API and the docs' JSON use snake_case.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync, realpathSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, relative, parse } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,8 +35,9 @@ const realPrivate=realpathSync(PRIVATE_ROOT);
 if(realPrivate===canonicalRoot || realPrivate.startsWith(canonicalRoot+"/"))
   throw new Error("PRIVATE_EVIDENCE_REJECTED: canonical checkout containment");
 const privateStat=lstatSync(PRIVATE_ROOT);
-if((privateStat.mode & 0o077) || (process.getuid && privateStat.uid!==process.getuid()))
-  throw new Error("PRIVATE_EVIDENCE_REJECTED: private directory must be owner-only");
+if(process.getuid && privateStat.uid!==process.getuid())
+  throw new Error("PRIVATE_EVIDENCE_REJECTED: private directory owner");
+if(privateStat.mode & 0o077) chmodSync(PRIVATE_ROOT,0o700);
 export const RUNS_DIR=join(PRIVATE_ROOT,"runs");
 export const SUMMARY_CSV=join(PRIVATE_ROOT,"summary.csv");
 
@@ -55,8 +56,19 @@ export function assertPrivatePath(path:string):string {
   for(const part of relative(PRIVATE_ROOT,dirname(full)).split("/").filter(Boolean)) {
     current=join(current,part);
     const st=lstatSync(current);
-    if((st.mode & 0o077) || (process.getuid && st.uid!==process.getuid()))
-      throw new Error("PRIVATE_EVIDENCE_REJECTED: directory permissions");
+    if(st.isSymbolicLink() || !st.isDirectory() ||
+       (process.getuid && st.uid!==process.getuid()))
+      throw new Error("PRIVATE_EVIDENCE_REJECTED: directory owner or type");
+    // Older releases made runs/ and run-NN/ with 0755 on a 022 umask.
+    // Tighten ONLY verified owner-controlled, real directories.
+    if(st.mode & 0o077) chmodSync(current,0o700);
+  }
+  // Existing evidence must not be read through a symlink or other special file.
+  if(existsSync(full)) {
+    const st=lstatSync(full);
+    if(st.isSymbolicLink() || !st.isFile() ||
+       (process.getuid && st.uid!==process.getuid()))
+      throw new Error("PRIVATE_EVIDENCE_REJECTED: unsafe existing file");
   }
   return full;
 }
