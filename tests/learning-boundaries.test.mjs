@@ -9,7 +9,7 @@ const libSource = readFileSync(new URL('../scripts/lib.ts', import.meta.url), 'u
 test('evaluation cannot mutate the hosted TrueForge agent', () => {
   assert.doesNotMatch(evalSource, /\bsyncAgent\s*\(/);
   assert.match(evalSource, /agent:\s*\{\s*spec:\s*manifest\s*\}/);
-  assert.match(evalSource, /buildManifest\(headSha\(\)\)/);
+  assert.match(evalSource, /buildManifest\(agentCommit\)/);
 });
 test('learning session uses immutable inline spec rather than hosted agent identity', () => {
   assert.doesNotMatch(improveSource, /\?\s*\{\s*name:\s*agent\.name\s*\}/);
@@ -42,4 +42,15 @@ test('private sessions never intentionally commit to public repository', () => {
   assert.match(libSource, /openSync\(safe,constants\.O_WRONLY/);
   assert.match(libSource, /constants\.O_NOFOLLOW/);
   assert.match(libSource, /writeFileSync\(fd,JSON\.stringify/);
+});
+
+test('evaluation validates task ceiling before consuming lease and before retaining its execution lock', () => {
+  const admission=evalSource.indexOf('requireSignedBudgetLease("eval"');
+  const retain=evalSource.indexOf('retainClaim=true');
+  const intent=evalSource.indexOf('writeJson(join(dir, "intent.json")');
+  assert.ok(admission>0 && admission<retain && retain<intent);
+  assert.match(evalSource.slice(admission,retain),/tasks\.length\)/);
+  const threshold=libSource.indexOf('required_calls>permit.max_calls');
+  const ledger=libSource.indexOf('writeJson(join(PRIVATE_ROOT,"lease-claims"');
+  assert.ok(threshold>0 && threshold<ledger,'no underfunded lease may be consumed');
 });
