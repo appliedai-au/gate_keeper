@@ -230,8 +230,7 @@ async function login(existingClientId,expectedEmail){
     storeNew("account-"+key+".json",record,{replaceExisting:!!selected});
     // The selected profile belongs to this local OS user only; no global
     // credentials or shared default account are created for other users.
-    selectAccount(record);
-    console.log("ChatGPT identity connected and selected locally.");
+    console.log("ChatGPT identity connected locally. Use select <client_id> to activate ChatGPT-only mode.");
     console.log(canUseChatGPTPlan(scopes)?"ChatGPT plan usage permission granted; TrueForge adapter still disabled.":"Identity connected, but ChatGPT plan usage was NOT granted.");
   }finally{
     server.closeAllConnections?.();
