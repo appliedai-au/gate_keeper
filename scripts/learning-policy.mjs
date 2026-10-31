@@ -2,7 +2,7 @@
  * This policy NEVER runs TrueForge, promotes an agent or changes an evaluator.
  * A detached verifier (separate credentials and service) owns the signing key.
  */
-import {createHash, verify as ed25519Verify} from 'node:crypto';
+import {createHash, createPublicKey, verify as ed25519Verify} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 
 const PATH=/^agent\/(?:instructions\.md|skills\/[a-z0-9][a-z0-9-]*\/SKILL\.md)$/;
@@ -44,6 +44,14 @@ export function candidateDigest(files, baselineInstructions) {
  */
 export function verifyQualification({report,signature,publicKeyPem,expected}) {
   if(!report || typeof report!=='object' || Array.isArray(report) || !signature || !publicKeyPem || !expected) throw Error('qualification evidence unavailable');
+  // The trusted fingerprint must be injected by the *separate* qualification
+  // controller from protected configuration, never from an agent candidate.
+  const trustedPin=process.env.GK_VERIFIER_SPKI_SHA256;
+  if(!trustedPin || !H64.test(trustedPin)) throw Error('trusted verifier key not configured');
+  let spki;
+  try {spki=createPublicKey(publicKeyPem).export({type:'spki',format:'der'});}
+  catch {throw Error('invalid verifier public key');}
+  if(hash(spki)!==trustedPin) throw Error('untrusted verifier key');
   const keys=['candidate_digest','baseline_sha','benchmark_digest','scorer_digest','verifier_digest'];
   for(const key of keys) if(!H64.test(report[key]||'')) throw Error(key+' missing or malformed');
   if(!H40.test(report.source_commit||'')) throw Error('source commit missing');
@@ -68,6 +76,10 @@ if(process.argv[1]?.endsWith('/learning-policy.mjs')) {
    const signature=readFileSync(process.argv[4],'utf8').trim();
    const publicKeyPem=readFileSync(process.argv[5],'utf8');
    const expected=JSON.parse(process.env.GK_TRUSTED_EXPECTED||'null');
-   console.log(JSON.stringify(verifyQualification({report,signature,publicKeyPem,expected})));
+   const evidence=verifyQualification({report,signature,publicKeyPem,expected});
+   // A command-line diagnostic cannot independently promote an agent. A
+   // trusted controller must separately enforce policy and perform promotion.
+   console.log(JSON.stringify({signature_verified:true,source_commit:evidence.source_commit,
+     candidate_digest:evidence.candidate_digest,promotion_authorized:false}));
  } catch(err) {console.error('BLOCKED: '+err.message);process.exitCode=2;}
 }
