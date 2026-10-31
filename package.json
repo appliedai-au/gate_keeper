@@ -16,7 +16,10 @@
     "score": "tsx evals/score.ts",
     "typecheck": "tsc --noEmit",
     "test:learning-policy": "node --test tests/*.test.mjs",
-    "verify:learning-policy": "node scripts/learning-policy.mjs"
+    "verify:learning-policy": "node scripts/learning-policy.mjs",
+    "providers:status": "node scripts/providers/status.mjs",
+    "connect:chatgpt": "node scripts/providers/chatgpt-login.mjs",
+    "test:chatgpt-sub": "node scripts/providers/chatgpt-subscription-test.mjs"
   },
   "dependencies": {
     "@truefoundry/trueforge-sdk": "^0.180.0"

@@ -1,0 +1,114 @@
+# Gate Keeper: Model providers
+
+**Default:** use the model catalog configured in TrueForge; Gate Keeper never needs to ask an ordinary user for a provider API key or OAuth credential. Under `GK_MODEL_PROVIDER=trueforge`, set `GK_TRUEFORGE_MODEL` to the exact model ID already enabled in TrueForge Settings → Models. The setup refuses an absent model, rather than falling back to another provider. See [TrueForge-first model policy](trueforge-model-access.md).
+
+The DeepSeek and ChatGPT OAuth workflows below are **optional, advanced** connection paths, not required for using Gate Keeper. The self-hosted TrueForge instance does not automatically include paid model inference. The TrueFoundry AI Gateway can centrally govern provider keys, but external model charges remain separate.
+
+TrueForge remains the agent runtime and safety boundary. Connecting a model does **not** enable automatic learning, repair execution, or promotion.
+
+## DeepSeek API (BYOK)
+
+Gate Keeper supports DeepSeek through a **TrueForge OpenAI-compatible custom provider**.
+
+| Role | Official DeepSeek API model ID |
+| --- | --- |
+| Economical classification and first-pass review | `deepseek-flash` |
+| More demanding code reasoning | `deepseek-v4-pro` |
+
+- API base URL: `https://api.deepseek.com`
+- Obtain a key in the [DeepSeek API console](https://platform.deepseek.com/api_keys).
+- In the **private TrueForge administration UI**, open **Settings → Models → Configure provider**. Select a custom OpenAI-compatible provider and enter the DeepSeek API base URL and API key into TrueForge's protected settings. Add the two model IDs above.
+- Confirm the exact **provider-qualified model name** exposed by TrueForge. Do not assume it is `deepseek/...` or `custom/...`; the running instance's model registry is authoritative.
+- On a trusted Gate Keeper worker set `GK_MODEL_PROVIDER=deepseek`, `GK_MODEL_TIER=economy` or `advanced`, and the applicable `GK_TRUEFORGE_DEEPSEEK_ECONOMY_MODEL` / `GK_TRUEFORGE_DEEPSEEK_ADVANCED_MODEL` to that verified name. Set `GK_DEEPSEEK_CODE_SHARING_APPROVED=1` **only after** confirming that sending this source to DeepSeek is permitted under the account's/tenant's source-sharing and data-use policy. Run `npm run providers:status` to inspect selection. This flag is operator authorisation; tenant-specific consent is not implemented.
+- **Do not** set `TF_MODEL` simultaneously with `GK_MODEL_PROVIDER=deepseek`; the agent rejects conflicting selections.
+- **Do not** enter the DeepSeek API key in ChatGPT, commit it to `.env`, a public repo or provider metadata. A tenant BYOK connection must use a separate tenant-scoped credential broker; the present model registry is an operator-level configuration.
+
+Official sources: https://api-docs.deepseek.com/en/ and https://api-docs.deepseek.com/quick_start/pricing/ .
+
+The previous Claude default in `agent/agent.json` remains unchanged. Model migration requires new benchmark and security qualification; lower cost is not evidence of equal defect-detection quality.
+
+## ChatGPT OAuth — local open-source connection
+
+The **local OSS** connection supports the officially documented OpenAI *Sign in with ChatGPT* flow with OAuth 2.0 authorization-code + PKCE. It uses a loopback callback on `127.0.0.1`, issued dynamic client IDs, JWKS-verified ID tokens, a nonce and state, separately granted inference scopes, and protected local credential files.
+
+### Use
+
+From a local machine running Gate Keeper (not a Railway service):
+
+```bash
+npm ci
+npm run connect:chatgpt -- login
+# Open the printed OpenAI authorization URL, sign in and approve the scopes you want.
+npm run connect:chatgpt -- status
+# Reconnect/renew an existing registration after selecting its client_id:
+npm run connect:chatgpt -- login <existing_client_id>
+```
+
+The command stores individual account records under `~/.config/gate-keeper/chatgpt-oauth/` using owner-only permissions. Multiple authorised registrations can be stored without exposing the tokens in the status output.
+
+### Each user connects their own account
+
+Gate Keeper **does not have a global ChatGPT account**. Each person running the local OSS client signs in separately with their own ChatGPT identity and authorises their own ChatGPT-plan access. No user's credentials or quotas are shared with another user.
+
+To preselect an intended email address without hardcoding it into GitHub, run:
+
+```bash
+npm run connect:chatgpt -- login --email your-own-account@example.com
+npm run connect:chatgpt -- status
+# Copy the exact issued client_id for the account you just authorised:
+npm run connect:chatgpt -- select <issued_client_id>
+# Sends exactly one tiny tool-free request via the public Responses API:
+npm run test:chatgpt-sub -- --confirm --email your-own-account@example.com
+# Remove the ChatGPT-only routing hold when finished testing:
+npm run connect:chatgpt -- deselect
+```
+
+The email value is **only a sign-in selection check**. Gate Keeper verifies the OpenAI-signed ID token and requires the returned email to match the optional hint; account security identity remains the OIDC issuer, subject and registered client ID. The email alone never authorises model access. You can also omit `--email` and choose your account in OpenAI's browser dialog.
+
+If this local OS user has several ChatGPT registrations, switch between them explicitly:
+
+```bash
+npm run connect:chatgpt -- select <issued_client_id>
+```
+
+The active selection is saved in an owner-private `active.json` file containing only an account reference and a **ChatGPT-OAuth-only, no-fallback** policy. It does not contain tokens. Each local user home has a separate account store, and tokens remain bound to their verified registration and host. A shared or hosted Gate Keeper instance needs additional tenant/user/session isolation; the local filesystem is **not** a multi-tenant credential broker.
+
+
+**Testing with your own subscription:** The `test:chatgpt-sub` command checks the selected local account's eligible model catalog and makes one fixed prompt with `store:false` and `stream:true` through the public `https://api.openai.com/v1/responses` endpoint. It requires `--confirm`, records no raw reply, sends no repository files and never retries/falls back after an error. The request consumes allowance from the selected user's ChatGPT plan where supported; it does not charge an arbitrary API key. If the plan, workspace or model is ineligible, it fails closed. A successful local smoke test **does not** connect ChatGPT OAuth to the hosted TrueForge runtime.
+
+Signing in stores the account but **does not automatically select it** as the model provider. Use `select` and `deselect` explicitly; deselect retains your credential registrations and restores the previous non-OAuth local model selection. Other local users run their own sign-in and choose their own account.
+
+**No silent fallback:** If ChatGPT-plan permission is declined, tokens expire, or the approved TrueForge OAuth inference bridge is unavailable, the ChatGPT-only path must stop. It must not silently charge the user's DeepSeek, Anthropic, OpenAI API, or another person's account. The hosted TrueForge OAuth bridge remains unavailable and cannot be represented as active yet.
+
+**Identity login is separate from ChatGPT-plan inference consent.** The local connection requests `openid profile email offline_access resource.invoke chatgpt.tokens.use.direct`; it reports whether `chatgpt.tokens.use.direct` and `resource.invoke` were granted. It never retrieves a user's OpenAI Platform API key, conversations or memories.
+
+### Important activation limit
+
+The connection authenticates and stores a local account; it **does not** make a ChatGPT-plan model available to TrueForge yet. TrueForge is not configured to interpret these OAuth access tokens as its model provider keys. Do not copy tokens to the custom-provider API key field or use undocumented ChatGPT backend endpoints.
+
+The documented OSS dynamic-registration flow is for locally hosted/open-source clients. **Commercial hosted Gate Keeper / Railway integration requires separate OpenAI partner eligibility and an approved integration**, plus a tenant-scoped token broker, refresh/revocation controls, independently enforced usage budgets and an adapter respecting the Responses API requirements. The hosted option must remain disabled until these are qualified.
+
+The official inference contract for eligible OAuth access uses the public OpenAI Responses API with `store:false` and `stream:true`, with account-specific model discovery; model availability depends on the authenticated account and its granted entitlements.
+
+Official sources:
+- https://developers.openai.com/siwc/token-sharing-open-source
+- https://developers.openai.com/siwc/token-sharing-open-source/sign-in
+- https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference
+
+## Security constraints
+
+- Each provider/account has a separate identity; account switching does not mix credentials.
+- A user's permission for provider routing and source sharing must be explicit. DeepSeek API data-use and residency policy must be evaluated separately for customer code.
+- Gate Keeper's independent spend control, signed learning baseline, verifier, private holdouts and admin gate are **not replaced** by OAuth subscription limits.
+- Automatic model fallback and automatic learning remain disabled pending independently verified policy.
+- No live credential or paid inference test is performed by `providers:status` or the source test suite.
+
+## Current scope
+
+| Capability | Implemented | Live on hosted Gate Keeper |
+| --- | --- | --- |
+| DeepSeek API model catalog and TrueForge model selection | Yes | No; requires protected key, verified model IDs and qualification |
+| ChatGPT local OAuth registration and validated identity | Yes | No; local open-source clients only |
+| Multiple stored ChatGPT account registrations | Yes | No tenant account manager yet |
+| ChatGPT-plan inference through TrueForge | No | No |
+| TrueForge-hosted multi-tenant BYOK | No | No |

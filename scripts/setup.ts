@@ -10,6 +10,10 @@ const { agent, skills } = readAgent();
 try {
   const { data: models } = await tf.models.list();
   const names = models.map((m) => m.name);
+  if (!names.includes(agent.model.name) && process.env.GK_MODEL_PROVIDER==="deepseek")
+    die("DeepSeek model is not registered in TrueForge. Configure its API key and verify the provider-qualified model ID before sync.");
+  if (!names.includes(agent.model.name) && process.env.GK_MODEL_PROVIDER==="trueforge")
+    die("Approved managed model is not registered in TrueForge. Configure a model under TrueForge Settings -> Models before sync; no fallback is permitted.");
   if (!names.includes(agent.model.name)) {
     console.warn(
       `! Model "${agent.model.name}" is not configured on ${env.baseUrl}.\n` +
