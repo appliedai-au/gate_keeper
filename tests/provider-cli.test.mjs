@@ -45,3 +45,10 @@ test("provider OAuth CLI has atomic no-clobber and loopback shutdown safeguards"
  assert.match(code,/accepted=true/);
  assert.match(code,/selected\.record\.subject/);
 });
+
+test("missing HOME returns a controlled nonzero OAuth error",()=>{
+ const result=spawnSync(process.execPath,["scripts/providers/chatgpt-login.mjs","status"],
+  {cwd:resolve("."),env:{...process.env,HOME:"/nonexistent-gk-test-home-"+Date.now()},encoding:"utf8",timeout:10000});
+ assert.equal(result.status,2);
+ assert.match(result.stderr,/CHATGPT_OAUTH_HELD:/);
+});
