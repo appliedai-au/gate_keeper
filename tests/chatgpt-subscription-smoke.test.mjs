@@ -70,3 +70,26 @@ test("SSE JSON can be split across chunks",async()=>{
  const result=await runChatGPTPlanSmoke({accessToken,model:"model-eligible-1",fetchImpl});
  assert.equal(result.outputMatchesExpected,true);
 });
+
+// This public URL has DIFFERENT response shapes depending on credential type.
+// The officially documented ChatGPT-plan OAuth catalog uses models/slug/visibility;
+// ordinary API-key GET /v1/models uses data/id. Never silently substitute the
+// API-key catalog when an OAuth account is selected.
+test("OAuth catalog refuses ordinary API-key model response instead of using another billing route",async()=>{
+  const apiKeyShape={object:"list",data:[{id:"gpt-test-api-key",object:"model",owned_by:"openai"}]};
+  const fetchImpl=async()=>new Response(JSON.stringify(apiKeyShape),{status:200});
+  await assert.rejects(()=>listChatGPTPlanModels({accessToken,fetchImpl}),/OAuth account-specific model catalog unavailable/);
+});
+test("OAuth catalog preserves account-specific order and rejects unlisted models",async()=>{
+  const catalog={models:[
+    {slug:"model-first",display_name:"First eligible",visibility:"list"},
+    {slug:"model-hidden",display_name:"Not eligible",visibility:"hidden"},
+    {slug:"model-second",display_name:"Second eligible",visibility:"list"},
+    {slug:"../../bad",display_name:"Unsafe",visibility:"list"}
+  ]};
+  const fetchImpl=async()=>new Response(JSON.stringify(catalog),{status:200});
+  assert.deepEqual(await listChatGPTPlanModels({accessToken,fetchImpl}),[
+    {id:"model-first",name:"First eligible"},
+    {id:"model-second",name:"Second eligible"}
+  ]);
+});
