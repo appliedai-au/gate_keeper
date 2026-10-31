@@ -33,5 +33,7 @@ test('private sessions never intentionally commit to public repository', () => {
   assert.doesNotMatch(improveSource, /git\(\s*["'](?:add|commit|push)["']/);
   assert.match(libSource, /PRIVATE_ROOT = resolve/);
   assert.match(libSource, /const safe=assertPrivatePath\(path\)/);
-  assert.match(libSource, /writeFileSync\(safe, JSON\.stringify/);
+  assert.match(libSource, /openSync\(safe,constants\.O_WRONLY/);
+  assert.match(libSource, /constants\.O_NOFOLLOW/);
+  assert.match(libSource, /writeFileSync\(fd,JSON\.stringify/);
 });
