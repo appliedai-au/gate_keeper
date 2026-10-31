@@ -25,7 +25,7 @@ test("showcase discloses simulation and never pretends live inference",()=>{
 test("five-phase walkthrough connects source, path, finding and proposed control",()=>{
  for(const key of ["MISSION READY","INSPECT","CHALLENGE","EVIDENCE","VERIFY"])assert.ok(lab.includes(key));
  assert.match(lab,/viewInvoice/);
- assert.match(lab,/tenantId: req\.auth\.tenantId/);
+ assert.match(lab,/const tenantId = req\.auth\.tenantId/);
  assert.match(lab,/where: \{ id: invoiceId, tenantId \}/);
  assert.match(lab,/Cross-tenant denial test/);
  assert.match(lab,/onClick=\{start\}/);
