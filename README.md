@@ -8,7 +8,7 @@
 
 Gate Keeper supports a DeepSeek OpenAI-compatible provider profile through TrueForge (economy `deepseek-flash`; advanced `deepseek-v4-pro`) and a **local open-source** ChatGPT OAuth account connection. The current Claude model remains the default.
 
-Run `npm run providers:status` to inspect configuration, or `npm run connect:chatgpt -- login` on a local installation to authorise a ChatGPT identity and eligible plan-usage scopes. Signing in does **not** yet route ChatGPT OAuth inference through TrueForge; the hosted commercial integration is disabled pending approval and independent budget verification.
+Run `npm run providers:status` to inspect configuration, or `npm run connect:chatgpt -- login` on a local installation to authorise a ChatGPT identity and eligible plan-usage scopes. Signing in does **not** yet route ChatGPT OAuth inference through TrueForge; the hosted commercial integration is disabled pending approval and independent budget verification. Each local user signs in with **their own** ChatGPT account; no administrator's account is shared. `npm run connect:chatgpt -- login --email you@example.com` optionally verifies the chosen email after OpenAI signs the identity. Selecting a local ChatGPT profile disables model fallback until a qualified OAuth inference adapter exists.
 
 See [provider setup and security constraints](docs/providers.md).
 
