@@ -98,7 +98,7 @@ function selectedRecord() {
 function selectAccount(record) {
   const recordRef=accountRef(record);
   const activeFile=join(root,"active.json");
-  storeNew("active.json",{account_ref:recordRef,selected_at:new Date().toISOString()},
+  storeNew("active.json",{account_ref:recordRef,provider_policy:"chatgpt_oauth_only",\n    fallback_allowed:false,selected_at:new Date().toISOString()},
     {replaceExisting:existsSync(activeFile)});
 }
 function selectClient(clientId) {
@@ -130,7 +130,7 @@ function status(){
     throw Error("active account is no longer registered; select an owned account");
   console.log(JSON.stringify({accounts:accountsWithSelection,
     hostedProviderActive:false,modelProvider:"chatgpt-oauth-local",
-    trueForgeInference:"DISABLED_PENDING_ADAPTER"},null,2));
+    trueForgeInference:"DISABLED_PENDING_ADAPTER",\n    policy:selected?.provider_policy||"chatgpt_oauth_only",fallbackAllowed:false},null,2));
 }
 function recordForClientId(clientId) {
   const chosen=findExistingClient(clientId);
