@@ -35,6 +35,10 @@ export function resolveTrueForgeModel(env=process.env) {
     return undefined; // Existing agent/agent.json remains source of truth.
   }
   if(provider!=="deepseek") throw Error("MODEL_CONFIG_REJECTED: unapproved model provider");
+  // External source-code disclosure must be explicitly authorised by the
+  // operator for this execution environment. Tenant BYOK consent is separate.
+  if(env.GK_DEEPSEEK_CODE_SHARING_APPROVED!=="1")
+    throw Error("MODEL_CONFIG_REJECTED: DeepSeek source-sharing approval absent");
   const tier=env.GK_MODEL_TIER || "economy";
   if(!["economy","advanced"].includes(tier)) throw Error("MODEL_CONFIG_REJECTED: invalid DeepSeek tier");
   // The model identifier is assigned by TrueForge's configured provider
