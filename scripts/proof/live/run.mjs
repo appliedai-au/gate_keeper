@@ -299,7 +299,8 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
   const cycles = [], lessons = [], events = [];
   let reAdjSession = null;
   const drillArms = [...new Set((env.GK_PROOF_DRILL_ARMS || "baseline,gate_keeper").split(",").map((a) => a.trim()).filter(Boolean))];
-  if (!drillArms.length || drillArms.some((a) => !ALL_ARMS.includes(a))) throw new Error("DRILL_ARMS_INVALID");
+  // Lesson capture and the repeat-after-improvement cycles run on the default gate_keeper arm.
+  if (!drillArms.length || drillArms.some((a) => !ALL_ARMS.includes(a)) || !drillArms.includes("gate_keeper")) throw new Error("DRILL_ARMS_INVALID");
   events.push({ check: "drill_arms", arms: drillArms });
   const stage = Object.fromEntries(REQUIRED_STAGES.map((s) => [s, "NOT_RUN"]));
   const mark = (s, v) => { if (stage[s] !== "FAIL") stage[s] = v === "PASS" && stage[s] === "BLOCKED" ? "BLOCKED" : v; };

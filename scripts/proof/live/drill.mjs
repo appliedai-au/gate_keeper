@@ -89,7 +89,9 @@ const FORBIDDEN = [
 /** Apply an agent patch to a candidate clone, bounded by path, size and API rules. */
 export function applyBoundedPatch(candidate, v, content) {
   if (typeof content !== "string" || !content.trim()) return { applied: false, reason: "NO_PATCH" };
-  for (const [re, why] of FORBIDDEN) if (re.test(content)) return { applied: false, reason: "FORBIDDEN_API: " + why };
+  // Check both the raw text and a comment-stripped copy so comments cannot split a pattern.
+  const stripped = content.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1 ");
+  for (const [re, why] of FORBIDDEN) if (re.test(content) || re.test(stripped)) return { applied: false, reason: "FORBIDDEN_API: " + why };
   writeFileSync(join(candidate, v.file), content.endsWith("\n") ? content : content + "\n");
   // Tracked modifications plus any untracked files (never parse trimmed porcelain output).
   const changedPaths = [...git(candidate, "diff", "--name-only").split("\n"), ...git(candidate, "ls-files", "--others", "--exclude-standard").split("\n")].filter(Boolean);

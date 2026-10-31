@@ -132,6 +132,7 @@ export function instructionHashes() {
     output_contract_sha256: sha256(OUTPUT_CONTRACT),
     repair_contract_sha256: sha256(REPAIR_OUTPUT_CONTRACT),
     gate_keeper_repair_sha256: sha256(gateKeeperMethodology("repair")),
+    gate_keeper_lean_repair_sha256: sha256(gateKeeperMethodology("repair", "lean")),
     scorer_sha256: sha256(read("evals/score.ts")),
   };
 }

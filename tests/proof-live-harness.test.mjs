@@ -267,6 +267,10 @@ test("drill denylist: quoted strings like an allow-list are not imports; real im
   const src = readFileSync(join(o.repo, o.vmodel.file), "utf8");
   const ok = applyBoundedPatch(cloneCandidate(o.repo, work, "allow"), o.vmodel, src + 'const SAFE = ["http", "https", "mailto"];\n');
   assert.equal(ok.applied, true, ok.reason);
-  for (const evil of ['import fs from "fs";', 'import "node:http";', 'export { x } from "os";', 'const n = require ( "net" );'])
+  for (const evil of ['import fs from "fs";', 'import "node:http";', 'export { x } from "os";', 'const n = require ( "net" );', 'import fs from /**/ "node:fs";', 'import/**/"node:http";', 'import fs from // c\n "fs";'])
     assert.match(applyBoundedPatch(cloneCandidate(o.repo, work, "x" + Math.random().toString(36).slice(2)), o.vmodel, evil + "\n" + src).reason || "", /FORBIDDEN_API/, evil);
+});
+
+test("drill arms must include the default gate_keeper arm", () => {
+  assert.throws(() => e2e({ trials: 1, env: { GK_PROOF_DRILL_ARMS: "baseline,gate_keeper_lean" } }), /DRILL_ARMS_INVALID/);
 });
