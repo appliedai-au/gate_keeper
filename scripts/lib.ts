@@ -3,24 +3,63 @@
 // field names (previousTurnId, iterationLimit); the HTTP API and the docs' JSON use snake_case.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, relative, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TrueForge, TrueForgeApi } from "@truefoundry/trueforge-sdk";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const AGENT_DIR = join(ROOT, "agent");
 export const TASKS_DIR = join(ROOT, "evals", "tasks");
-// Never put provider transcripts or private evaluation evidence in this public Git checkout.
+// Private records are never authorised to land in a public Git checkout.
+const canonicalRoot=realpathSync(ROOT);
 export const PRIVATE_ROOT = resolve(process.env.GATE_KEEPER_STATE_DIR || join(homedir(), ".local", "state", "gate-keeper"));
-if (PRIVATE_ROOT === ROOT || PRIVATE_ROOT.startsWith(ROOT + "/")) throw new Error("private state must be outside checkout");
+if (PRIVATE_ROOT === ROOT || PRIVATE_ROOT.startsWith(ROOT + "/"))
+  throw new Error("PRIVATE_EVIDENCE_REJECTED: state directory inside checkout");
 mkdirSync(PRIVATE_ROOT, {recursive:true, mode:0o700});
+// Reject every symlinked ancestor; a symlink above the private root could
+// otherwise point all the nominally external evidence into the public repo.
+function assertRealDirectory(path:string):void {
+  const full=resolve(path);
+  const anchor=parse(full).root;
+  let current=anchor;
+  for (const part of full.slice(anchor.length).split("/").filter(Boolean)) {
+    current=join(current,part);
+    const st=lstatSync(current);
+    if(st.isSymbolicLink() || !st.isDirectory()) throw new Error("PRIVATE_EVIDENCE_REJECTED: symlink or non-directory ancestor");
+  }
+}
+assertRealDirectory(PRIVATE_ROOT);
+const realPrivate=realpathSync(PRIVATE_ROOT);
+if(realPrivate===canonicalRoot || realPrivate.startsWith(canonicalRoot+"/"))
+  throw new Error("PRIVATE_EVIDENCE_REJECTED: canonical checkout containment");
 const privateStat=lstatSync(PRIVATE_ROOT);
-if(!privateStat.isDirectory() || privateStat.isSymbolicLink() || (privateStat.mode & 0o077) ||
-  (process.getuid && privateStat.uid!==process.getuid())) throw new Error("private state must be an owner-only real directory");
-export const RUNS_DIR = join(PRIVATE_ROOT, "runs");
-export const SUMMARY_CSV = join(PRIVATE_ROOT, "summary.csv");
+if((privateStat.mode & 0o077) || (process.getuid && privateStat.uid!==process.getuid()))
+  throw new Error("PRIVATE_EVIDENCE_REJECTED: private directory must be owner-only");
+export const RUNS_DIR=join(PRIVATE_ROOT,"runs");
+export const SUMMARY_CSV=join(PRIVATE_ROOT,"summary.csv");
+
+/** Every private output path must resolve inside the private root, without a
+ * symlinked path component. The final file is created exclusively (never
+ * replaced) so failed or duplicate model runs cannot overwrite evidence.
+ */
+export function assertPrivatePath(path:string):string {
+  const full=resolve(path);
+  const rel=relative(PRIVATE_ROOT,full);
+  if(!rel || rel===".." || rel.startsWith("../") || rel.startsWith("/") || rel.includes("\\"))
+    throw new Error("PRIVATE_EVIDENCE_REJECTED: path escapes private state");
+  mkdirSync(dirname(full),{recursive:true,mode:0o700});
+  assertRealDirectory(dirname(full));
+  let current=PRIVATE_ROOT;
+  for(const part of relative(PRIVATE_ROOT,dirname(full)).split("/").filter(Boolean)) {
+    current=join(current,part);
+    const st=lstatSync(current);
+    if((st.mode & 0o077) || (process.getuid && st.uid!==process.getuid()))
+      throw new Error("PRIVATE_EVIDENCE_REJECTED: directory permissions");
+  }
+  return full;
+}
 
 // ---------- config ----------
 
@@ -301,8 +340,8 @@ export function sessionStats(exp: SessionExport): { tokens: number | null; toolC
 }
 
 export function writeJson(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(value, null, 2) + "\n", {mode:0o600, flag:"wx"});
+  const safe=assertPrivatePath(path);
+  writeFileSync(safe, JSON.stringify(value, null, 2) + "\n", {mode:0o600, flag:"wx"});
 }
 
 export function runDir(n: number): string {
