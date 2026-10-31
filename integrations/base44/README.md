@@ -2,7 +2,18 @@
 
 **Target:** https://secure-authentic-gate-flow.base44.app/ (REUSE this app; do not create a new Base44 project).
 
-This folder holds **source-only integration assets**, not an installed Base44 app. It does not change Base44's currently published pages. The present site contains links and an Asteroids demo. **Do not preserve Asteroids as a requirement.** Replace the placeholder landing experience with a polished, functional Gate Keeper demo; remove the game and extraneous links if they distract from the actual product. Preserve the existing Base44 app, domain, and owner settings.
+This folder holds **source-only integration assets**, not an installed Base44 app. It does not change Base44's currently published pages.
+
+## Built visual demo (source-ready, not yet published)
+
+- `pages/GateKeeper.jsx` is a complete responsive React application page. It includes Overview, interactive code review walkthrough, Runs, Evidence, Settings and a meaningful, non-deceptive empty state for unfinished live functionality.
+- `pages/GateKeeper.css` contains the visual system: charcoal/navy navigation, pale editorial surfaces, lime signal accents, crisp monospace technical details, accessible focus states and mobile layouts.
+- `components/GateKeeperConnectionPanel.jsx` displays actual runtime reachability, not invented agent activity.
+- `functions/gatekeeperStatus.js` is a narrowly scoped admin-only server-side probe.
+- The walkthrough uses a **clearly labeled static review fixture**. Selectable findings highlight real code lines and expose proposed mitigations; it performs no chargeable model call.
+
+To install these into the **existing** Base44 app, first inspect its actual source layout in the owner editor. Place files under its matching `pages/`, `components/` and `functions/` directories; ensure the default landing route renders `GateKeeper`. Import its stylesheet, preserve existing app auth/layout plumbing, and remove any redundant Asteroids navigation. Inspect and adapt the auth integration for the actual app version. The files are integration inputs, not evidence of a deployed site.
+ The present site contains links and an Asteroids demo. **Do not preserve Asteroids as a requirement.** Replace the placeholder landing experience with a polished, functional Gate Keeper demo; remove the game and extraneous links if they distract from the actual product. Preserve the existing Base44 app, domain, and owner settings.
 
 ## Confirmed deployment (31 October 2026)
 
