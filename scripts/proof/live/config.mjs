@@ -35,23 +35,33 @@ End your reply with exactly one fenced JSON block and nothing after it:
 // reviewer role plus the shared contract. No Gate Keeper text is included.
 export const BASELINE_ROLE = "You are a code reviewer. Review the code you are given and report the real problems in it.";
 
-// Arm B: Gate Keeper's specialised adversarial methodology exactly as committed:
-// the TrueForge-native profile (review-only loop), the reviewer instructions and
-// the review-checklist skill inlined as run-evals does.
+// Arm B: Gate Keeper's specialised reviewer exactly as committed and as
+// run-evals ships it: the lean reviewer instructions (with severity rubric)
+// plus the review-checklist skill. The TrueForge-native operator contract
+// (agent/native-trueforge-instructions.md) is NOT part of the runtime prompt.
 export function gateKeeperMethodology(mode = "review") {
-  const native = read("agent/native-trueforge-instructions.md").trim();
   const reviewer = read("agent/instructions.md").trim();
   const skill = read("agent/skills/review-checklist/SKILL.md").replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
-  const scope = mode === "repair"
-    ? "Repair scope IS granted for one disposable, tenant-isolated candidate workspace. No merge, deploy or production access is granted."
-    : "This is a review-only run: no repair scope is granted. Complete the review step and report findings.";
-  return [
-    native,
-    scope,
-    reviewer,
+  if (mode === "repair") return [
+    "You are Gate Keeper's repair role. Repair scope IS granted for one disposable, tenant-isolated candidate workspace. No merge, deploy or production access is granted.",
+    "Fix the confirmed findings with the smallest change that satisfies the requirements and threat model. Validation and an adversarial re-review run independently after you answer: do not claim tests passed.",
+    "Before answering, check your change against each threat-model item and the review checklist below.",
     "---\n\n# Skill: review-checklist\n\n" + skill,
   ].join("\n\n");
+  return [reviewer, "---\n\n# Skill: review-checklist\n\n" + skill].join("\n\n");
 }
+
+// Shared repair output contract (identical for both arms): targeted edits keep
+// diffs small; a complete file is accepted as a fallback.
+export const REPAIR_OUTPUT_CONTRACT = `## Repair output contract
+
+Return exactly one fenced JSON block with targeted edits to the given file:
+
+\`\`\`json
+{"edits": [{"find": "exact existing text (must occur exactly once)", "replace": "new text"}]}
+\`\`\`
+
+Keep each \`find\` short but unique. Make the smallest change that fixes the findings. Do not rewrite unrelated code or add comments.`;
 
 export function armInstructions(arm) {
   if (arm === "baseline") return BASELINE_ROLE + "\n\n" + OUTPUT_CONTRACT;
@@ -74,6 +84,9 @@ export const RUNTIME_CONFIG = {
 // line). Severity is judged against this key, never against a candidate.
 export const PUBLIC_SEVERITY_KEY = {
   "01-python-utils": { 7: "high", 12: "medium", 22: "medium" },
+  "02-express-users": { 9: "critical", 15: "high", 25: "medium" },
+  "03-python-deploy": { 8: "medium", 13: "high", 14: "critical" },
+  "04-ts-fetch": { 5: "high", 14: "high", 23: "medium" },
 };
 export function severityFor(task, expected) {
   if (expected.severity) return expected.severity;
@@ -106,6 +119,8 @@ export function instructionHashes() {
     baseline_instructions_sha256: sha256(armInstructions("baseline")),
     gate_keeper_instructions_sha256: sha256(armInstructions("gate_keeper")),
     output_contract_sha256: sha256(OUTPUT_CONTRACT),
+    repair_contract_sha256: sha256(REPAIR_OUTPUT_CONTRACT),
+    gate_keeper_repair_sha256: sha256(gateKeeperMethodology("repair")),
     scorer_sha256: sha256(read("evals/score.ts")),
   };
 }

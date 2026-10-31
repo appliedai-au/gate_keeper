@@ -52,6 +52,31 @@ export function extractReplacementFile(reply) {
   return blocks.length ? blocks[blocks.length - 1] : null;
 }
 
+/**
+ * Resolve a repair reply against the current source. Preferred format: the
+ * last ```json block {"edits":[{find, replace}]}, each find matching exactly
+ * once (applied in order). Fallback: a complete ```javascript file.
+ */
+export function extractPatch(reply, source) {
+  const blocks = [...String(reply || "").matchAll(/```json\s*\n([\s\S]*?)```/g)].map((m) => m[1]);
+  for (const raw of blocks.reverse()) {
+    let obj; try { obj = JSON.parse(raw.trim()); } catch { continue; }
+    if (!obj || !Array.isArray(obj.edits)) continue;
+    if (!obj.edits.length) return { content: null, format: "edits", reason: "NO_EDITS" };
+    let out = source;
+    for (const e of obj.edits) {
+      if (!e || typeof e.find !== "string" || typeof e.replace !== "string" || !e.find) return { content: null, format: "edits", reason: "EDIT_INVALID" };
+      const first = out.indexOf(e.find);
+      if (first < 0) return { content: null, format: "edits", reason: "EDIT_NOT_FOUND" };
+      if (out.indexOf(e.find, first + 1) >= 0) return { content: null, format: "edits", reason: "EDIT_AMBIGUOUS" };
+      out = out.slice(0, first) + e.replace + out.slice(first + e.find.length);
+    }
+    return { content: out, format: "edits", edits: obj.edits.length };
+  }
+  const full = extractReplacementFile(reply);
+  return full ? { content: full, format: "full_file" } : { content: null, format: "none", reason: "NO_PATCH" };
+}
+
 // Defence in depth only: the real boundary is the Node permission sandbox in runLevel.
 const FORBIDDEN = [
   [/\beval\s*\(|\bFunction\s*\(|\bimport\s*\(/, "dynamic code execution or import"],

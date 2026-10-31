@@ -12,11 +12,11 @@ import { fileURLToPath } from "node:url";
 import { scoreTask } from "../../../evals/score.ts";
 import { assessLessonForCore, budgetAdmission, executionAdmission, nextExecutionState } from "../../execution/policy.mjs";
 import { validatePublicProof, REQUIRED_STAGES } from "../validate-public-proof.mjs";
-import { ARMS, DEFAULT_CAP_USD, OUTPUT_CONTRACT, PHASE_SHARE, REVIEW_PARAMS, ROOT, RUNTIME_CONFIG, TRUEFORGE_RUNTIME,
+import { ARMS, DEFAULT_CAP_USD, OUTPUT_CONTRACT, REPAIR_OUTPUT_CONTRACT, PHASE_SHARE, REVIEW_PARAMS, ROOT, RUNTIME_CONFIG, TRUEFORGE_RUNTIME,
   armInstructions, gateKeeperMethodology, instructionHashes, sha256 } from "./config.mjs";
 import { BudgetController } from "./budget.mjs";
 import { aggregateArm, answerKey, blindTask, parseAdjudication, parseFindingsWithSeverity, shuffle, validFinding } from "./metrics.mjs";
-import { applyBoundedPatch, cloneCandidate, createFixtureRepo, discardCandidate, extractReplacementFile, pollValidation,
+import { applyBoundedPatch, cloneCandidate, createFixtureRepo, discardCandidate, extractPatch, pollValidation,
   repairBrief, startValidation, verifyOrigin } from "./drill.mjs";
 import { EvidenceStore } from "./evidence.mjs";
 
@@ -31,10 +31,10 @@ Judge only from the code and the key. Return exactly one fenced JSON block:
 \`\`\`
 covering every finding id exactly once.`;
 
-const BASELINE_REPAIR = "You are a software engineer. Fix the reported problem with a minimal change that satisfies the requirements and threat model. Return the complete corrected file in exactly one ```javascript fenced block.";
-const GK_REPAIR_ROLE = `You are now acting in the Repair role of Gate Keeper's closed loop (an authorised, disposable, tenant-isolated candidate workspace).
-Generate a minimal candidate patch for the confirmed finding, satisfying the requirements and threat model. Change only the given file.
-Validation is performed independently after you answer: do not claim tests passed. Return the complete corrected file in exactly one \`\`\`javascript fenced block.`;
+const BASELINE_REPAIR = "You are a software engineer. Fix the reported problem with a minimal change that satisfies the requirements and threat model.";
+export const RE_REVIEW_ADJUDICATOR = `You are an independent adjudicator checking a repair gate. A reviewer flagged blocking findings on a repaired file that has ALREADY passed its acceptance, adversarial, integration and unit tests.
+For EACH finding decide "real": true only if it is a genuine, merge-blocking defect in the repaired code given its requirements and threat model; false if it is speculative, stylistic, out of scope, already handled, or wrong.
+Return exactly one fenced JSON block: \`\`\`json {"judgements": [{"index": 0, "real": false}]} \`\`\` covering every index once.`;
 const LESSON_WRITER = `From the run evidence below, write ONE tenant-private lesson (at most two sentences) that would help you review and repair this same user's code next time. Do not include code, file contents, secrets or personal data. Return exactly one fenced JSON block: \`\`\`json {"lesson": "..."} \`\`\``;
 
 const numbered = (lines) => { const w = String(lines.length).length; return lines.map((l, i) => `${String(i + 1).padStart(w)} | ${l}`).join("\n"); };
@@ -227,6 +227,8 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   blockers.push("No independent budget gateway lease: spend was capped by the evaluator process (outside the agents), not a signed gateway");
   limitations.push("Adjudicator is a separate, blinded TrueForge session on the same model as the candidates, not a human or a different model family");
   limitations.push("actual_cost_usd is TrueForge's per-turn cost estimate (turn metrics), not a provider billing statement");
+  limitations.push("Node permission sandbox confines candidate file reads but not network sockets; network access by candidate code is blocked only by the patch denylist");
+  limitations.push("Re-review gate precision is judged by a same-model blinded adjudicator session");
   if (!preflight.sandbox_enabled) limitations.push("TrueForge sandbox provider not enabled; candidate patches were validated in a disposable clone inside the one-shot runner container");
   const pick = (a) => a ? ({ trials: a.trials, defect_recall: a.defect_recall, precision: a.precision, explanation_correctness: a.explanation_correctness,
     severity_accuracy: a.severity_accuracy, median_latency_ms: a.median_latency_ms, total_tokens: a.total_tokens, actual_cost_usd: a.trueforge_estimated_cost_usd }) : null;
@@ -266,9 +268,10 @@ export function emitChunked(log, key, value) {
 // ---------- autonomous repair-loop drill ----------
 async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) {
   const work = mkdtempSync(join(tmpdir(), "gk-drill-"));
-  const fixtures = Object.fromEntries(["money", "uploads", "archive"].map((id) => [id, join(ROOT, "proof", "fixtures", id)]));
+  const fixtures = Object.fromEntries(["money", "uploads", "pagination", "escape", "archive"].map((id) => [id, join(ROOT, "proof", "fixtures", id)]));
   const params = { temperature: 0, maxTokens: 2500 };
   const cycles = [], lessons = [], events = [];
+  let reAdjSession = null;
   const stage = Object.fromEntries(REQUIRED_STAGES.map((s) => [s, "NOT_RUN"]));
   const mark = (s, v) => { if (stage[s] !== "FAIL") stage[s] = v === "PASS" && stage[s] === "BLOCKED" ? "BLOCKED" : v; };
 
@@ -303,7 +306,7 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
     if (!findings.length) { state = nextExecutionState(state, "deny"); rec.states.push(state); rec.outcome = "REVIEWED_NO_FINDING"; return rec; }
     mark("adversarial_review", "PASS");
     state = nextExecutionState(state, "finding"); rec.states.push(state);
-    const repairInstr = arm === "gate_keeper" ? gateKeeperMethodology("repair") + "\n\n" + GK_REPAIR_ROLE + lessonText : BASELINE_REPAIR;
+    const repairInstr = (arm === "gate_keeper" ? gateKeeperMethodology("repair") : BASELINE_REPAIR) + "\n\n" + REPAIR_OUTPUT_CONTRACT + lessonText;
     const repairSession = await newSession({ model: { name: model, params }, instructions: repairInstr, config: RUNTIME_CONFIG }, { phase: "drill", arm, fixture: fixtureId, role: "repair" });
     let feedback = "";
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -313,14 +316,15 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
       const out = await callTurn("drill", `${label}/repair${attempt}`, repairSession, prompt, repairInstr.length, params.maxTokens);
       if (out.refused) { rec.outcome = "HELD_BUDGET"; break; }
       const candidate = cloneCandidate(origin.repo, work, `${label}-cand${attempt}`);
-      const patch = applyBoundedPatch(candidate, v, extractReplacementFile(out.text));
-      const att = { attempt, repair_turn: out.turnId, patch: { applied: patch.applied, reason: patch.reason || null, changed_lines: patch.changedLines ?? null, patch_sha256: patch.patchSha256 || null } };
+      const extracted = extractPatch(out.text, brief.source);
+      const patch = extracted.content ? applyBoundedPatch(candidate, v, extracted.content) : { applied: false, reason: extracted.reason };
+      const att = { attempt, repair_turn: out.turnId, patch: { applied: patch.applied, format: extracted.format, reason: patch.reason || null, changed_lines: patch.changedLines ?? null, patch_sha256: patch.patchSha256 || null } };
       rec.attempts.push(att);
       if (patch.applied) ev.put(`private/drill/${label}-attempt${attempt}.diff`, patch.diff, "candidate_patch");
       if (!patch.applied) {
         state = nextExecutionState("repairing", "failure"); rec.states.push(state);
         att.discard = discardCandidate(candidate); mark("rollback_failure_drill", att.discard.discarded ? "PASS" : "FAIL");
-        feedback = `\nYour previous candidate was rejected before testing: ${patch.reason}. Return the complete file.`;
+        feedback = `\nYour previous candidate was rejected before testing: ${patch.reason}. Return corrected targeted edits against the ORIGINAL file shown above.`;
         continue;
       }
       mark("sandbox_repair", "PASS");
@@ -334,7 +338,7 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
         state = nextExecutionState("testing", "failure"); rec.states.push(state);
         att.discard = discardCandidate(candidate); mark("rollback_failure_drill", att.discard.discarded ? "PASS" : "FAIL");
         const failed = Object.entries(polled.levels || {}).filter(([, s]) => s !== "PASS").map(([k]) => k);
-        feedback = `\nIndependent validation ${polled.verdict === "TIMEOUT" ? "TIMED OUT" : "FAILED"} at levels: ${failed.join(", ") || "(none completed)"}. Re-read the requirements and threat model and return a corrected complete file.`;
+        feedback = `\nIndependent validation ${polled.verdict === "TIMEOUT" ? "TIMED OUT" : "FAILED"} at levels: ${failed.join(", ") || "(none completed)"}. Re-read the requirements and threat model and return corrected targeted edits against the ORIGINAL file shown above.`;
         continue;
       }
       state = nextExecutionState("testing", "pass"); rec.states.push(state);
@@ -348,9 +352,23 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
       att.re_review = { turn_id: re.turnId, findings: reFindings.length, blocking: blocking.length };
       mark("post_repair_review", "PASS");
       if (blocking.length) {
+        // Measure the gate's precision: adjudicate each blocking finding independently (evaluation only; the gate still discards).
+        reAdjSession ||= await newSession({ model: { name: model, params: { temperature: 0, maxTokens: 1500 } }, instructions: RE_REVIEW_ADJUDICATOR, config: RUNTIME_CONFIG }, { phase: "adjudication", role: "re-review-gate" });
+        const adjPrompt = ["Repaired file (passed all V-model tests):", "```javascript", repaired, "```", "", "Requirements:", brief.requirements, "", "Threat model:", brief.threats, "", "Blocking findings:", "```json",
+          JSON.stringify(blocking.map((f, index) => ({ index, line: f.line, category: f.category, severity: f.severity, comment: f.comment })), null, 1), "```"].join("\n");
+        const adj = await callTurn("adjudication", `${label}/gate${attempt}`, reAdjSession, adjPrompt, RE_REVIEW_ADJUDICATOR.length, 1500);
+        let judged = null;
+        try { judged = JSON.parse(((adj.text || "").match(/```json\s*([\s\S]*?)```/) || [])[1] || adj.text).judgements; } catch {}
+        if (Array.isArray(judged)) {
+          att.re_review.blocking_confirmed = judged.filter((j) => j && j.real === true).length;
+          att.re_review.blocking_rejected = judged.filter((j) => j && j.real === false).length;
+        }
+        ev.put(`private/drill/${label}-attempt${attempt}-gate-adjudication.json`, { blocking, reply: adj.text || null, turn_id: adj.turnId || null }, "gate_adjudication");
+      }
+      if (blocking.length) {
         state = nextExecutionState("polling", "failure"); rec.states.push(state);
         att.discard = discardCandidate(candidate); mark("rollback_failure_drill", att.discard.discarded ? "PASS" : "FAIL");
-        feedback = `\nIndependent re-review found blocking issues in your candidate: ${JSON.stringify(blocking)}. Return a corrected complete file.`;
+        feedback = `\nIndependent re-review found blocking issues in your candidate: ${JSON.stringify(blocking)}. Return corrected targeted edits against the ORIGINAL file shown above.`;
         continue;
       }
       state = nextExecutionState("polling", "stable"); rec.states.push(state);
@@ -378,7 +396,7 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
     events.push({ check: "harness_negative_control", patch_applied: ncPatch.applied, verdict: ncVal.verdict, levels: ncVal.levels, discard: ncDiscard, origin: ncOrigin });
     mark("rollback_failure_drill", ncVal.verdict === "FAIL" && ncDiscard.discarded && ncOrigin.unchanged ? "PASS" : "FAIL");
 
-    for (const fixtureId of ["money", "uploads"]) for (const arm of shuffle(ARMS)) cycles.push(await cycle(arm, fixtureId, { label: `${arm}-${fixtureId}` }));
+    for (const fixtureId of ["money", "uploads", "pagination", "escape"]) for (const arm of shuffle(ARMS)) cycles.push(await cycle(arm, fixtureId, { label: `${arm}-${fixtureId}` }));
 
     // Capture tenant-private lessons from Gate Keeper's own runs.
     const lessonSession = await newSession({ model: { name: model, params: { temperature: 0, maxTokens: 400 } }, instructions: LESSON_WRITER, config: RUNTIME_CONFIG }, { phase: "drill", role: "lesson" });
@@ -413,12 +431,19 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
   ev.put("private/drill/cycles.json", { cycles, lessons, events }, "drill_record");
   const publicCycles = cycles.map((c) => ({ label: c.label, arm: c.arm, fixture: c.fixture, lesson_applied: c.lesson_applied, outcome: c.outcome,
     architect_invoked: c.architect_invoked, states: c.states, review_findings: c.review?.findings ?? 0, attempts: c.attempts.map((a) => ({ attempt: a.attempt,
-      patch_applied: a.patch.applied, patch_reason: a.patch.reason, changed_lines: a.patch.changed_lines, patch_sha256: a.patch.patch_sha256,
+      patch_applied: a.patch.applied, patch_format: a.patch.format ?? null, patch_reason: a.patch.reason, changed_lines: a.patch.changed_lines, patch_sha256: a.patch.patch_sha256,
       verdict: a.validation?.verdict ?? null, levels: a.validation?.levels ?? null, polls: a.validation?.polls ?? null,
-      re_review_blocking: a.re_review?.blocking ?? null, discarded: a.discard?.discarded ?? a.retained_as_candidate_then_discarded?.discarded ?? null })),
+      re_review_blocking: a.re_review?.blocking ?? null, re_review_blocking_confirmed: a.re_review?.blocking_confirmed ?? null, discarded: a.discard?.discarded ?? a.retained_as_candidate_then_discarded?.discarded ?? null })),
     origin_unchanged: c.origin_check?.unchanged ?? null, source_sha: c.source_sha }));
-  const repairSuccess = Object.fromEntries(ARMS.map((arm) => { const cs = cycles.filter((c) => c.arm === arm && !c.label.includes("archive")); return [arm, { cycles: cs.length, candidates: cs.filter((c) => c.outcome === "CANDIDATE").length, first_attempt: cs.filter((c) => c.outcome === "CANDIDATE" && c.attempts.length === 1).length }]; }));
-  const pub = { stages: stage, cycles: publicCycles, repair_success: repairSuccess, events,
+  const repairSuccess = Object.fromEntries(ARMS.map((arm) => { const cs = cycles.filter((c) => c.arm === arm && !c.label.includes("archive")); return [arm, { cycles: cs.length, candidates: cs.filter((c) => c.outcome === "CANDIDATE").length, first_attempt: cs.filter((c) => c.outcome === "CANDIDATE" && c.attempts.length === 1).length,
+    v_model_passing_patch: cs.filter((c) => c.attempts.some((a) => a.validation?.verdict === "PASS")).length,
+    oversize_rejections: cs.reduce((n, c) => n + c.attempts.filter((a) => a.patch.reason === "PATCH_TOO_LARGE").length, 0),
+    attempts: cs.reduce((n, c) => n + c.attempts.length, 0) }]; }));
+  const gate = cycles.flatMap((c) => c.attempts.map((a) => a.re_review).filter(Boolean));
+  const gatePrecision = { re_reviews: gate.length, blocking_findings: gate.reduce((n, g) => n + g.blocking, 0),
+    adjudicated_real: gate.reduce((n, g) => n + (g.blocking_confirmed || 0), 0), adjudicated_not_real: gate.reduce((n, g) => n + (g.blocking_rejected || 0), 0),
+    candidates_discarded_by_gate: gate.filter((g) => g.blocking > 0).length, discarded_with_no_confirmed_finding: gate.filter((g) => g.blocking > 0 && g.blocking_confirmed === 0).length };
+  const pub = { stages: stage, cycles: publicCycles, repair_success: repairSuccess, re_review_gate: gatePrecision, events,
     lessons: lessons.map((l) => ({ tenant: l.tenantId, fixture: l.fixture, text_sha256: sha256(l.text), verified_successes: l.verifiedSuccesses, core_selected: l.core_selection.selected, core_reasons: l.core_selection.reasons })) };
   emit("GK_PROOF_DRILL", pub);
   return { stages: stage, public: pub };

@@ -20,6 +20,16 @@ export function resolveUpload(userPath) {
 }
 export function readUpload(fs, userPath) { return fs.readFileSync(resolveUpload(userPath), "utf8"); }`,
 };
+const PAGINATE_FIX = `export function paginate(items, page, size) {
+  if (!Array.isArray(items)) throw new TypeError("items must be an array");
+  if (!Number.isInteger(size) || size < 1) throw new RangeError("size must be a positive integer");
+  if (!Number.isInteger(page) || page < 1) throw new RangeError("page must be an integer >= 1");
+  const totalPages = Math.ceil(items.length / size);
+  if (items.length > 0 && page > totalPages) throw new RangeError("page out of range");
+  const start = (page - 1) * size;
+  return { items: items.slice(start, start + size), page, totalPages };
+}
+export function pageSummary(items, page, size) { const p = paginate(items, page, size); return \`Page \${p.page} of \${p.totalPages}: \${p.items.join(", ")}\`; }`;
 export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false } = {}) {
   const sessions = new Map(); const turns = new Map(); let n = 0;
   const reply = (instructions, content) => {
@@ -28,11 +38,14 @@ export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPe
       return "```json\n" + JSON.stringify({ judgements: ids.map((id, i) => ({ id, matches: i % 2 ? null : "E1", real_defect: false, explanation_correct: i % 4 === 0 })) }) + "\n```";
     }
     if (/write ONE tenant-private lesson/.test(instructions)) return '```json\n{"lesson":"Check path containment after normalisation, not by rejecting dot segments."}\n```';
-    if (/Return the complete corrected file/.test(instructions)) {
-      const file = Object.keys(FIXES).find((f) => content.includes(f));
-      return file ? "Patch:\n```javascript\n" + FIXES[file] + "\n```" : "no idea";
+    if (/checking a repair gate/.test(instructions)) return '```json\n{"judgements":[{"index":0,"real":false}]}\n```';
+    if (/Repair output contract/.test(instructions)) {
+      if (content.includes("src/money.js")) return '```json\n' + JSON.stringify({ edits: [{ find: "Number(frac);", replace: 'Number(frac.padEnd(2, "0"));' }] }) + '\n```';
+      if (content.includes("src/files.js")) return '```json\n' + JSON.stringify({ edits: [{ find: "  return join(UPLOAD_ROOT, userPath);", replace: '  if (userPath.includes("..")) { const e = new Error("no"); e.code = "E_TRAVERSAL"; throw e; }\n  return join(UPLOAD_ROOT, userPath);' }] }) + '\n```';
+      if (content.includes("src/paginate.js")) return "```javascript\n" + PAGINATE_FIX + "\n```";
+      return "no idea";
     }
-    if (/\(repaired candidate\)/.test(content)) return '```json\n{"findings":[]}\n```';
+    if (/\(repaired candidate\)/.test(content)) return /paginate/.test(content) ? '```json\n{"findings":[{"line":2,"category":"bug","severity":"high","comment":"synthetic gate block"}]}\n```' : '```json\n{"findings":[]}\n```';
     return '```json\n{"findings":[{"line":7,"category":"bug","severity":"high","comment":"synthetic finding"}]}\n```';
   };
   return {

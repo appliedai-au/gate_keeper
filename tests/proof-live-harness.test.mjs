@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { BudgetController } from "../scripts/proof/live/budget.mjs";
 import { armInstructions, instructionHashes, OUTPUT_CONTRACT, ROOT } from "../scripts/proof/live/config.mjs";
 import { aggregateArm, blindTask, parseAdjudication, parseFindingsWithSeverity } from "../scripts/proof/live/metrics.mjs";
-import { applyBoundedPatch, cloneCandidate, createFixtureRepo, discardCandidate, pollValidation, startValidation, verifyOrigin } from "../scripts/proof/live/drill.mjs";
+import { applyBoundedPatch, cloneCandidate, createFixtureRepo, discardCandidate, extractPatch, pollValidation, startValidation, verifyOrigin } from "../scripts/proof/live/drill.mjs";
 import { validatePublicProof } from "../scripts/proof/validate-public-proof.mjs";
 
 const PHASES = { comparison: 0.55, adjudication: 0.2, drill: 0.25 };
@@ -133,9 +133,15 @@ test("offline e2e (synthetic fake): orchestration completes, summary validates, 
   assert.ok(!all.includes("SECRET_HOLDOUT"), "holdout content must never reach stdout");
   const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
   const money = data.drill.cycles.filter((c) => c.fixture === "money");
-  assert.ok(money.length === 2 && money.every((c) => c.outcome === "CANDIDATE" && c.attempts[0].verdict === "PASS" && c.origin_unchanged === true), JSON.stringify(money));
+  assert.ok(money.length === 2 && money.every((c) => c.outcome === "CANDIDATE" && c.attempts[0].verdict === "PASS" && c.attempts[0].patch_format === "edits" && c.origin_unchanged === true), JSON.stringify(money));
   const naive = data.drill.cycles.filter((c) => c.fixture === "uploads");
   assert.ok(naive.every((c) => c.outcome === "REVERTED" && c.attempts.length === 2 && c.attempts.every((a) => a.patch_applied && a.verdict === "FAIL" && a.discarded === true)), JSON.stringify(naive));
+  const pag = data.drill.cycles.filter((c) => c.fixture === "pagination");
+  assert.ok(pag.every((c) => c.outcome === "REVERTED" && c.attempts.every((a) => a.patch_format === "full_file" && a.verdict === "PASS" && a.re_review_blocking === 1 && a.re_review_blocking_confirmed === 0)), JSON.stringify(pag));
+  assert.ok(data.drill.cycles.filter((c) => c.fixture === "escape").every((c) => c.attempts.every((a) => a.patch_reason === "NO_PATCH")));
+  assert.equal(data.drill.re_review_gate.discarded_with_no_confirmed_finding, data.drill.re_review_gate.candidates_discarded_by_gate);
+  assert.ok(data.drill.re_review_gate.adjudicated_not_real >= 4);
+  assert.equal(data.drill.repair_success.gate_keeper.v_model_passing_patch, 2);
   assert.ok(data.drill.events.some((e) => e.check === "no_human_in_loop=false" && e.admission.reason === "HUMAN_APPROVAL_REQUIRED"));
   assert.ok(data.drill.events.some((e) => e.check === "gate_keeper_budget_admission_without_signed_lease" && e.admission.reason === "INDEPENDENT_LEASE_REQUIRED"));
   assert.ok(data.drill.lessons.length >= 1 && data.drill.lessons.every((l) => l.core_selected === false));
@@ -191,4 +197,21 @@ test("drill: a hanging candidate is cancelled on poll timeout and discard cannot
   assert.equal(job.status, "cancelled");
   assert.equal(discardCandidate(cand).discarded, true);
   await new Promise((res) => setTimeout(res, 300));
+});
+
+test("repair patches: targeted edits apply exactly once; ambiguous or missing finds are rejected; full file is a fallback", () => {
+  const src = "a = 1\nb = 2\na = 1\n";
+  assert.deepEqual(extractPatch('```json\n{"edits":[{"find":"b = 2","replace":"b = 3"}]}\n```', src), { content: "a = 1\nb = 3\na = 1\n", format: "edits", edits: 1 });
+  assert.equal(extractPatch('```json\n{"edits":[{"find":"a = 1","replace":"x"}]}\n```', src).reason, "EDIT_AMBIGUOUS");
+  assert.equal(extractPatch('```json\n{"edits":[{"find":"zzz","replace":"x"}]}\n```', src).reason, "EDIT_NOT_FOUND");
+  assert.equal(extractPatch('```json\n{"edits":[]}\n```', src).reason, "NO_EDITS");
+  assert.equal(extractPatch("```javascript\nconst x = 1;\n```", src).format, "full_file");
+  assert.equal(extractPatch("nothing", src).reason, "NO_PATCH");
+});
+
+test("lean Gate Keeper reviewer excludes the TrueForge operator contract but keeps checklist and severity rubric", () => {
+  const g = armInstructions("gate_keeper");
+  assert.ok(!/One coordinator, on-demand specialists|Non-negotiable closed-loop/.test(g));
+  assert.match(g, /## Severity/);
+  assert.match(g, /review-checklist/);
 });

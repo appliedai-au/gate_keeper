@@ -1,0 +1,11 @@
+{
+  "id": "escape", "tenant": "tenant-delta", "file": "src/html.js", "allowed_paths": ["src/html.js"], "max_changed_lines": 30,
+  "context": "HTML rendering helpers: escape user text for element content and attributes, and render links to user-supplied URLs.",
+  "levels": [
+    {"level": "acceptance", "verifies": "requirements", "doc": "REQUIREMENTS.md", "cmd": ["node", "--test", "test/acceptance.test.mjs"]},
+    {"level": "adversarial", "verifies": "threat model", "doc": "THREATS.md", "cmd": ["node", "--test", "test/adversarial.test.mjs"]},
+    {"level": "integration", "verifies": "architecture", "doc": "ARCHITECTURE.md", "cmd": ["node", "--test", "test/integration.test.mjs"]},
+    {"level": "unit", "verifies": "implementation", "cmd": ["node", "--test", "test/unit.test.mjs"]},
+    {"level": "static", "verifies": "implementation", "cmd": ["node", "--check", "src/html.js"]}
+  ]
+}
