@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {createHash,randomUUID} from "node:crypto";
-import {mkdtempSync,mkdirSync,writeFileSync,realpathSync,rmSync,readFileSync} from "node:fs";
+import {mkdtempSync,mkdirSync,writeFileSync,realpathSync,rmSync,readFileSync,symlinkSync,existsSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join,resolve} from "node:path";
 import {spawnSync} from "node:child_process";
@@ -107,4 +107,28 @@ test("account sign-in does not implicitly switch the default TrueForge model",()
  assert.ok(from>=0&&to>from);
  assert.doesNotMatch(source.slice(from,to),/selectAccount\(record\)/);
  assert.match(source,/cmd==="deselect"/);
+});
+
+test("credential-store setup rejects parent symlink before creating outside directories",()=>{
+ const home=mkdtempSync(join(realpathSync(tmpdir()),"gk-unsafe-home-"));
+ try{
+   const outside=join(home,"outside");
+   mkdirSync(outside,{mode:0o700});
+   mkdirSync(join(home,".config"),{mode:0o700});
+   symlinkSync(outside,join(home,".config","gate-keeper"),"dir");
+   const result=cli(home,"status");
+   assert.equal(result.status,2,result.stderr);
+   assert.match(result.stderr,/invalid credential store ownership/);
+   assert.equal(existsSync(join(outside,"chatgpt-oauth")),false,
+     "must not traverse symlink while creating private credential store");
+ }finally{rmSync(home,{recursive:true,force:true});}
+});
+test("dangling OAuth selection symlink fails closed instead of allowing model fallback",()=>{
+ const home=mkdtempSync(join(realpathSync(tmpdir()),"gk-dangling-active-"));
+ try{
+   const base=join(home,".config","gate-keeper","chatgpt-oauth");
+   mkdirSync(base,{recursive:true,mode:0o700});
+   symlinkSync(join(base,"missing.json"),join(base,"active.json"));
+   assert.throws(()=>requireNoOAuthFallback({env:{},home}),/unsafe account selection file/);
+ }finally{rmSync(home,{recursive:true,force:true});}
 });
