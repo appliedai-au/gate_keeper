@@ -14,7 +14,9 @@
     "improve": "tsx scripts/improve.ts",
     "export-session": "tsx scripts/export-session.ts",
     "score": "tsx evals/score.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:learning-policy": "node --test tests/*.test.mjs",
+    "verify:learning-policy": "node scripts/learning-policy.mjs"
   },
   "dependencies": {
     "@truefoundry/trueforge-sdk": "^0.180.0"
