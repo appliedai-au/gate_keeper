@@ -43,6 +43,10 @@ export function verifyBudgetLease({body,signature,publicKeyPem,pinnedFingerprint
   const starts=Date.parse(lease.issued_at),ends=Date.parse(lease.expires_at);
   if(!Number.isFinite(starts) || !Number.isFinite(ends) || starts>now+60000 ||
      ends<=now || ends-starts>3600000 || starts>ends) fail("expired/invalid lease");
+  // Bind a lease to exactly one pre-admitted run identity; a signed budget
+  // without run binding must never be interpreted as reusable credit.
+  if(!IDENT.test(lease.run_id||"") || !expected.run_id ||
+     lease.run_id!==expected.run_id) fail("run identity mismatch");
   if(!IDENT.test(lease.model||"") || lease.model!==expected.model) fail("model drift");
   if(!expected.purpose || lease.purpose!==expected.purpose) fail("unbound purpose");
   return Object.freeze({max_calls:lease.max_calls,max_usd:lease.max_usd,
