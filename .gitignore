@@ -6,3 +6,11 @@ node_modules/
 # Private evaluation evidence must never be checked in.
 runs/run-*/
 .gate-keeper-private/
+
+# Local OAuth/provider secrets (never commit).
+auth.json
+oauth-tokens.json
+oauth-credentials.json
+chatgpt-account-*.json
+.chatgpt-oauth/
+.gate-keeper-credentials/
