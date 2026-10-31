@@ -7,7 +7,7 @@ import {createServer} from "node:http";
 import {homedir} from "node:os";
 import {join} from "node:path";
 import {
-  mkdirSync,readFileSync,readdirSync,writeFileSync,renameSync,openSync,closeSync,
+  mkdirSync,readFileSync,readdirSync,writeFileSync,renameSync,linkSync,unlinkSync,openSync,closeSync,
   fsyncSync,lstatSync,existsSync,constants,realpathSync
 } from "node:fs";
 import {createHash,randomUUID} from "node:crypto";
@@ -29,17 +29,42 @@ function storeReady() {
     if(current===root && (st.mode&0o077))throw Error("credential store is not private");
   }
 }
-function storeNew(filename,record) {
+function findExistingClient(clientId) {
+  if(!clientId)return null;
+  if(!/^oaiapp_[A-Za-z0-9_-]{8,128}$/.test(clientId))
+    throw Error("invalid ChatGPT OAuth client ID");
   storeReady();
+  const matched=readdirSync(root).filter(n=>n.startsWith("account-")&&n.endsWith(".json"))
+    .map(filename=>{
+      const path=join(root,filename),st=lstatSync(path);
+      if(!st.isFile()||st.isSymbolicLink()||(st.mode&0o077))
+        throw Error("unsafe account credential permissions");
+      return {filename,record:JSON.parse(readFileSync(path,"utf8"))};
+    }).filter(x=>x.record.client_id===clientId);
+  if(matched.length!==1)throw Error("existing account missing or ambiguous");
+  return matched[0];
+}
+function storeNew(filename,record,{replaceExisting=false}={}) {
+  storeReady();
+  if(!/^[a-zA-Z0-9-]{1,100}\\.json$/.test(filename))
+    throw Error("invalid credential filename");
   const path=join(root,filename);
-  if(!/^[a-zA-Z0-9-]{1,100}\.json$/.test(filename))throw Error("invalid credential filename");
-  const payload=JSON.stringify(record)+"\n";
   const temp=join(root,"tmp-"+randomUUID()+".json");
   const fd=openSync(temp,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
-  try{writeFileSync(fd,payload);fsyncSync(fd);}finally{closeSync(fd);}
-  if(existsSync(path))throw Error("existing registration requires explicit account selection");
-  renameSync(temp,path);
+  try {
+    try{writeFileSync(fd,JSON.stringify(record)+"\\n");fsyncSync(fd);}finally{closeSync(fd);}
+    if(replaceExisting){
+      const old=lstatSync(path);
+      if(!old.isFile()||old.isSymbolicLink()||(old.mode&0o077)||
+         (process.getuid&&old.uid!==process.getuid()))
+        throw Error("unsafe existing credential");
+      renameSync(temp,path);
+    }else{
+      linkSync(temp,path); // Atomic no-clobber; EEXIST cannot overwrite.
+    }
+  }finally{try{unlinkSync(temp);}catch{}}
 }
+
 function hostId() {
   storeReady();
   const file=join(root,"host.json");
