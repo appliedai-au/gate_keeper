@@ -16,7 +16,7 @@ import {
   canUseChatGPTPlan,CHATGPT_OIDC
 } from "./chatgpt-oauth.mjs";
 
-const root=join(homedir(),".config","gate-keeper","chatgpt-oauth");
+const root=join(realpathSync(homedir()),".config","gate-keeper","chatgpt-oauth");
 const die=message=>{console.error("CHATGPT_OAUTH_HELD: "+message);process.exitCode=2;};
 function storeReady() {
   mkdirSync(root,{recursive:true,mode:0o700});
