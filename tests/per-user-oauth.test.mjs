@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {createHash,randomUUID} from "node:crypto";
-import {mkdtempSync,mkdirSync,writeFileSync,realpathSync,rmSync} from "node:fs";
+import {mkdtempSync,mkdirSync,writeFileSync,realpathSync,rmSync,readFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join,resolve} from "node:path";
 import {spawnSync} from "node:child_process";
@@ -79,6 +79,11 @@ test("separate local OAuth registrations can be selected independently",()=>with
  const status2=JSON.parse(cli(home,"status").stdout);
  assert.equal(status2.accounts.find(x=>x.client_id===second.client_id).active,true);
  assert.equal(status2.accounts.find(x=>x.client_id===first.client_id).active,false);
+ const unselected=cli(home,"deselect");
+ assert.equal(unselected.status,0,unselected.stderr);
+ const status3=JSON.parse(cli(home,"status").stdout);
+ assert.equal(status3.accounts.filter(x=>x.active).length,0);
+ assert.equal(status3.accounts.length,2);
 }));
 test("an unknown ChatGPT account cannot be selected by email or fabricated client ID",()=>withHome(home=>{
  const result=cli(home,"select","oaiapp_rogue_client_012345");
@@ -94,3 +99,12 @@ test("selected local ChatGPT account blocks all implicit TrueForge fallback",()=
  assert.equal(cli(home,"select",first.client_id).status,0);
  assert.throws(()=>requireNoOAuthFallback({env:{},home}),/no model fallback/);
 }));
+
+test("account sign-in does not implicitly switch the default TrueForge model",()=>{
+ const source=readFileSync(new URL("../scripts/providers/chatgpt-login.mjs",import.meta.url),"utf8");
+ const from=source.indexOf("async function login(");
+ const to=source.indexOf("function parseLoginArgs(",from);
+ assert.ok(from>=0&&to>from);
+ assert.doesNotMatch(source.slice(from,to),/selectAccount\(record\)/);
+ assert.match(source,/cmd==="deselect"/);
+});
