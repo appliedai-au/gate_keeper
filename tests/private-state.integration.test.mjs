@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,symlinkSync,statSync,rmSync,writeFileSync,realpathSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,symlinkSync,statSync,rmSync,writeFileSync,realpathSync,existsSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
@@ -63,5 +63,32 @@ test('paths outside canonical private root are refused',()=>{
       assertPrivatePath('/tmp/should-not-write-gk-private-test.json');`,f.state);
     assert.notEqual(result.status,0);
     assert.match(result.stderr,/PRIVATE_EVIDENCE_REJECTED: path escapes private state/);
+  } finally {f.cleanup();}
+});
+
+test('dangling symlink target cannot be read as private evidence',()=>{
+  const f=fixture();
+  try {
+    mkdirSync(join(f.state,'runs'),{recursive:true,mode:0o700});
+    const absent=join(f.folder,'nonexistent-target.json');
+    symlinkSync(absent,join(f.state,'runs','receipt.json'));
+    const result=run(`import {assertPrivatePath} from './scripts/lib.ts';
+      assertPrivatePath(process.env.GATE_KEEPER_STATE_DIR+'/runs/receipt.json');`,f.state);
+    assert.notEqual(result.status,0);
+    assert.match(result.stderr,/PRIVATE_EVIDENCE_REJECTED: unsafe existing file/);
+  } finally {f.cleanup();}
+});
+test('path traversal cannot create intermediate folders outside private state',()=>{
+  const f=fixture();
+  try {
+    const outside=join(f.folder,'outside');
+    mkdirSync(outside,{mode:0o700});
+    mkdirSync(f.state,{mode:0o700});
+    symlinkSync(outside,join(f.state,'escape'));
+    const result=run(`import {writeJson} from './scripts/lib.ts';
+      writeJson(process.env.GATE_KEEPER_STATE_DIR+'/escape/created/score.json',{bad:true});`,f.state);
+    assert.notEqual(result.status,0);
+    assert.match(result.stderr,/PRIVATE_EVIDENCE_REJECTED: directory owner or type/);
+    assert.equal(existsSync(join(outside,'created')),false);
   } finally {f.cleanup();}
 });
