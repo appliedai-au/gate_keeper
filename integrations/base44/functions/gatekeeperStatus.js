@@ -52,14 +52,16 @@ Deno.serve(async (request) => {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
 
-    // Do not relay upstream response bodies, cookies, headers, stack traces,
-    // or session data to the application. A healthy container does NOT prove
-    // the review agent is registered or that a model is billable.
+    // Consume neither response content nor credentials. Cancel the unread
+    // response body so repeated probes do not accumulate occupied connections.
+    const healthy = upstream.ok;
+    await upstream.body?.cancel().catch(() => {});
+    // A healthy container does NOT prove agent registration or model readiness.
     return respond({
-      connected: upstream.ok,
-      runtime: upstream.ok ? "reachable" : "unavailable",
+      connected: healthy,
+      runtime: healthy ? "reachable" : "unavailable",
       checkedAt: new Date().toISOString(),
-    }, upstream.ok ? 200 : 503);
+    }, healthy ? 200 : 503);
   } catch {
     return respond({
       connected: false,
