@@ -50,6 +50,19 @@ The frontend **must never** receive the proxy password or a TrueForge API token.
 - UX acceptance: responsive mobile and desktop layout; keyboard accessibility; clear typography; no unnecessary animation or slow introductory sequence.
 - Remove the Asteroids game if replacing it with this cohesive demo improves the user experience; preserving it is **not** part of acceptance.
 
+## Base44 editor vs current CLI runtime: choose ONE integration mode
+
+Base44 currently publishes more than one backend-function convention, depending on the project creation/runtime pathway. **Do not deploy the earlier editor-style file into a current CLI or sandbox project without adapting it.**
+
+| Existing app mode | Source file to install | UI status function name |
+| --- | --- | --- |
+| Existing editor / Deno.serve runtime (verify in the app) | `functions/gatekeeperStatus.js` | `gatekeeperStatus` |
+| Current CLI / cloud sandbox (export-default entrypoint) | `cli/base44/functions/gatekeeper-status/entry.ts` | `gatekeeper-status` |
+
+For the CLI/sandbox variant, put the entry file in the app's `base44/functions/gatekeeper-status/entry.ts` directory and configure secrets via Base44 app settings. It uses `secrets.get()` from `base44:runtime`. The `GateKeeperConnectionPanel` accepts a `functionName` prop; for this mode use `<GateKeeperConnectionPanel functionName="gatekeeper-status" />`. The sample page currently uses the editor-style default, which must be adjusted after confirming the project's runtime. The two examples are alternatives, not simultaneous deployments.
+
+**Source verification does not establish which runtime your current Base44 demo uses.** Inspect its app source first and preserve existing auth routes and secrets. Authentication and upstream health must be tested after installation.
+
 ## Phase 0: safe integration preflight
 
 1. In the **existing** Base44 app's editor, confirm the owner workspace, plan and app ID. Do not provision a new app.
