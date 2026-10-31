@@ -51,6 +51,12 @@ To preselect an intended email address without hardcoding it into GitHub, run:
 ```bash
 npm run connect:chatgpt -- login --email your-own-account@example.com
 npm run connect:chatgpt -- status
+# Copy the exact issued client_id for the account you just authorised:
+npm run connect:chatgpt -- select <issued_client_id>
+# Sends exactly one tiny tool-free request via the public Responses API:
+npm run test:chatgpt-sub -- --confirm --email your-own-account@example.com
+# Remove the ChatGPT-only routing hold when finished testing:
+npm run connect:chatgpt -- deselect
 ```
 
 The email value is **only a sign-in selection check**. Gate Keeper verifies the OpenAI-signed ID token and requires the returned email to match the optional hint; account security identity remains the OIDC issuer, subject and registered client ID. The email alone never authorises model access. You can also omit `--email` and choose your account in OpenAI's browser dialog.
@@ -62,6 +68,11 @@ npm run connect:chatgpt -- select <issued_client_id>
 ```
 
 The active selection is saved in an owner-private `active.json` file containing only an account reference and a **ChatGPT-OAuth-only, no-fallback** policy. It does not contain tokens. Each local user home has a separate account store, and tokens remain bound to their verified registration and host. A shared or hosted Gate Keeper instance needs additional tenant/user/session isolation; the local filesystem is **not** a multi-tenant credential broker.
+
+
+**Testing with your own subscription:** The `test:chatgpt-sub` command checks the selected local account's eligible model catalog and makes one fixed prompt with `store:false` and `stream:true` through the public `https://api.openai.com/v1/responses` endpoint. It requires `--confirm`, records no raw reply, sends no repository files and never retries/falls back after an error. The request consumes allowance from the selected user's ChatGPT plan where supported; it does not charge an arbitrary API key. If the plan, workspace or model is ineligible, it fails closed. A successful local smoke test **does not** connect ChatGPT OAuth to the hosted TrueForge runtime.
+
+Signing in stores the account but **does not automatically select it** as the model provider. Use `select` and `deselect` explicitly; deselect retains your credential registrations and restores the previous non-OAuth local model selection. Other local users run their own sign-in and choose their own account.
 
 **No silent fallback:** If ChatGPT-plan permission is declined, tokens expire, or the approved TrueForge OAuth inference bridge is unavailable, the ChatGPT-only path must stop. It must not silently charge the user's DeepSeek, Anthropic, OpenAI API, or another person's account. The hosted TrueForge OAuth bridge remains unavailable and cannot be represented as active yet.
 
