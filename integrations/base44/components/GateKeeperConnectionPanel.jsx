@@ -4,13 +4,13 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { base44 } from "@/api/base44Client";
 
-export default function GateKeeperConnectionPanel() {
+export default function GateKeeperConnectionPanel({ functionName = "gatekeeperStatus" }) {
   const [state, setState] = useState({ loading: true, connected: false, error: null, checkedAt: null });
 
   const refresh = useCallback(async () => {
     setState((previous) => ({ ...previous, loading: true }));
     try {
-      const result = await base44.functions.invoke("gatekeeperStatus", {});
+      const result = await base44.functions.invoke(functionName, {});
       setState({
         loading: false,
         connected: result?.data?.connected === true,
@@ -29,7 +29,7 @@ export default function GateKeeperConnectionPanel() {
         checkedAt: null,
       });
     }
-  }, []);
+  }, [functionName]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
