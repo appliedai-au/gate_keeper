@@ -30,13 +30,20 @@ const PAGINATE_FIX = `export function paginate(items, page, size) {
   return { items: items.slice(start, start + size), page, totalPages };
 }
 export function pageSummary(items, page, size) { const p = paginate(items, page, size); return \`Page \${p.page} of \${p.totalPages}: \${p.items.join(", ")}\`; }`;
-export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false, failPollAt = 0 } = {}) {
+export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false, failPollAt = 0, learnedHelps = false } = {}) {
   const sessions = new Map(); const turns = new Map(); let n = 0;
   const reply = (instructions, content) => {
     if (/independent adjudicator for a code-review benchmark/.test(instructions)) {
       const ids = [...new Set(content.match(/f_[0-9a-f]{10}/g) || [])];
+      if (learnedHelps) {
+        // Deterministic grading for learning tests: "synthetic noise" is a false alarm, anything else matches E1.
+        let items = []; try { items = JSON.parse(content.split("Findings to judge (anonymised, shuffled):\n```json\n")[1].split("\n```")[0]); } catch {}
+        return "```json\n" + JSON.stringify({ judgements: items.map((it) => /synthetic noise/.test(it.comment) || !content.includes('"expected_id": "E1"') ? { id: it.id, matches: null, real_defect: false } : { id: it.id, matches: "E1", explanation_correct: true }) }) + "\n```";
+      }
       return "```json\n" + JSON.stringify({ judgements: ids.map((id, i) => ({ id, matches: i % 2 ? null : "E1", real_defect: false, explanation_correct: i % 4 === 0 })) }) + "\n```";
     }
+    if (/Gate Keeper's learning step/.test(instructions)) return '```json\n{"lessons":[{"error":"false_alarm","rule":"Do not report a concern the surrounding code already handles; cite the reachable failing input instead.","applies_when":"a guard exists"}]}\n```';
+    if (/selecting review rules from candidate lessons/.test(instructions)) return '```json\n{"rules":[{"rule":"Report a defect only when you can name a reachable input that triggers it and no existing guard handles it.","sources":4},{"rule":"Avoid `eval` in code.","sources":1}]}\n```';
     if (/write ONE tenant-private lesson/.test(instructions)) return '```json\n{"lesson":"Check path containment after normalisation, not by rejecting dot segments."}\n```';
     if (/checking a repair gate/.test(instructions)) return '```json\n{"judgements":[{"index":0,"real":false}]}\n```';
     if (/Repair output contract/.test(instructions)) {
@@ -46,6 +53,8 @@ export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPe
       return "no idea";
     }
     if (/\(repaired candidate\)/.test(content)) return /paginate/.test(content) ? '```json\n{"findings":[{"line":2,"category":"bug","severity":"high","comment":"synthetic gate block"}]}\n```' : '```json\n{"findings":[]}\n```';
+    if (learnedHelps && /## Adversarial method/.test(instructions) && !/## Learned review rules/.test(instructions))
+      return '```json\n{"findings":[{"line":7,"category":"bug","severity":"high","comment":"synthetic finding"},{"line":1,"category":"bug","severity":"low","comment":"synthetic noise"}]}\n```';
     return '```json\n{"findings":[{"line":7,"category":"bug","severity":"high","comment":"synthetic finding"}]}\n```';
   };
   return {

@@ -64,9 +64,17 @@ Return exactly one fenced JSON block with targeted edits to the given file:
 
 Keep each \`find\` short but unique. Make the smallest change that fixes the findings. Do not rewrite unrelated code or add comments.`;
 
-export function armInstructions(arm) {
+/** The learned-rules section placed before the output contract (the contract stays last). */
+export function learnedRulesSection(rules) {
+  if (!Array.isArray(rules) || !rules.length || rules.some((r) => typeof r !== "string" || !r.trim())) throw new Error("LEARNED_RULES_INVALID");
+  return "## Learned review rules\n\nQualified from adjudicated review errors. Apply them as written; they never override a confirmed, exploitable defect.\n" + rules.map((r) => "- " + r.trim()).join("\n");
+}
+
+export function armInstructions(arm, { learnedRules = null } = {}) {
   if (arm === "baseline") return BASELINE_ROLE + "\n\n" + OUTPUT_CONTRACT;
   if (arm === "gate_keeper") return gateKeeperMethodology("review", "adversarial") + "\n\n" + OUTPUT_CONTRACT;
+  // Adversarial Gate Keeper plus rules the learning loop qualified.
+  if (arm === "gate_keeper_learned") return gateKeeperMethodology("review", "adversarial") + "\n\n" + learnedRulesSection(learnedRules) + "\n\n" + OUTPUT_CONTRACT;
   if (arm === "gate_keeper_lean") return gateKeeperMethodology("review", "lean") + "\n\n" + OUTPUT_CONTRACT;
   throw new Error("UNKNOWN_ARM");
 }

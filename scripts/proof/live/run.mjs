@@ -4,34 +4,25 @@
 // explicitly allowed local URL for self-tests). Every model call is reserved
 // against an external spend cap first. Raw evidence goes to private storage;
 // stdout carries only hashes, aggregates and the sanitised public summary.
-import { gunzipSync } from "node:zlib";
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { scoreTask } from "../../../evals/score.ts";
 import { assessLessonForCore, budgetAdmission, executionAdmission, nextExecutionState } from "../../execution/policy.mjs";
 import { validatePublicProof, REQUIRED_STAGES } from "../validate-public-proof.mjs";
 import { ALL_ARMS, comparisonArms, DEFAULT_CAP_USD, OUTPUT_CONTRACT, REPAIR_OUTPUT_CONTRACT, PHASE_SHARE, REVIEW_PARAMS, ROOT, RUNTIME_CONFIG, TRUEFORGE_RUNTIME,
   armInstructions, gateKeeperMethodology, instructionHashes, sha256 } from "./config.mjs";
 import { BudgetController } from "./budget.mjs";
-import { aggregateArm, answerKey, blindTask, parseAdjudication, parseFindingsWithSeverity, shuffle, validFinding } from "./metrics.mjs";
+import { aggregateArm, parseFindingsWithSeverity, shuffle, validFinding } from "./metrics.mjs";
 import { applyBoundedPatch, cloneCandidate, createFixtureRepo, discardCandidate, extractPatch, pollValidation,
   repairBrief, startValidation, verifyOrigin } from "./drill.mjs";
 import { EvidenceStore } from "./evidence.mjs";
+import { ADJUDICATOR, adjudicateTasks, decodeHoldout, reviewTasks, taskPrompt } from "./review.mjs";
+import { runLearning, LEARN_PHASE_SHARE } from "./learn.mjs";
+
+export { ADJUDICATOR, decodeHoldout, taskPrompt };
 
 export const REPAIR_FIXTURES = ["money", "uploads", "pagination", "escape", "redirect", "retry"];
-export const ADJUDICATOR = `You are an independent adjudicator for a code-review benchmark. You did not write any of the findings and you do not know who did.
-For EACH finding decide:
-- "matches": the expected_id of the answer-key issue it identifies (the same underlying defect; the line may differ slightly), or null.
-- "real_defect" (only meaningful when matches is null): true only if the finding describes a genuine merge-blocking defect in the shown code that the key omits; false if it is wrong, speculative, stylistic, or not a real problem.
-- "explanation_correct" (only when matches is not null): true if the comment correctly explains why it is a defect, consistent with the key; false if the reasoning is wrong or materially incomplete.
-Judge only from the code and the key. Return exactly one fenced JSON block:
-\`\`\`json
-{"judgements": [{"id": "f_...", "matches": "E1", "real_defect": true, "explanation_correct": true}]}
-\`\`\`
-covering every finding id exactly once.`;
-
 const BASELINE_REPAIR = "You are a software engineer. Fix the reported problem with a minimal change that satisfies the requirements and threat model.";
 /** Gate adjudication counts only when every blocking index 0..n-1 is judged exactly once (last JSON block). */
 export function parseGateJudgements(text, n) {
@@ -50,23 +41,11 @@ For EACH finding decide "real": true only if it is a genuine, merge-blocking def
 Return exactly one fenced JSON block: \`\`\`json {"judgements": [{"index": 0, "real": false}]} \`\`\` covering every index once.`;
 const LESSON_WRITER = `From the run evidence below, write ONE tenant-private lesson (at most two sentences) that would help you review and repair this same user's code next time. Do not include code, file contents, secrets or personal data. Return exactly one fenced JSON block: \`\`\`json {"lesson": "..."} \`\`\``;
 
-const numbered = (lines) => { const w = String(lines.length).length; return lines.map((l, i) => `${String(i + 1).padStart(w)} | ${l}`).join("\n"); };
-export function taskPrompt(t) {
-  return [`Review this change. File: \`${t.filename}\`. What the change does: ${t.context}`, "",
-    "Line numbers are on the left of the `|`.", "", "```" + t.language, numbered(t.code), "```"].join("\n");
-}
 const messageText = (msg) => { const c = msg?.content; if (!c) return ""; return typeof c === "string" ? c : c.map((p) => ("text" in p ? p.text : "")).join(""); };
 
 function loadPublicTasks() {
   const dir = join(ROOT, "evals", "tasks");
   return readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((f) => ({ ...JSON.parse(readFileSync(join(dir, f), "utf8")), holdout: false, public_holdout_flag: JSON.parse(readFileSync(join(dir, f), "utf8")).holdout === true }));
-}
-export function decodeHoldout(b64) {
-  if (!b64) return { tasks: [], sha256: null };
-  const raw = gunzipSync(Buffer.from(b64, "base64"));
-  const tasks = JSON.parse(raw.toString("utf8"));
-  if (!Array.isArray(tasks) || !tasks.every((t) => t.id && Array.isArray(t.code) && Array.isArray(t.expected))) throw new Error("HOLDOUT_INVALID");
-  return { tasks: tasks.map((t) => ({ ...t, holdout: true })), sha256: sha256(raw) };
 }
 function publicBenchmarkSha(tasks) {
   return sha256(JSON.stringify(tasks.map((t) => ({ id: t.id, code: t.code, expected: t.expected }))));
@@ -104,14 +83,16 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_REGISTERED", model, available: modelNames });
     return { blocked: "MODEL_NOT_REGISTERED", preflight };
   }
-  let phaseShare = PHASE_SHARE;
-  if (env.GK_PROOF_PHASE_SHARE) {
+  const mode = env.GK_PROOF_MODE || "compare";
+  if (!["compare", "learn"].includes(mode)) throw new Error("PROOF_MODE_INVALID");
+  let phaseShare = mode === "learn" ? LEARN_PHASE_SHARE : PHASE_SHARE;
+  if (mode === "compare" && env.GK_PROOF_PHASE_SHARE) {
     const [c, a, d] = env.GK_PROOF_PHASE_SHARE.split(",").map(Number);
     if (![c, a, d].every((x) => x > 0 && x < 1) || Math.abs(c + a + d - 1) > 1e-6) throw new Error("PHASE_SHARE_INVALID");
     phaseShare = { comparison: c, adjudication: a, drill: d };
   }
   const budget = new BudgetController({ capUsd, phaseShare, model, now });
-  const compArms = comparisonArms(env);
+  const compArms = mode === "compare" ? comparisonArms(env) : null;
 
   // ---------- model call wrapper: reserve -> create turn -> poll -> settle ----------
   async function newSession(spec, meta) {
@@ -155,6 +136,47 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     return { status: s.status, turnId: turn.id, text: s.status === "done" ? messageText(s.output) : "", error: s.message, metrics, latency_ms: latency, polls };
   }
 
+  /** Export every TrueForge session trace and the spend ledger, then upload the private evidence. */
+  async function exportEvidence() {
+    for (const s of sessions) {
+      try {
+        const { data: session } = await tf.sessions.get(s.id);
+        const turns = [];
+        for await (const turn of await tf.sessions.listTurns(s.id)) {
+          const events = [];
+          for await (const e of await tf.sessions.listTurnEvents(s.id, turn.id, { order: "asc" })) events.push(e);
+          turns.push({ ...turn, events });
+        }
+        ev.put(`private/sessions/${s.id}.json`, { meta: s, session, turns }, "trueforge_session_trace");
+      } catch (e) { limitations.push(`Session ${s.id} export failed: ${String(e?.message || e).slice(0, 120)}`); }
+    }
+    ev.put("private/spend-ledger.json", { snapshot: budget.snapshot(), ledger: budget.ledger }, "spend_ledger");
+    const upload = await ev.upload({ endpoint: env.GK_EVIDENCE_S3_ENDPOINT, bucket: env.GK_EVIDENCE_S3_BUCKET, region: env.GK_EVIDENCE_S3_REGION,
+      accessKeyId: env.GK_EVIDENCE_S3_ACCESS_KEY_ID, secretAccessKey: env.GK_EVIDENCE_S3_SECRET_ACCESS_KEY,
+      forcePathStyle: env.GK_EVIDENCE_S3_PATH_STYLE !== "false" }).catch((e) => ({ uploaded: false, reason: "UPLOAD_FAILED: " + String(e?.message || e).slice(0, 160) }));
+    if (!upload.uploaded) blockers.push("Private evidence upload failed or not configured: " + upload.reason);
+    const manifest = ev.manifest();
+
+    return { upload, manifest };
+  }
+
+  // ---------- learning run: errors -> lessons -> selection -> qualification -> unseen proof ----------
+  if (mode === "learn") {
+    const learning = await runLearning({ env, model, publicTasks: loadPublicTasks(), budget, callTurn, newSession, ev, emit, limitations });
+    const { upload, manifest } = await exportEvidence();
+    blockers.push("No independent verifier/signing identity: promoted rules cannot be signed, so core promotion stays held");
+    limitations.push("Adjudicator is a separate, blinded TrueForge session on the same model as the candidates, not a human or a different model family");
+    limitations.push("Holdouts were written by the evaluator (Claude), not by an independent party");
+    const hashes = instructionHashes();
+    const publicData = { mode: "learn", run_id: runId, source_commit: sourceCommit, preflight, learning: learning.public, budget: budget.snapshot(),
+      sessions: sessions.map((s) => ({ id: s.id, phase: s.phase, arm: s.arm, trial: s.trial, role: s.role })), blockers, limitations,
+      hashes: { ...hashes, ...learning.hashes, evidence_manifest_sha256: manifest.sha256 },
+      evidence_items: manifest.body.items.map(({ kind, path, sha256: h, bytes }) => ({ kind, path, sha256: h, bytes })), upload, elapsed_ms: now() - t0 };
+    emitChunked(log, "GK_PROOF_PUBLIC_DATA", publicData);
+    emit("GK_PROOF_DONE", { run_id: runId, mode, spent_usd: budget.snapshot().spent_usd, evidence_manifest_sha256: manifest.sha256 });
+    return { publicData };
+  }
+
   // ---------- 1. comparison: identical inputs, interleaved arms, repeated trials ----------
   const publicTasks = loadPublicTasks();
   let holdout = { tasks: [], sha256: null };
@@ -162,54 +184,13 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   if (!holdout.tasks.length) blockers.push("No owner-private holdout supplied to the runner (GK_PRIVATE_HOLDOUT_B64)");
   const tasks = [...publicTasks, ...holdout.tasks];
   ev.put("private/holdout-tasks.json", holdout.tasks, "private_holdout");
-  const results = [];
-  const completeTrials = [];
-  for (let trial = 1; trial <= trialsWanted; trial++) {
-    const sessionByArm = {};
-    for (const arm of compArms) sessionByArm[arm] = await newSession(
-      { model: { name: model, params: REVIEW_PARAMS }, instructions: armInstructions(arm), config: RUNTIME_CONFIG }, { phase: "comparison", arm, trial });
-    let complete = true;
-    for (const task of shuffle(tasks)) {
-      for (const arm of shuffle(compArms)) {
-        const out = await callTurn("comparison", `${arm}/t${trial}/${task.id}`, sessionByArm[arm], taskPrompt(task), armInstructions(arm).length, REVIEW_PARAMS.maxTokens);
-        if (out.refused) { complete = false; break; }
-        const findings = out.status === "done" ? parseFindingsWithSeverity(out.text) : null;
-        results.push({ arm, trial, task, findings, latency_ms: out.latency_ms, metrics: out.metrics, status: out.status, turn_id: out.turnId,
-          session_id: sessionByArm[arm], reply: out.text, deterministic: scoreTask(task, out.text || "") });
-      }
-      if (!complete) break;
-    }
-    if (complete) completeTrials.push(trial);
-    else { limitations.push(`Trial ${trial} stopped early (budget or deadline); only complete trials are scored`); break; }
-  }
+  const { results, completeTrials } = await reviewTasks({ tasks, arms: compArms, instructionsFor: (arm) => armInstructions(arm), trials: trialsWanted,
+    phase: "comparison", model, callTurn, newSession, limitations });
   const scored = results.filter((r) => completeTrials.includes(r.trial));
   ev.put("private/comparison-replies.json", results.map(({ task, ...r }) => ({ ...r, task_id: task.id, holdout: !!task.holdout })), "candidate_replies");
 
   // ---------- 2. blinded independent adjudication ----------
-  const judgements = {}, blindKey = {};
-  let adjudicatorSession = null;
-  for (const task of tasks) {
-    const replies = scored.filter((r) => r.task.id === task.id).map((r) => ({ arm: r.arm, trial: r.trial, findings: r.findings }));
-    const { items, key } = blindTask(task.id, replies);
-    Object.assign(blindKey, key);
-    if (!items.length) continue;
-    adjudicatorSession ||= await newSession({ model: { name: model, params: { temperature: 0, maxTokens: 3000 } }, instructions: ADJUDICATOR, config: RUNTIME_CONFIG }, { phase: "adjudication" });
-    const ak = answerKey(task);
-    for (let i = 0; i < items.length; i += 30) {
-      const chunk = items.slice(i, i + 30);
-      const prompt = ["Code under review:", "```" + task.language, numbered(task.code), "```", "", "Answer key:", "```json", JSON.stringify(ak.map(({ severity, ...e }) => e), null, 1), "```", "",
-        "Findings to judge (anonymised, shuffled):", "```json", JSON.stringify(chunk, null, 1), "```"].join("\n");
-      let ids = new Set(chunk.map((c) => c.id));
-      for (let attempt = 0; attempt < 2 && ids.size; attempt++) {
-        const out = await callTurn("adjudication", `adjudicate/${task.id}/${i}/${attempt}`, adjudicatorSession, prompt + (attempt ? `\n\nJudge ONLY these ids: ${[...ids].join(", ")}` : ""), ADJUDICATOR.length, 3000);
-        if (out.refused) break;
-        const parsed = parseAdjudication(out.text, ids, new Set(ak.map((e) => e.expected_id)));
-        ev.put(`private/adjudication/${task.id}-${i}-${attempt}.json`, { reply: out.text, turn_id: out.turnId, parsed }, "adjudication");
-        Object.assign(judgements, parsed.judgements || {});
-        ids = new Set([...ids].filter((id) => !(id in judgements)));
-      }
-    }
-  }
+  const { judgements, blindKey } = await adjudicateTasks({ tasks, scored, phase: "adjudication", model, callTurn, newSession, ev });
   ev.put("private/blinding-key.json", blindKey, "unblinding_key");
 
   const arms = {};
@@ -228,24 +209,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   const drill = await runDrill({ tf, model, budget, callTurn, newSession, ev, emit, env });
 
   // ---------- 4. evidence: sessions, ledger, upload ----------
-  for (const s of sessions) {
-    try {
-      const { data: session } = await tf.sessions.get(s.id);
-      const turns = [];
-      for await (const turn of await tf.sessions.listTurns(s.id)) {
-        const events = [];
-        for await (const e of await tf.sessions.listTurnEvents(s.id, turn.id, { order: "asc" })) events.push(e);
-        turns.push({ ...turn, events });
-      }
-      ev.put(`private/sessions/${s.id}.json`, { meta: s, session, turns }, "trueforge_session_trace");
-    } catch (e) { limitations.push(`Session ${s.id} export failed: ${String(e?.message || e).slice(0, 120)}`); }
-  }
-  ev.put("private/spend-ledger.json", { snapshot: budget.snapshot(), ledger: budget.ledger }, "spend_ledger");
-  const upload = await ev.upload({ endpoint: env.GK_EVIDENCE_S3_ENDPOINT, bucket: env.GK_EVIDENCE_S3_BUCKET, region: env.GK_EVIDENCE_S3_REGION,
-    accessKeyId: env.GK_EVIDENCE_S3_ACCESS_KEY_ID, secretAccessKey: env.GK_EVIDENCE_S3_SECRET_ACCESS_KEY,
-    forcePathStyle: env.GK_EVIDENCE_S3_PATH_STYLE !== "false" }).catch((e) => ({ uploaded: false, reason: "UPLOAD_FAILED: " + String(e?.message || e).slice(0, 160) }));
-  if (!upload.uploaded) blockers.push("Private evidence upload failed or not configured: " + upload.reason);
-  const manifest = ev.manifest();
+  const { upload, manifest } = await exportEvidence();
 
   // ---------- 5. public summary (aggregates and hashes only) ----------
   blockers.push("No independent verifier/signing identity: qualification cannot be signed, so no PASS is claimable");

@@ -286,3 +286,45 @@ test("budget prices reported cache tokens at cache rates and aggregation reports
   assert.equal(m.cache_read_tokens, 5); assert.equal(m.input_tokens, 8);
   assert.equal(m.cache_write_tokens, null, "unreported cache writes must be null, not 0");
 });
+
+test("offline e2e (synthetic fake): learning run turns adjudicated errors into qualified rules and proves them on unseen tasks", () => {
+  const r = e2e({ env: { GK_PROOF_MODE: "learn" }, fake: { learnedHelps: true } });
+  const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
+  const L = data.learning;
+  assert.deepEqual(L.stages, { dev_review: "PASS", error_capture: "PASS", rule_selection: "PASS", qualification: "PASS", unseen_proof: "PASS" });
+  assert.ok(L.errors.false_alarms >= 5 && L.candidates.from_false_alarms >= 5);
+  assert.equal(L.rules.length, 2);
+  assert.deepEqual(L.rules.map((x) => [x.accepted, x.rejection]), [[true, null], [false, "CODE_OR_LINE_REFERENCE"]]);
+  assert.ok(L.dev_after.false_positives < L.dev_before.false_positives && L.dev_after.matched_issues >= L.dev_before.matched_issues);
+  assert.ok(L.unseen.gate_keeper_learned.false_positives < L.unseen.gate_keeper.false_positives);
+  assert.equal(L.unseen.gate_keeper_learned.matched_issues, L.unseen.gate_keeper.matched_issues);
+  assert.equal(L.unseen.gate_keeper.findings_on_clean_tasks, 2);
+  assert.equal(L.unseen.gate_keeper_learned.findings_on_clean_tasks, 1);
+  assert.ok(L.core_selection.every((c) => c.selected === false && c.reasons.includes("VERIFIER_SIGNATURE_REQUIRED")));
+  assert.match(data.hashes.learned_rules_sha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(Object.keys(data.budget.phase_caps_usd).sort(), ["dev", "learn", "prove", "qualify"]);
+  const all = r.lines.join("\n");
+  assert.ok(!/SECRET_(HOLDOUT|UNSEEN)/.test(all), "dev and unseen holdout content must never reach stdout");
+  assert.ok(r.lines.some((l) => l.startsWith("GK_PROOF_DONE=")));
+});
+
+test("offline e2e (synthetic fake): rules that do not cut false alarms fail qualification and never reach the unseen set", () => {
+  const r = e2e({ env: { GK_PROOF_MODE: "learn" } });
+  const L = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA").learning;
+  assert.equal(L.stages.qualification, "FAIL");
+  assert.equal(L.stages.unseen_proof, "NOT_RUN");
+  assert.equal(L.unseen, undefined);
+  assert.ok(L.core_selection.every((c) => c.selected === false));
+});
+
+test("learning: rule filter rejects code, line references and task identifiers; holdouts may not overlap", async () => {
+  const { ruleRejection } = await import("../scripts/proof/live/learn.mjs");
+  const tasks = [{ filename: "orders.py", code: ["def list_orders(conn):", "  pageSize = 2"] }];
+  assert.equal(ruleRejection("Only report a missing bound when no caller-side check limits the value.", tasks), null);
+  assert.equal(ruleRejection("Check list_orders for offset errors before reporting anything.", tasks), "NAMES_A_TASK_IDENTIFIER");
+  assert.equal(ruleRejection("The bug in orders.py is always the offset calculation.", tasks), "NAMES_A_TASK_FILE");
+  assert.equal(ruleRejection("Look at line 12 first when reviewing anything here.", tasks), "CODE_OR_LINE_REFERENCE");
+  assert.equal(ruleRejection("short", tasks), "LENGTH");
+  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "learn", GK_DEV_HOLDOUT_B64: undefined, GK_PRIVATE_HOLDOUT_B64: "" } }), /UNSEEN_HOLDOUT_REQUIRED/);
+  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "fast" } }), /PROOF_MODE_INVALID/);
+});
