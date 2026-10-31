@@ -15,20 +15,31 @@ import {
   createOAuthAttempt,verifyCallback,validateIdToken,parseGrantedScopes,
   canUseChatGPTPlan,CHATGPT_OIDC
 } from "./chatgpt-oauth.mjs";
+import {normalizeEmail,verifyExpectedAccount,accountRef} from "./account-identity.mjs";
 
 let root; // Resolved lazily so missing HOME is handled by the CLI error boundary.
 const die=message=>{console.error("CHATGPT_OAUTH_HELD: "+message);process.exitCode=2;};
 function storeReady() {
-  root ??= join(realpathSync(homedir()),".config","gate-keeper","chatgpt-oauth");
-  mkdirSync(root,{recursive:true,mode:0o700});
   let current=realpathSync(homedir());
+  // Verify each ancestor BEFORE creating the next component. Recursive
+  // mkdir through an untrusted symlink would otherwise write outside HOME.
   for(const p of [".config","gate-keeper","chatgpt-oauth"]){
-    current=join(current,p);
-    const st=lstatSync(current);
-    if(!st.isDirectory()||st.isSymbolicLink()||(process.getuid&&st.uid!==process.getuid()))
+    const candidate=join(current,p);
+    let st;
+    try {st=lstatSync(candidate);}
+    catch(err){
+      if(err?.code!=="ENOENT")throw err;
+      mkdirSync(candidate,{mode:0o700});
+      st=lstatSync(candidate);
+    }
+    if(!st.isDirectory()||st.isSymbolicLink()||
+       (process.getuid&&st.uid!==process.getuid()))
       throw Error("invalid credential store ownership");
-    if(current===root && (st.mode&0o077))throw Error("credential store is not private");
+    if(p==="chatgpt-oauth"&&(st.mode&0o077))
+      throw Error("credential store is not private");
+    current=candidate;
   }
+  root=current;
 }
 function findExistingClient(clientId) {
   if(!clientId)return null;
@@ -82,6 +93,52 @@ function hostId() {
   try{writeFileSync(fd,JSON.stringify({hostId:id})+"\n");fsyncSync(fd);}finally{closeSync(fd);}
   return id;
 }
+function selectedRecord() {
+  storeReady();
+  const file=join(root,"active.json");
+  let st;
+  try{st=lstatSync(file);}
+  catch(err){if(err?.code==="ENOENT")return null;throw err;}
+  if(!st.isFile()||st.isSymbolicLink()||(st.mode&0o077)||
+     (process.getuid&&st.uid!==process.getuid()))
+    throw Error("unsafe active account selector");
+  const record=JSON.parse(readFileSync(file,"utf8"));
+  if(!/^[0-9a-f]{64}$/.test(record.account_ref||""))throw Error("invalid account selector");
+  return record;
+}
+function selectAccount(record) {
+  if(record.ext_agent_host_id!==hostId())
+    throw Error("ChatGPT registration belongs to a different local host");
+  const recordRef=accountRef(record);
+  const activeFile=join(root,"active.json");
+  storeNew("active.json",{account_ref:recordRef,provider_policy:"chatgpt_oauth_only",
+    fallback_allowed:false,selected_at:new Date().toISOString()},
+    {replaceExisting:existsSync(activeFile)});
+}
+function selectClient(clientId) {
+  const selected=findExistingClient(clientId);
+  if(!selected)throw Error("Select a registered ChatGPT account");
+  selectAccount(selected.record);
+  console.log("Selected local ChatGPT account. OAuth inference through TrueForge remains disabled.");
+}
+function deselectAccount() {
+  storeReady();
+  const file=join(root,"active.json");
+  let st;
+  try {st=lstatSync(file);}
+  catch(err) {
+    if(err?.code==="ENOENT"){
+      console.log("No ChatGPT account selected.");
+      return;
+    }
+    throw err;
+  }
+  if(!st.isFile()||st.isSymbolicLink()||(st.mode&0o077)||
+      (process.getuid&&st.uid!==process.getuid()))
+    throw Error("unsafe active account selector");
+  unlinkSync(file);
+  console.log("ChatGPT-only selection cleared. Existing account credentials remain private.");
+}
 function status(){
   storeReady();
   const accounts=readdirSync(root).filter(n=>n.startsWith("account-")&&n.endsWith(".json"));
@@ -95,7 +152,23 @@ function status(){
       planUsageEnabled:canUseChatGPTPlan(o.scopes||[]),
       expires_at:o.expires_at,provider:"chatgpt-oauth-local"};
   });
-  console.log(JSON.stringify({accounts:records,hostedProviderActive:false},null,2));
+  const selected=selectedRecord();
+  const accountsWithSelection=records.map(r=>({...r,
+    active:!!selected && selected.account_ref===accountRef(
+      // Account identity is only read from protected local credential records.
+      recordForClientId(r.client_id)
+    )}));
+  if(selected && !accountsWithSelection.some(r=>r.active))
+    throw Error("active account is no longer registered; select an owned account");
+  console.log(JSON.stringify({accounts:accountsWithSelection,
+    hostedProviderActive:false,modelProvider:"chatgpt-oauth-local",
+    trueForgeInference:"DISABLED_PENDING_ADAPTER",
+    policy:selected?.provider_policy||"chatgpt_oauth_only",fallbackAllowed:false},null,2));
+}
+function recordForClientId(clientId) {
+  const chosen=findExistingClient(clientId);
+  if(!chosen)throw Error("selected ChatGPT registration not found");
+  return chosen.record;
 }
 async function fetchLimited(url,options={}) {
   const res=await fetch(url,{...options,redirect:"error",signal:AbortSignal.timeout(15000)});
@@ -104,7 +177,8 @@ async function fetchLimited(url,options={}) {
   if(text.length>350000)throw Error("authorization response too large");
   return JSON.parse(text);
 }
-async function login(existingClientId){
+async function login(existingClientId,expectedEmail){
+  const selectedEmail=normalizeEmail(expectedEmail);
   if(process.env.RAILWAY_PROJECT_ID||process.env.RAILWAY_ENVIRONMENT_ID)
     throw Error("hosted Railway OAuth is not eligible for the local loopback flow");
   if(process.env.CI)throw Error("interactive local OAuth is forbidden in CI");
@@ -164,6 +238,9 @@ async function login(existingClientId){
     if(!token.id_token||!token.access_token)throw Error("no valid token response");
     const jwks=await fetchLimited(CHATGPT_OIDC.jwks);
     const account=validateIdToken({idToken:token.id_token,jwks,clientId,nonce:attempt.nonce});
+    // Email selects the intended user in the browser; verified issuer + subject
+    // and issued client ID remain the real account security identity.
+    verifyExpectedAccount(account,selectedEmail);
     if(selected && (account.subject!==selected.record.subject ||
         account.issuer!==selected.record.issuer || clientId!==selected.record.client_id))
       throw Error("reconnected OAuth identity does not match selected account");
@@ -180,16 +257,41 @@ async function login(existingClientId){
     if(selected && selected.filename!=="account-"+key+".json")
       throw Error("existing OAuth account identity changed");
     storeNew("account-"+key+".json",record,{replaceExisting:!!selected});
-    console.log("ChatGPT identity connected locally.");
+    // The selected profile belongs to this local OS user only; no global
+    // credentials or shared default account are created for other users.
+    console.log("ChatGPT identity connected locally. Use select <client_id> to activate ChatGPT-only mode.");
     console.log(canUseChatGPTPlan(scopes)?"ChatGPT plan usage permission granted; TrueForge adapter still disabled.":"Identity connected, but ChatGPT plan usage was NOT granted.");
   }finally{
     server.closeAllConnections?.();
     await new Promise(resolve=>server.close(()=>resolve()));
   }
 }
+function parseLoginArgs(values){
+  let existingClientId=null,expectedEmail=null;
+  for(let i=0;i<values.length;i++){
+    const a=values[i];
+    if(a==="--email"){
+      if(expectedEmail!==null || !values[i+1])throw Error("--email requires a single account email hint");
+      expectedEmail=normalizeEmail(values[++i]);
+    }else if(a.startsWith("oaiapp_") && !existingClientId){
+      existingClientId=a;
+    }else throw Error("Unknown ChatGPT login argument");
+  }
+  return {existingClientId,expectedEmail};
+}
 const cmd=process.argv[2]||"status";
 try{
- if(cmd==="status")status();
- else if(cmd==="login")await login(process.argv[3]);
- else throw Error("Usage: npm run connect:chatgpt -- login [existing_client_id] | status");
+ if(cmd==="status"){
+   if(process.argv.length>3)throw Error("Status takes no arguments");
+   status();
+ }else if(cmd==="login"){
+   const args=parseLoginArgs(process.argv.slice(3));
+   await login(args.existingClientId,args.expectedEmail);
+ }else if(cmd==="deselect"){
+   if(process.argv.length!==3)throw Error("Deselect takes no arguments");
+   deselectAccount();
+ }else if(cmd==="select"){
+   if(process.argv.length!==4)throw Error("Select requires one issued client ID");
+   selectClient(process.argv[3]);
+ }else throw Error("Usage: npm run connect:chatgpt -- login [existing_client_id] [--email your@email] | select <client_id> | deselect | status");
 }catch(err){die(err instanceof Error?err.message:"connection failed");}
