@@ -83,6 +83,11 @@
 .al-timeline {display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin:42px 0 42px}
 .al-timestep {text-align:left;display:grid;grid-template-columns:auto 1fr;column-gap:10px;align-items:center;position:relative;background:transparent;border:0;color:#778c98;padding:0 0 19px;font:700 12px!important}
 .al-timestep:after {position:absolute;content:"";height:2px;background:#344955;bottom:0;left:0;right:0}
+.al-step-title {white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.al-stage-left {min-width:0}
+.al-stage-buttons .al-step-replay {background:transparent;color:#d4e7e5;border-color:#49606a}
+.al-stage-buttons .al-step-replay:hover {background:#253b43}
+.al-branch {stroke-linejoin:round}
 .al-timestep-current,.al-timestep-past {color:#e2efeb}
 .al-timestep-current:after {background:var(--al-lime);box-shadow:0 0 12px #d9ff8685}
 .al-timestep-past:after {background:#6e998b}
