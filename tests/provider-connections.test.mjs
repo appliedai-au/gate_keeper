@@ -73,7 +73,7 @@ test("DeepSeek official models and endpoint",()=>{
 });
 test("DeepSeek routing requires TrueForge-confirmed names",()=>{
  assert.equal(resolveTrueForgeModel({}),undefined);
- assert.throws(()=>resolveTrueForgeModel({GK_MODEL_PROVIDER:"deepseek"}),/configured TrueForge model/);
+ assert.throws(()=>resolveTrueForgeModel({GK_MODEL_PROVIDER:"deepseek",GK_DEEPSEEK_CODE_SHARING_APPROVED:"1"}),/configured TrueForge model/);
  assert.throws(()=>resolveTrueForgeModel({GK_MODEL_PROVIDER:"deepseek",
   GK_TRUEFORGE_DEEPSEEK_ECONOMY_MODEL:"custom/deepseek-flash"}),/source-sharing approval/);
  assert.equal(resolveTrueForgeModel({GK_MODEL_PROVIDER:"deepseek",
