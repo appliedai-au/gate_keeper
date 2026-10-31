@@ -50,6 +50,22 @@ The frontend **must never** receive the proxy password or a TrueForge API token.
 - UX acceptance: responsive mobile and desktop layout; keyboard accessibility; clear typography; no unnecessary animation or slow introductory sequence.
 - Remove the Asteroids game if replacing it with this cohesive demo improves the user experience; preserving it is **not** part of acceptance.
 
+## TrueForge-native execution decision (1 November 2026)
+
+**One coordinator: TrueForge itself. No separate architectural or executor service.**
+
+- New source profile: `agent/native-trueforge-profile.json` with native TrueForge sandbox, dynamic subagents, limited GitHub read-only connector and a bounded iteration limit.
+- New agent guidance: `agent/native-trueforge-instructions.md` defines adversarial review, repair, validation and an **architect subagent on demand** for consequential cross-service changes.
+- Readiness builder: `scripts/trueforge/native-profile.mjs` returns a candidate TrueForge manifest only after explicitly supplied, verified sandbox/GitHub/budget preconditions; it **does not authenticate, register or deploy** a live agent. The supplied booleans are assertions from a trusted operator, not proof on their own.
+- The duplicate `scripts/execution/isolated-runner.mjs` was **deleted** from this PR. TrueForge's sandbox-as-tool is now the intended execution boundary.
+- The current `gate-keeper` agent and production deployment remain in read-only review mode. The new named `gate-keeper-native` profile is staging-only until actual sandbox/provider access, the independent spending gateway and GitHub tool scopes are verified.
+- **No human in the loop** only removes an interactive checkpoint for pre-authorized sandbox-only work. It never grants permissions or weakens protected branches, independent budget leases, tenant isolation, rollback proof, or reviewed core-lesson promotion.
+- Automatic rollback in source means discarding failed **isolated candidate work**. Production deployments cannot be reverted safely without a separately verified release/rollback controller.
+
+**Single credential pool:** review, repair, architect-on-demand and verifier roles use the *same* approved TrueForge model connection. The independent gateway manages one bounded job budget with separate accounting by phase; independent trust controls remain separate from the reasoning agent.
+
+**Required closeout:** configure and independently verify a TrueForge sandbox provider and GitHub connector in a non-production TrueForge instance; validate model availability and signed gateway settlement; register only the native candidate; test real GitHub read → sandbox patch → V-model validation → repeated polling → confirmed rollback; then integrate the results into the existing Base44 app and commission limited scoped writes. No "live autonomous fixer" claim until end-to-end proof.
+
 ## Base44 editor vs current CLI runtime: choose ONE integration mode
 
 Base44 currently publishes more than one backend-function convention, depending on the project creation/runtime pathway. **Do not deploy the earlier editor-style file into a current CLI or sandbox project without adapting it.**
