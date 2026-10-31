@@ -22,15 +22,33 @@
     "holdout_private": true
   },
   "fairness": {
-    "same_model": true,
-    "same_provider": true,
-    "same_inputs": true,
-    "same_scoring": true,
-    "same_limits": true
+    "same_model": null,
+    "same_provider": null,
+    "same_inputs": null,
+    "same_scoring": null,
+    "same_limits": null
   },
   "arms": {
-    "baseline": {"trials": 0, "defect_recall": null, "precision": null, "explanation_correctness": null, "severity_accuracy": null, "median_latency_ms": null, "total_tokens": null, "actual_cost_usd": null},
-    "gate_keeper": {"trials": 0, "defect_recall": null, "precision": null, "explanation_correctness": null, "severity_accuracy": null, "median_latency_ms": null, "total_tokens": null, "actual_cost_usd": null}
+    "baseline": {
+      "trials": 0,
+      "defect_recall": null,
+      "precision": null,
+      "explanation_correctness": null,
+      "severity_accuracy": null,
+      "median_latency_ms": null,
+      "total_tokens": null,
+      "actual_cost_usd": null
+    },
+    "gate_keeper": {
+      "trials": 0,
+      "defect_recall": null,
+      "precision": null,
+      "explanation_correctness": null,
+      "severity_accuracy": null,
+      "median_latency_ms": null,
+      "total_tokens": null,
+      "actual_cost_usd": null
+    }
   },
   "loop": {
     "adversarial_review": "BLOCKED",
@@ -55,7 +73,7 @@
   ],
   "limitations": [
     "BLOCKED: zero trials were run for either arm; every measure is null. This submission contains no measured evidence of Gate Keeper superiority, inferiority or parity.",
-    "fairness.* flags are forced to true by the structural validator; here they describe the intended protocol only and are vacuous because no arm executed.",
+    "fairness.* are null (not applicable): no arm executed, so no like-for-like comparison exists to attest.",
     "baseline_instructions_sha256 is the all-zero sentinel (not collected), not a real digest.",
     "holdout_private attests only that no private holdout was accessed or published; evals/tasks/04-ts-fetch.json is flagged holdout but is committed publicly and so cannot serve as an unseen holdout.",
     "Source-level tests (135/135 pass) and typecheck are code-quality signals only and are not evidence of live capability, review accuracy or repair reliability.",

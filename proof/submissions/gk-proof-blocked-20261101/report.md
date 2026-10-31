@@ -61,7 +61,7 @@ No private evidence exists for this run, so `evidence` is an empty array. Hashes
 
 1. **Scorer cannot judge explanations.** `evals/score.ts` matches on category and line within ±1 and penalises noise at 0.5. It cannot assess explanation correctness or severity, which the contract requires. Independent semantic adjudication is a missing component, not just missing data.
 2. **The "holdout" is public.** `evals/tasks/04-ts-fetch.json` is `holdout: true` but sits in the public repo, so it is not an unseen holdout. A real private holdout must live outside GitHub.
-3. **Validator cannot express a not-run protocol.** It forces every `fairness.*` flag to `true`, even for BLOCKED results with zero trials. This submission discloses that in `limitations`. Recommended follow-up: for `BLOCKED` or `INCONCLUSIVE`, allow `fairness.*` to be `null`. I did not change the validator, since weakening a gate is outside my scope.
+3. **Validator forced `fairness.*` to `true` even when nothing ran.** Fixed in this PR: `null` (not applicable) is now accepted only when the result is not PASS and both arms have zero trials. `false`, and anything for a run that executed or claims PASS, is still rejected. Tests added. This submission uses `null`.
 4. **The specialist methodology is thin.** `native-trueforge-instructions.md` is mostly governance and process. The reviewing technique is one line ("inspect defects, tenant boundaries, error handling and regression risks"), and `native-trueforge-profile.json` does not reference the `review-checklist` skill. If the Gate Keeper arm differs from the baseline mainly by governance wording, a recall or precision advantage is unlikely to be measurable. A live run is the only way to know.
 
 ## 7. Provisional assessment (hypotheses, not proof)
