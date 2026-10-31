@@ -23,7 +23,7 @@ import {
   PRIVATE_ROOT,
   TASKS_DIR,
   ROOT,
-  syncAgent,
+  buildManifest,
   taskPrompt,
   writeJson,
 } from "./lib.ts";
@@ -31,6 +31,10 @@ import {
 const HEADER = "run,session_id,agent_commit,score,date_utc,tasks_passed,tasks_total,tokens,tool_calls,duration_s";
 
 if(process.env.GATE_KEEPER_EVAL_AUTHORIZED!=="1") die("EVAL_NOT_AUTHORIZED: explicit model-evaluation approval required");
+// Attestation is NOT a budget mechanism. Controller must independently verify the
+// provider-side ceiling before setting it; without that evidence no paid calls.
+if(process.env.GK_PROVIDER_HARD_BUDGET_CONFIRMED!=="1") die("BUDGET_UNVERIFIED: externally enforced spend ceiling required");
+if((readAgent().agent.skill_mode ?? "inline")!=="inline") die("EVAL_UNSUPPORTED: only tool-free inline agent evaluation is qualified");
 const benchmarkFiles=readdirSync(TASKS_DIR).filter(x=>x.endsWith(".json")).sort();
 const benchmarkHash=createHash("sha256");
 for(const file of benchmarkFiles) {
@@ -42,6 +46,7 @@ const benchmarkSha256=benchmarkHash.digest("hex");
 if(process.env.GK_FROZEN_BENCHMARK_SHA256 && process.env.GK_FROZEN_BENCHMARK_SHA256!==benchmarkSha256) die("Frozen benchmark identity mismatch");
 const benchmarkFrozen=process.env.GK_FROZEN_BENCHMARK_SHA256===benchmarkSha256;
 let lockFD:number;
+let settled=false;
 try {lockFD=openSync(join(PRIVATE_ROOT,"eval.lock"),"wx",0o600);}
 catch {die("Evaluation already active or unreconciled");}
 try {
@@ -56,17 +61,23 @@ const rows = readFileSync(SUMMARY_CSV, "utf8").trim().split("\n").slice(1).filte
 const run = rows.length + 1;
 const dir = runDir(run);
 const nn = String(run).padStart(2, "0");
+// Persist intent before making any paid request; an uncertain run retains the
+// lock and cannot be rerun without explicit operator reconciliation.
+writeJson(join(dir, "intent.json"), {run, agent_commit:agentCommit, benchmark_sha256:benchmarkSha256,
+  status:"admitted_no_verdict", budget:"externally_attested", promotion:"DISABLED"});
 
-// 2. Make the TrueForge agent match agent/ at this commit.
+// Never call syncAgent() or update the shared TrueForge agent during evaluation.
+// The inline agent manifest is tied to this immutable local source snapshot.
 const tf = client();
-const agent = await syncAgent(tf, headSha());
+const agent = readAgent().agent;
+const manifest = buildManifest(headSha());
 const tasks = loadTasks();
-console.log(`Run ${nn}: agent "${agent.name}" at ${agentCommit.slice(0, 7)}, ${tasks.length} tasks`);
+console.log(`Run ${nn}: isolated TrueForge spec for "${agent.name}" at ${agentCommit.slice(0, 7)}, ${tasks.length} tasks`);
 
 // 3. One session for the whole run. https://trueforge.dev/api/overview#session
 const started = Date.now();
 const { data: session } = await tf.sessions.create({
-  agent: { name: readAgent().agent.name },
+  agent: { spec: manifest },
   metadata: { purpose: "eval", run: nn, agent_commit: agentCommit },
 });
 await tf.sessions.update(session.id, { title: `eval run ${nn} @ ${agentCommit.slice(0, 7)}` });
@@ -103,4 +114,10 @@ console.log(`\nRun ${nn} score: ${total.score} (${total.tasks_passed}/${total.ta
 
 // No raw TrueForge transcripts, tasks or learning state may enter this public repository.
 console.log("Private evaluation saved. No independent qualification or promotion.");
-} finally {closeSync(lockFD);unlinkSync(join(PRIVATE_ROOT,"eval.lock"));}
+settled=true;
+} finally {
+  closeSync(lockFD);
+  // Crash, timeout, interrupted export or unknown cost => retain lock for
+  // operator reconciliation. Deleting it would permit duplicate paid work.
+  if(settled) unlinkSync(join(PRIVATE_ROOT,"eval.lock"));
+}
