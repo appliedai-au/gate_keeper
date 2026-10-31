@@ -3,11 +3,13 @@
 // field names (previousTurnId, iterationLimit); the HTTP API and the docs' JSON use snake_case.
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync, realpathSync, chmodSync, openSync, closeSync, fsyncSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, relative, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TrueForge, TrueForgeApi } from "@truefoundry/trueforge-sdk";
+import { verifyBudgetLease } from "./learning-trust.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const AGENT_DIR = join(ROOT, "agent");
@@ -78,6 +80,36 @@ export function assertPrivatePath(path:string):string {
     if((err as NodeJS.ErrnoException).code!=="ENOENT") throw err;
   }
   return full;
+}
+
+/** Bounded, signed admission for individual TrueForge experiments.
+ * The signer and gateway must be independent. Claiming locally prevents
+ * same-volume replay, but is NOT a substitute for gateway-side accounting.
+ */
+export function requireSignedBudgetLease(action:"eval"|"improve",
+  source_commit:string,benchmark_sha256:string,model:string,run_id:string) {
+  const leasePath=process.env.GK_BUDGET_LEASE_FILE;
+  const pubkeyPath=process.env.GK_VERIFIER_PUBKEY_FILE;
+  const trustPin=process.env.GK_VERIFIER_SPKI_SHA256;
+  const gateway=process.env.GK_APPROVED_GATEWAY_ID;
+  if(!leasePath || !pubkeyPath || !trustPin || !gateway || !run_id)
+    throw new Error("BUDGET_REJECTED: independent gateway configuration missing");
+  const source=JSON.parse(readFileSync(assertPrivatePath(leasePath),"utf8"));
+  const key=readFileSync(pubkeyPath,"utf8");
+  const permit=verifyBudgetLease({body:source.body,signature:source.signature,
+    publicKeyPem:key,pinnedFingerprint:trustPin,
+    expected:{action,source_commit,benchmark_sha256,model,
+      gateway_id:gateway,run_id,purpose:action==="eval"?"private_eval":"private_improve"}});
+  const id=source.body.gateway_lease_id;
+  if(!id || typeof id!=="string") throw new Error("BUDGET_REJECTED: lease id missing");
+  const ledgerId=createHash("sha256").update(gateway+":"+id).digest("hex");
+  // Atomic create-only local replay record; crash leaves a claim, never
+  // silently refreshes the spend allowance. Multi-worker uniqueness must be
+  // enforced separately by the gateway.
+  writeJson(join(PRIVATE_ROOT,"lease-claims",ledgerId+".json"),
+    {gateway,lease_id:id,run_id,action,source_commit,benchmark_sha256,
+      state:"consumed_pending_gateway_settlement"});
+  return permit;
 }
 
 // ---------- config ----------
