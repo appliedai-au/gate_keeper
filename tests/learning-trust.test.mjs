@@ -8,11 +8,11 @@ const pinnedFingerprint=digest(pair.publicKey.export({type:"spki",format:"der"})
 const sha1="a".repeat(40),sha256="b".repeat(64),now=Date.parse("2026-10-31T03:30:00Z");
 const lease={schema:"gk-trueforge-lease-v1",provider:"trueforge",action:"eval",
  source_commit:sha1,benchmark_sha256:sha256,model:"anthropic/claude-sonnet-4-6",
- gateway_id:"trusted-gateway-01",gateway_lease_id:"lease-01234567890",
+ gateway_id:"trusted-gateway-01",gateway_lease_id:"lease-01234567890",run_id:"run-0123456789",
  provider_limit_enforced:true,max_calls:5,max_usd:3,purpose:"private_eval",
  issued_at:"2026-10-31T03:00:00Z",expires_at:"2026-10-31T04:00:00Z"};
 const expected={action:"eval",source_commit:sha1,benchmark_sha256:sha256,
- model:lease.model,gateway_id:lease.gateway_id,purpose:"private_eval"};
+ model:lease.model,gateway_id:lease.gateway_id,purpose:"private_eval",run_id:lease.run_id};
 const signed=body=>sign(null,Buffer.from(JSON.stringify(body)),pair.privateKey).toString("base64");
 const check=(body=lease,pin=pinnedFingerprint,exp=expected)=>verifyBudgetLease({
  body,signature:signed(body),publicKeyPem,pinnedFingerprint:pin,expected:exp,now});
@@ -51,4 +51,7 @@ test("forged baseline result rejected",()=>{
 });
 test("tampered baseline signature rejected",()=>{
  assert.throws(()=>verifyReceipt({...receipt,cost_usd:0.0},signed(receipt)),/signature mismatch/);
+});
+test("reused lease for a different run is rejected",()=>{
+ assert.throws(()=>check(lease,pinnedFingerprint,{...expected,run_id:"run-second-iteration"}),/run identity mismatch/);
 });
