@@ -60,6 +60,7 @@ export async function main(argv=process.argv.slice(2)){
  // approved plan. No repo files, prompts, secrets or conversation are sent.
  const verdict=await runChatGPTPlanSmoke({accessToken:token,model:selected.id});
  if(!verdict.completed)fail("inference did not complete");
+ if(!verdict.outputMatchesExpected)fail("inference output did not match the fixed smoke-test answer");
  console.log(JSON.stringify({provider:"chatgpt_subscription",
    model:selected.id,completed:true,outputMatchesExpected:verdict.outputMatchesExpected,
    noFallback:true,trueForgeAdapter:"NOT_CONFIGURED"},null,2));
