@@ -22,7 +22,10 @@ test('manual evaluation is held without external budget attestation', () => {
 });
 test('unfinished paid evaluation retains durable no-retry claim', () => {
   assert.match(evalSource, /intent\.json/);
-  assert.match(evalSource, /if\(settled\) unlinkSync/);
+  assert.match(evalSource, /if\(settled \|\| !retainClaim\) unlinkSync/);
+  assert.match(evalSource, /const agentCommit=headSha\(\);[\s\S]*?const LOCK=/);
+  assert.match(evalSource, /if\(!retainClaim\)/);
+  assert.match(evalSource, /retainClaim=true/);
   assert.match(improveSource, /improve-intent\.json/);
 });
 test('private sessions never intentionally commit to public repository', () => {
