@@ -30,7 +30,7 @@ const PAGINATE_FIX = `export function paginate(items, page, size) {
   return { items: items.slice(start, start + size), page, totalPages };
 }
 export function pageSummary(items, page, size) { const p = paginate(items, page, size); return \`Page \${p.page} of \${p.totalPages}: \${p.items.join(", ")}\`; }`;
-export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false } = {}) {
+export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false, failPollAt = 0 } = {}) {
   const sessions = new Map(); const turns = new Map(); let n = 0;
   const reply = (instructions, content) => {
     if (/independent adjudicator for a code-review benchmark/.test(instructions)) {
@@ -61,7 +61,7 @@ export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPe
         turns.set(id, { id, sessionId: sid, createdAt, state: { status: "done", completedAt: new Date(Date.now() + 5).toISOString(), output: { content: text }, metrics: { totalTokens: 1000, totalCostInUsd: costPerTurn } } });
         return { data: { id, sessionId: sid, createdAt, state: { status: "running" } } };
       },
-      getTurn: async (sid, tid) => ({ data: turns.get(tid) }),
+      getTurn: async (sid, tid) => { if (failPollAt && n === failPollAt) throw new Error("synthetic poll failure"); return { data: turns.get(tid) }; },
       cancel: async () => ({}),
       get: async (sid) => ({ data: { id: sid } }),
       listTurns: async (sid) => [...turns.values()].filter((t) => t.sessionId === sid),

@@ -32,6 +32,18 @@ Judge only from the code and the key. Return exactly one fenced JSON block:
 covering every finding id exactly once.`;
 
 const BASELINE_REPAIR = "You are a software engineer. Fix the reported problem with a minimal change that satisfies the requirements and threat model.";
+/** Gate adjudication counts only when every blocking index 0..n-1 is judged exactly once (last JSON block). */
+export function parseGateJudgements(text, n) {
+  const blocks = [...String(text || "").matchAll(/```json\s*\n?([\s\S]*?)```/g)].map((m) => m[1]);
+  let judged; try { judged = JSON.parse((blocks.length ? blocks[blocks.length - 1] : text).trim()).judgements; } catch { return null; }
+  if (!Array.isArray(judged) || judged.length !== n) return null;
+  const seen = new Set();
+  for (const j of judged) {
+    if (!j || !Number.isInteger(j.index) || j.index < 0 || j.index >= n || seen.has(j.index) || typeof j.real !== "boolean") return null;
+    seen.add(j.index);
+  }
+  return { confirmed: judged.filter((j) => j.real).length, rejected: judged.filter((j) => !j.real).length };
+}
 export const RE_REVIEW_ADJUDICATOR = `You are an independent adjudicator checking a repair gate. A reviewer flagged blocking findings on a repaired file that has ALREADY passed its acceptance, adversarial, integration and unit tests.
 For EACH finding decide "real": true only if it is a genuine, merge-blocking defect in the repaired code given its requirements and threat model; false if it is speculative, stylistic, out of scope, already handled, or wrong.
 Return exactly one fenced JSON block: \`\`\`json {"judgements": [{"index": 0, "real": false}]} \`\`\` covering every index once.`;
@@ -121,7 +133,12 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
       }
       await new Promise((res) => setTimeout(res, env.GK_PROOF_POLL_MS ? Number(env.GK_PROOF_POLL_MS) : 1500));
       polls++;
-      ({ data: turn } = await tf.sessions.getTurn(sessionId, turn.id));
+      try { ({ data: turn } = await tf.sessions.getTurn(sessionId, turn.id)); }
+      catch (e) {
+        try { await tf.sessions.cancel(sessionId); } catch {}
+        budget.settle(r, null);
+        return { status: "poll_error", turnId: turn.id, error: String(e?.message || e).slice(0, 300), text: "", latency_ms: now() - started, polls };
+      }
     }
     const s = turn.state;
     const metrics = s.metrics || null;
@@ -356,14 +373,16 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
         reAdjSession ||= await newSession({ model: { name: model, params: { temperature: 0, maxTokens: 1500 } }, instructions: RE_REVIEW_ADJUDICATOR, config: RUNTIME_CONFIG }, { phase: "adjudication", role: "re-review-gate" });
         const adjPrompt = ["Repaired file (passed all V-model tests):", "```javascript", repaired, "```", "", "Requirements:", brief.requirements, "", "Threat model:", brief.threats, "", "Blocking findings:", "```json",
           JSON.stringify(blocking.map((f, index) => ({ index, line: f.line, category: f.category, severity: f.severity, comment: f.comment })), null, 1), "```"].join("\n");
-        const adj = await callTurn("adjudication", `${label}/gate${attempt}`, reAdjSession, adjPrompt, RE_REVIEW_ADJUDICATOR.length, 1500);
-        let judged = null;
-        try { judged = JSON.parse(((adj.text || "").match(/```json\s*([\s\S]*?)```/) || [])[1] || adj.text).judgements; } catch {}
-        if (Array.isArray(judged)) {
-          att.re_review.blocking_confirmed = judged.filter((j) => j && j.real === true).length;
-          att.re_review.blocking_rejected = judged.filter((j) => j && j.real === false).length;
+        let gateJudgement = null, adjReplies = [];
+        for (let k = 0; k < 2 && !gateJudgement; k++) {
+          const adj = await callTurn("adjudication", `${label}/gate${attempt}/${k}`, reAdjSession, adjPrompt + (k ? "\n\nYour previous answer did not judge every index exactly once. Judge every index 0.." + (blocking.length - 1) + " exactly once." : ""), RE_REVIEW_ADJUDICATOR.length, 1500);
+          if (adj.refused) break;
+          adjReplies.push({ reply: adj.text || null, turn_id: adj.turnId || null });
+          gateJudgement = parseGateJudgements(adj.text, blocking.length);
         }
-        ev.put(`private/drill/${label}-attempt${attempt}-gate-adjudication.json`, { blocking, reply: adj.text || null, turn_id: adj.turnId || null }, "gate_adjudication");
+        if (gateJudgement) { att.re_review.blocking_confirmed = gateJudgement.confirmed; att.re_review.blocking_rejected = gateJudgement.rejected; }
+        else att.re_review.adjudication_incomplete = true;
+        ev.put(`private/drill/${label}-attempt${attempt}-gate-adjudication.json`, { blocking, replies: adjReplies, judgement: gateJudgement }, "gate_adjudication");
       }
       if (blocking.length) {
         state = nextExecutionState("polling", "failure"); rec.states.push(state);
@@ -442,7 +461,9 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
   const gate = cycles.flatMap((c) => c.attempts.map((a) => a.re_review).filter(Boolean));
   const gatePrecision = { re_reviews: gate.length, blocking_findings: gate.reduce((n, g) => n + g.blocking, 0),
     adjudicated_real: gate.reduce((n, g) => n + (g.blocking_confirmed || 0), 0), adjudicated_not_real: gate.reduce((n, g) => n + (g.blocking_rejected || 0), 0),
-    candidates_discarded_by_gate: gate.filter((g) => g.blocking > 0).length, discarded_with_no_confirmed_finding: gate.filter((g) => g.blocking > 0 && g.blocking_confirmed === 0).length };
+    candidates_discarded_by_gate: gate.filter((g) => g.blocking > 0).length,
+    discarded_with_no_confirmed_finding: gate.filter((g) => g.blocking > 0 && g.blocking_confirmed === 0 && !g.adjudication_incomplete).length,
+    adjudications_incomplete: gate.filter((g) => g.adjudication_incomplete).length };
   const pub = { stages: stage, cycles: publicCycles, repair_success: repairSuccess, re_review_gate: gatePrecision, events,
     lessons: lessons.map((l) => ({ tenant: l.tenantId, fixture: l.fixture, text_sha256: sha256(l.text), verified_successes: l.verifiedSuccesses, core_selected: l.core_selection.selected, core_reasons: l.core_selection.reasons })) };
   emit("GK_PROOF_DRILL", pub);

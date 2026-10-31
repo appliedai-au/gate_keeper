@@ -215,3 +215,18 @@ test("lean Gate Keeper reviewer excludes the TrueForge operator contract but kee
   assert.match(g, /## Severity/);
   assert.match(g, /review-checklist/);
 });
+
+test("gate adjudication counts only complete, unique index judgements", () => {
+  const r = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", join(ROOT, "tests", "helpers", "gate-parse.mjs")], { cwd: ROOT, encoding: "utf8" }).trim());
+  assert.deepEqual(r.ok, { confirmed: 1, rejected: 1 });
+  assert.equal(r.partial, null); assert.equal(r.dup, null); assert.equal(r.range, null);
+  assert.deepEqual(r.last, { confirmed: 1, rejected: 0 });
+});
+
+test("offline e2e (synthetic fake): a poll failure settles the reservation and the run still completes with evidence", () => {
+  const r = e2e({ trials: 1, fake: { failPollAt: 3 } });
+  const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
+  assert.equal(data.budget.reserved_usd, 0);
+  assert.ok(r.lines.some((l) => l.startsWith("GK_PROOF_DONE=")));
+  assert.equal(validatePublicProof(decodeChunks(r.lines, "GK_PROOF_PUBLIC_SUMMARY")).valid, true);
+});
