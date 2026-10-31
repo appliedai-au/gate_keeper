@@ -17,7 +17,7 @@ const signed=body=>sign(null,Buffer.from(JSON.stringify(body)),pair.privateKey).
 const check=(body=lease,pin=pinnedFingerprint,exp=expected)=>verifyBudgetLease({
  body,signature:signed(body),publicKeyPem,pinnedFingerprint:pin,expected:exp,now});
 test("genuine lease accepted",()=>assert.equal(check().max_calls,5));
-test("missing fingerprint fails",()=>assert.throws(()=>check(lease,undefined),/trusted fingerprint/));
+test("missing fingerprint fails",()=>assert.throws(()=>verifyBudgetLease({body:lease,signature:signed(lease),publicKeyPem,pinnedFingerprint:undefined,expected,now}),/trusted fingerprint/));
 test("rogue signer fails",()=>{
  const rogue=generateKeyPairSync("ed25519");
  assert.throws(()=>verifyBudgetLease({body:lease,signature:sign(null,Buffer.from(JSON.stringify(lease)),rogue.privateKey).toString("base64"),
