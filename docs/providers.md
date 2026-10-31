@@ -36,6 +36,8 @@ npm ci
 npm run connect:chatgpt -- login
 # Open the printed OpenAI authorization URL, sign in and approve the scopes you want.
 npm run connect:chatgpt -- status
+# Reconnect/renew an existing registration after selecting its client_id:
+npm run connect:chatgpt -- login <existing_client_id>
 ```
 
 The command stores individual account records under `~/.config/gate-keeper/chatgpt-oauth/` using owner-only permissions. Multiple authorised registrations can be stored without exposing the tokens in the status output.
