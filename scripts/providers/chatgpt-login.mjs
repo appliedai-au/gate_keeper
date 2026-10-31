@@ -16,9 +16,10 @@ import {
   canUseChatGPTPlan,CHATGPT_OIDC
 } from "./chatgpt-oauth.mjs";
 
-const root=join(realpathSync(homedir()),".config","gate-keeper","chatgpt-oauth");
+let root; // Resolved lazily so missing HOME is handled by the CLI error boundary.
 const die=message=>{console.error("CHATGPT_OAUTH_HELD: "+message);process.exitCode=2;};
 function storeReady() {
+  root ??= join(realpathSync(homedir()),".config","gate-keeper","chatgpt-oauth");
   mkdirSync(root,{recursive:true,mode:0o700});
   let current=realpathSync(homedir());
   for(const p of [".config","gate-keeper","chatgpt-oauth"]){
