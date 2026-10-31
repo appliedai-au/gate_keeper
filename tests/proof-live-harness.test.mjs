@@ -284,4 +284,5 @@ test("budget prices reported cache tokens at cache rates and aggregation reports
   const task = { id: "t", holdout: false, expected: [{ line: 1, categories: ["bug"] }] };
   const m = aggregateArm("baseline", [{ arm: "baseline", trial: 1, task, findings: [], latency_ms: 1, metrics: { totalTokens: 10, totalInputTokens: 8, totalCacheReadTokens: 5 } }], {}, {});
   assert.equal(m.cache_read_tokens, 5); assert.equal(m.input_tokens, 8);
+  assert.equal(m.cache_write_tokens, null, "unreported cache writes must be null, not 0");
 });
