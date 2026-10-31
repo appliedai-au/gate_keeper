@@ -93,3 +93,15 @@ test("OAuth catalog preserves account-specific order and rejects unlisted models
     {id:"model-second",name:"Second eligible"}
   ]);
 });
+
+test("stream completion tolerates CRLF frame boundaries split between TCP chunks",async()=>{
+  const fetchImpl=async()=>new Response(sse([
+    'data: {"type":"response.output_text.delta","delta":"GATE_KEEPER_OAUTH_OK"}\r',
+    '\n\r','\n',
+    'data: {"type":"response.completed","response":{"status":"completed"}}\r',
+    '\n\r','\n'
+  ]),{status:200});
+  const result=await runChatGPTPlanSmoke({accessToken,model:"model-eligible-1",fetchImpl});
+  assert.equal(result.completed,true);
+  assert.equal(result.outputMatchesExpected,true);
+});
