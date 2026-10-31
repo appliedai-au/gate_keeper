@@ -30,7 +30,7 @@ export function buildNativeTrueForgeSpec({
     mcp_servers: [{
       name: registeredGithubConnector,
       enable_tools: ["@read-only"],
-      require_approval_for_tools: ["@all"],
+      require_approval_for_tools: config.mcp_approval,
       preload: false,
     }],
     config: JSON.parse(JSON.stringify(config.config)),
