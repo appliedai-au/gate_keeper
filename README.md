@@ -1,5 +1,7 @@
 # Gate Keeper
 
+> **TrueForge-native closed-loop work (draft PR #7):** The existing `gate-keeper` production agent is still read-only. The proposed `gate-keeper-native` profile delegates execution to TrueForge while preserving adversarial review → isolated candidate repair → V-model tests → polling → re-review → tenant-private lessons → independent qualification → controlled core improvement. No automatic merge/promotion or paid evaluation is enabled. See [full proof submission contract](docs/proof-submission-contract.md) and [Claude evidence collection/upload prompt](docs/claude-proof-request.md). Real comparative proof remains outstanding.
+
 **A read-only code-review agent built on [TrueForge](https://trueforge.dev), with controlled evaluation and candidate-only learning.**
 
 Gate Keeper reviews proposed code changes, identifies substantive defects and returns structured findings. TrueForge orchestrates the agent; the source, evaluation rules and qualification code live in this repository. Gate Keeper does **not** autonomously merge repairs, run arbitrary tenant code, or promote changes to its own instructions.
