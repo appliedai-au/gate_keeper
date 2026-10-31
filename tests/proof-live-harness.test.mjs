@@ -178,3 +178,17 @@ test("drill: poll timeout returns a complete result shape", async () => {
   assert.equal(r.verdict, "TIMEOUT");
   assert.deepEqual(r.levels, {});
 });
+
+test("drill: a hanging candidate is cancelled on poll timeout and discard cannot crash the run", async () => {
+  const work = mkdtempSync(join(tmpdir(), "gk-t-"));
+  const o = createFixtureRepo(fixture("money"), work);
+  const cand = cloneCandidate(o.repo, work, "hang");
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(join(cand, "test", "unit.test.mjs"), "while (true) {}\n");
+  const job = startValidation(cand, o.vmodel, { rounds: 2, levelTimeoutMs: 60000 });
+  const r = await pollValidation(job, { intervalMs: 20, timeoutMs: 400 });
+  assert.equal(r.verdict, "TIMEOUT");
+  assert.equal(job.status, "cancelled");
+  assert.equal(discardCandidate(cand).discarded, true);
+  await new Promise((res) => setTimeout(res, 300));
+});

@@ -74,7 +74,7 @@ export function applyBoundedPatch(candidate, v, content) {
   return { applied: true, changedLines, diff: git(candidate, "diff"), patchSha256: sha256(git(candidate, "diff")) };
 }
 
-function runLevel(cwd, level, timeoutMs) {
+function runLevel(cwd, level, timeoutMs, job) {
   return new Promise((resolveLevel) => {
     const started = Date.now();
     // Sandbox: run under Node's permission model with reads confined to the
@@ -84,13 +84,17 @@ function runLevel(cwd, level, timeoutMs) {
     const rest = level.cmd.slice(1).filter((a) => a !== "--test");
     const argv = ["--permission", "--allow-fs-read=" + cwd, ...rest];
     const child = spawn(process.execPath, argv, { cwd, env: { PATH: process.env.PATH, HOME: cwd, NODE_ENV: "test" }, stdio: ["ignore", "pipe", "pipe"] });
+    if (job) job.child = child;
     let out = "";
+    let settled = false;
+    const finish = (r) => { if (settled) return; settled = true; clearTimeout(timer); if (job && job.child === child) job.child = null; resolveLevel(r); };
+    child.on("error", (e) => finish({ level: level.level, verifies: level.verifies, command: "node " + argv.join(" ").replace(cwd, "<candidate>"),
+      exit_code: null, signal: null, status: "FAIL", duration_ms: Date.now() - started, output: "spawn error: " + String(e?.message || e) }));
     child.stdout.on("data", (d) => { if (out.length < 20000) out += d; });
     child.stderr.on("data", (d) => { if (out.length < 20000) out += d; });
     const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      resolveLevel({ level: level.level, verifies: level.verifies, command: "node " + argv.join(" ").replace(cwd, "<candidate>"), exit_code: code,
+      finish({ level: level.level, verifies: level.verifies, command: "node " + argv.join(" ").replace(cwd, "<candidate>"), exit_code: code,
         signal, status: code === 0 ? "PASS" : "FAIL", duration_ms: Date.now() - started, output: out });
     });
   });
@@ -103,8 +107,12 @@ export function startValidation(candidate, v, { rounds = 2, levelTimeoutMs = 200
     job.status = "running";
     for (let r = 0; r < rounds; r++) {
       const results = [];
-      for (const level of v.levels) results.push(await runLevel(candidate, level, levelTimeoutMs));
+      for (const level of v.levels) {
+        if (job.cancelled) break;
+        results.push(await runLevel(candidate, level, levelTimeoutMs, job));
+      }
       job.rounds.push(results);
+      if (job.cancelled) { job.status = "cancelled"; return; }
     }
     job.status = "done";
     job.finished_at = new Date().toISOString();
@@ -116,7 +124,13 @@ export function startValidation(candidate, v, { rounds = 2, levelTimeoutMs = 200
 export async function pollValidation(job, { intervalMs = 250, timeoutMs = 120000 } = {}) {
   const start = Date.now(); let polls = 0;
   while (job.status === "queued" || job.status === "running") {
-    if (Date.now() - start > timeoutMs) return { terminal: false, polls, status: "POLL_TIMEOUT", verdict: "TIMEOUT", levels: {}, waited_ms: Date.now() - start };
+    if (Date.now() - start > timeoutMs) {
+      // Stop the job (and its active child) BEFORE the caller may discard the clone.
+      job.cancelled = true;
+      try { job.child?.kill("SIGKILL"); } catch {}
+      if (job.promise) await job.promise;
+      return { terminal: false, polls, status: "POLL_TIMEOUT", verdict: "TIMEOUT", levels: {}, waited_ms: Date.now() - start };
+    }
     polls++; await new Promise((r) => setTimeout(r, intervalMs));
   }
   const flat = job.rounds.flat();
