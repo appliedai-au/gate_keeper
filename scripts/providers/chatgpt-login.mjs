@@ -96,6 +96,8 @@ function selectedRecord() {
   return record;
 }
 function selectAccount(record) {
+  if(record.ext_agent_host_id!==hostId())
+    throw Error("ChatGPT registration belongs to a different local host");
   const recordRef=accountRef(record);
   const activeFile=join(root,"active.json");
   storeNew("active.json",{account_ref:recordRef,provider_policy:"chatgpt_oauth_only",\n    fallback_allowed:false,selected_at:new Date().toISOString()},
