@@ -130,5 +130,8 @@ test("dangling OAuth selection symlink fails closed instead of allowing model fa
    mkdirSync(base,{recursive:true,mode:0o700});
    symlinkSync(join(base,"missing.json"),join(base,"active.json"));
    assert.throws(()=>requireNoOAuthFallback({env:{},home}),/unsafe account selection file/);
+   const status=cli(home,"status");
+   assert.equal(status.status,2,status.stderr);
+   assert.match(status.stderr,/unsafe active account selector/);
  }finally{rmSync(home,{recursive:true,force:true});}
 });
