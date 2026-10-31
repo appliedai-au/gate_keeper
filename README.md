@@ -6,7 +6,7 @@
 
 Gate Keeper reviews proposed code changes, identifies substantive defects and returns structured findings. TrueForge orchestrates the agent; the source, evaluation rules and qualification code live in this repository. Gate Keeper does **not** autonomously merge repairs, run arbitrary tenant code, or promote changes to its own instructions.
 
-> **Release status — 31 October 2026:** The TrueForge-first model-routing, per-user local OAuth and Phase 2 security-contract work has been merged. The exact Phase 2 merge commit, [`040c81a`](https://github.com/appliedai-au/gate_keeper/commit/040c81a4353694c4ab84b9ac7065d7b0146916ee), passed **91/91 isolated post-merge source tests**, TypeScript checks and scorer self-tests. This is **not** evidence of a live paid evaluation, qualified self-learning cycle, or fully commissioned independent budget gateway.
+> **Release status — 31 October 2026:** The TrueForge-first model-routing and Phase 2 security-contract work has been merged. The exact Phase 2 merge commit, [`040c81a`](https://github.com/appliedai-au/gate_keeper/commit/040c81a4353694c4ab84b9ac7065d7b0146916ee), passed **91/91 isolated post-merge source tests**, TypeScript checks and scorer self-tests. This is **not** evidence of a live paid evaluation, qualified self-learning cycle, or fully commissioned independent budget gateway.
 
 ## How it works
 
@@ -60,7 +60,7 @@ npm run test:learning-policy
 npm run providers:status
 ```
 
-The source-only suite tests policy, private evidence boundaries, OAuth handling, benchmark integrity and negative security cases. It does **not** test a real model's defect-detection accuracy or a live independent gateway.
+The source-only suite tests policy, private evidence boundaries, model-routing guards, benchmark integrity and negative security cases. It does **not** test a real model's defect-detection accuracy or a live independent gateway.
 
 ### Connect to TrueForge
 
@@ -88,28 +88,7 @@ npm run setup
 
 **`npm run setup` writes or updates the named TrueForge agent**. Run it only against an authorised instance. Managed model selections are checked against the instance's actual model catalog before agent/skill mutations; unknown selections are held rather than silently switched.
 
-The default `agent/agent.json` model remains in effect when `GK_MODEL_PROVIDER` is unset. Optional DeepSeek models can be configured **inside TrueForge** with explicit source-sharing approval; see [provider guidance](docs/providers.md).
-
-## User-owned ChatGPT subscription (optional, local only)
-
-Each user may explicitly sign in with **their own** ChatGPT account on an eligible local, open-source installation. Tokens are stored under the current OS user's `~/.config/gate-keeper/chatgpt-oauth/` directory with owner-private permissions. No shared administrator account, global OAuth token, or automatic fallback to another user's plan is supported.
-
-```bash
-npm run connect:chatgpt -- login --email your-own-email@example.com
-# Approve access in the local browser, then:
-npm run connect:chatgpt -- status
-npm run connect:chatgpt -- select YOUR_ISSUED_CLIENT_ID
-
-# Explicit, one-request, fixed-prompt test; uses account-authorised plan access
-npm run test:chatgpt-sub -- --confirm --email your-own-email@example.com
-
-# Clear the ChatGPT-only selection without deleting your credentials
-npm run connect:chatgpt -- deselect
-```
-
-Sign-in alone does **not** change the agent's provider. Selecting a ChatGPT-only account is explicit, and the normal TrueForge path fails closed if that selection lacks a qualified inference adapter.
-
-**Important:** This local OAuth test is **not** a ChatGPT subscription adapter for hosted TrueForge on Railway. Do not paste OAuth tokens into TrueForge's API-key field, expose a shared OAuth proxy, or assume a ChatGPT subscription permits hosted/commercial multi-user inference. See [TrueForge-first model access](docs/trueforge-model-access.md).
+The default `agent/agent.json` model remains in effect when `GK_MODEL_PROVIDER` is unset. Any other provider (including DeepSeek or a TrueFoundry AI Gateway) is configured **inside TrueForge** and selected with `GK_MODEL_PROVIDER=trueforge` and its registered model ID. Gate Keeper has no provider-specific adapters or login screens of its own.
 
 ## Evaluations and self-improvement: currently held
 
@@ -140,7 +119,8 @@ This heading is retained for the original *Stranger Builds* TrueForge challenge,
 | [`scripts/improve.ts`](scripts/improve.ts) | Candidate-only learning from sealed evidence |
 | [`scripts/learning-trust.mjs`](scripts/learning-trust.mjs) | Signed lease/receipt verification |
 | [`scripts/learning-baseline.mjs`](scripts/learning-baseline.mjs) | Frozen evaluation evidence validation |
-| [`scripts/providers/`](scripts/providers/) | TrueForge routing, optional BYOK and local OAuth utilities |
+| [`scripts/providers/`](scripts/providers/) | Fail-closed TrueForge model routing and status |
+| [`scripts/proof/live/`](scripts/proof/live/) | Live baseline-vs-Gate Keeper comparison and autonomous repair-loop drill |
 | [`tests/`](tests/) | Policy, boundary, security and integration tests |
 | [`Dockerfile.qualify`](Dockerfile.qualify) | Disposable, credential-free source qualification |
 | [`docs/providers.md`](docs/providers.md) | Provider setup, consent and limits |
@@ -154,7 +134,6 @@ Before exposing a TrueForge API to untrusted clients or tenants, independently v
 
 For troubleshooting:
 - **Model missing:** verify the exact `provider/model` name in TrueForge Settings → Models, and check `npm run providers:status`.
-- **OAuth selected but no TrueForge inference adapter:** use `npm run connect:chatgpt -- deselect` to restore the normal local provider selection.
 - **Evaluation held:** do not bypass a missing signed lease, expired budget, private evidence lock or missing baseline receipt; resolve it through the independent controller.
 - **Source tests:** run `npm run typecheck && npm run score -- --selftest && npm run test:learning-policy` without credentials.
 

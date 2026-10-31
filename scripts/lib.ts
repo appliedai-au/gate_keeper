@@ -11,7 +11,6 @@ import { fileURLToPath } from "node:url";
 import { TrueForge, TrueForgeApi } from "@truefoundry/trueforge-sdk";
 import { verifyBudgetLease } from "./learning-trust.mjs";
 import { resolveTrueForgeModel } from "./providers/registry.mjs";
-import { requireNoOAuthFallback } from "./providers/runtime-policy.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const AGENT_DIR = join(ROOT, "agent");
@@ -187,9 +186,6 @@ export interface SkillFile {
 }
 
 export function readAgent(): { agent: AgentFile; instructions: string; skills: SkillFile[] } {
-  // Selecting a user-owned ChatGPT OAuth account must NEVER silently fall back
-  // to the shared hosted Claude/DeepSeek provider while the adapter is absent.
-  requireNoOAuthFallback();
   const agent = JSON.parse(readFileSync(join(AGENT_DIR, "agent.json"), "utf8")) as AgentFile;
   if (process.env.TF_AGENT_NAME) agent.name = process.env.TF_AGENT_NAME;
   if (process.env.TF_MODEL && process.env.GK_MODEL_PROVIDER && process.env.GK_MODEL_PROVIDER!=="default")
@@ -198,7 +194,7 @@ export function readAgent(): { agent: AgentFile; instructions: string; skills: S
   const routed = resolveTrueForgeModel();
   if (routed) {
     // Provider-specific parameters vary: do not forward Claude's temperature
-    // default to DeepSeek reasoning models.
+    // default to other providers' reasoning models.
     agent.model = { name: routed };
   }
   const instructions = readFileSync(join(AGENT_DIR, "instructions.md"), "utf8");
