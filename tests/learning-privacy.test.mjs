@@ -11,8 +11,9 @@ test("private root rejects symlink ancestors",()=>{
 test("private writes confined to private state",()=>{
  assert.match(lib,/relative\(PRIVATE_ROOT,full\)/);
  assert.match(lib,/assertPrivatePath\(path\)/);
- assert.match(lib,/flag:"wx"/);
- assert.match(lib,/mode:0o600/);
+ assert.match(lib,/constants\.O_WRONLY\s*\|\s*constants\.O_CREAT\s*\|\s*constants\.O_EXCL\s*\|\s*constants\.O_NOFOLLOW/);
+ assert.match(lib,/openSync\(safe,/);
+ assert.match(lib,/0o600\)/);
 });
 test("session exporter cannot stream raw events to stdout",()=>{
  assert.doesNotMatch(exporter,/console\.log\(JSON\.stringify\(exp/);
