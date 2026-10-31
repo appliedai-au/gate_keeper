@@ -21,6 +21,7 @@ import {
   readAgent,
   ROOT,
   assertPrivatePath,
+  requireSignedBudgetLease,
   runDir,
   runTurn,
   SUMMARY_CSV,
@@ -37,8 +38,8 @@ const dir = runDir(run);
 const nn = String(run).padStart(2, "0");
 if (!existsSync(join(dir, "results.json"))) die(`No results for run ${nn} in ${dir}`);
 if (!isClean("agent", "evals")) die("Training requires a committed, frozen agent and benchmark");
-if(process.env.GATE_KEEPER_EVAL_AUTHORIZED!=="1" || process.env.GK_PROVIDER_HARD_BUDGET_CONFIRMED!=="1")
-  die("IMPROVEMENT_HELD: operator approval and externally enforced provider spend ceiling required");
+if(process.env.GATE_KEEPER_EVAL_AUTHORIZED!=="1" || !process.env.GK_RUN_ID)
+  die("IMPROVEMENT_HELD: operator approval and signed run identity required");
 if((readAgent().agent.skill_mode ?? "inline")!=="inline")
   die("IMPROVEMENT_HELD: only tool-free inline agent improvement is qualified");
 // Do not let the learner grade its own history. Only a detached verifier can
@@ -139,7 +140,11 @@ ${feedback}
 
 // ---------- ask the agent ----------
 
-// Persist no-retry intent *before* invoking a paid TrueForge session.
+// Consume the independent budget lease *before* any paid TrueForge session.
+const permit=requireSignedBudgetLease("improve",sourceCommit,
+  saved.benchmark_sha256,agent.model.name,process.env.GK_RUN_ID!);
+if(permit.max_calls<1) die("IMPROVEMENT_HELD: no authorised model calls");
+// Persist no-retry intent before invoking a paid TrueForge session.
 writeJson(join(dir,"improve-intent.json"), {from_run:run, agent_commit:saved.agent_commit,
   benchmark_sha256:saved.benchmark_sha256, state:"admitted_unsettled", promotion:"DISABLED"});
 const tf = client();
