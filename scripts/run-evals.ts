@@ -24,6 +24,7 @@ import {
   TASKS_DIR,
   ROOT,
   buildManifest,
+  requireSignedBudgetLease,
   taskPrompt,
   writeJson,
 } from "./lib.ts";
@@ -31,9 +32,9 @@ import {
 const HEADER = "run,session_id,agent_commit,score,date_utc,tasks_passed,tasks_total,tokens,tool_calls,duration_s";
 
 if(process.env.GATE_KEEPER_EVAL_AUTHORIZED!=="1") die("EVAL_NOT_AUTHORIZED: explicit model-evaluation approval required");
-// Attestation is NOT a budget mechanism. Controller must independently verify the
-// provider-side ceiling before setting it; without that evidence no paid calls.
-if(process.env.GK_PROVIDER_HARD_BUDGET_CONFIRMED!=="1") die("BUDGET_UNVERIFIED: externally enforced spend ceiling required");
+// A boolean assertion is not an enforced budget. Require a source-bound
+// signed lease from an independent gateway before any paid TrueForge call.
+if(!process.env.GK_RUN_ID) die("BUDGET_UNVERIFIED: signed run identity missing");
 if((readAgent().agent.skill_mode ?? "inline")!=="inline") die("EVAL_UNSUPPORTED: only tool-free inline agent evaluation is qualified");
 const benchmarkFiles=readdirSync(TASKS_DIR).filter(x=>x.endsWith(".json")).sort();
 const benchmarkHash=createHash("sha256");
@@ -80,6 +81,10 @@ const tf = client();
 const agent = readAgent().agent;
 const manifest = buildManifest(headSha());
 const tasks = loadTasks();
+const permit=requireSignedBudgetLease("eval",agentCommit,benchmarkSha256,
+  agent.model.name,process.env.GK_RUN_ID!);
+if(tasks.length>permit.max_calls)
+  throw new Error("BUDGET_REJECTED: evaluation exceeds signed model-call ceiling");
 console.log(`Run ${nn}: isolated TrueForge spec for "${agent.name}" at ${agentCommit.slice(0, 7)}, ${tasks.length} tasks`);
 
 // 3. One session for the whole run. https://trueforge.dev/api/overview#session
