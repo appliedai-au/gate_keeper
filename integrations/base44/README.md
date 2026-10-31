@@ -2,7 +2,7 @@
 
 **Target:** https://secure-authentic-gate-flow.base44.app/ (REUSE this app; do not create a new Base44 project).
 
-This folder holds **source-only integration assets**, not an installed Base44 app. It does not change Base44's currently published pages. The present site contains links and an Asteroids demo; preserve the game as a separate optional page when updating the dashboard.
+This folder holds **source-only integration assets**, not an installed Base44 app. It does not change Base44's currently published pages. The present site contains links and an Asteroids demo. **Do not preserve Asteroids as a requirement.** Replace the placeholder landing experience with a polished, functional Gate Keeper demo; remove the game and extraneous links if they distract from the actual product. Preserve the existing Base44 app, domain, and owner settings.
 
 ## Confirmed deployment (31 October 2026)
 
@@ -26,6 +26,18 @@ Private TrueForge runtime + PostgreSQL + Redis
 ```
 
 The frontend **must never** receive the proxy password or a TrueForge API token. Do not add a generic URL-forwarding function, automatically merge a reviewed PR, or enable model calls under the guise of a health check.
+
+## Product demo quality bar (owner-approved)
+
+**The Gate Keeper demo must be compelling enough to stand on its own.** Prioritise a fast, mobile-friendly product story and real usefulness over a placeholder game.
+
+- Landing view: a clear one-sentence explanation of Gate Keeper, a strong **Try a code review** action, connection/operational status, and a concise explanation of TrueForge's role.
+- Interactive walkthrough: choose a small, non-sensitive code-review example, show the submitted change and structured findings with file/line references, severity, and recommendations. Clearly label **sample fixture** content until a real verified TrueForge run exists; never pass a canned result off as live AI output.
+- Real review path: once the server-side adapter and model/budget checks are qualified, allow an authorised user to submit a read-only review and inspect actual findings. No automatic fixes, merges, deployments or paid training.
+- Confidence: honest loading, empty, error and degraded-service states, explicit model/cost controls, privacy and authentication protections. Never expose upstream secrets or raw internal sessions.
+- Navigation: **Overview · Review · Runs · Evidence · Settings**. Hide or disable non-functional features with an explanation; do not present misleading buttons.
+- UX acceptance: responsive mobile and desktop layout; keyboard accessibility; clear typography; no unnecessary animation or slow introductory sequence.
+- Remove the Asteroids game if replacing it with this cohesive demo improves the user experience; preserving it is **not** part of acceptance.
 
 ## Phase 0: safe integration preflight
 
@@ -56,7 +68,7 @@ The frontend **must never** receive the proxy password or a TrueForge API token.
 - A single authorised read-only review yields real, private, per-user findings; no simulated results.
 - Tests for cross-user session access, injection via user-supplied URLs, replay/idempotency, budget exhaustion and proxy-down fail gracefully.
 - Browser refresh retains run history, while private evaluator evidence stays outside the public Git repository.
-- Asteroids page still accessible; default landing page becomes the real Gate Keeper dashboard.
+- Existing Base44 URL remains unchanged; the default landing page becomes a polished, functional Gate Keeper demo. The Asteroids game may be deleted without replacement.
 - Closeout includes app URL, exact revision, acceptance evidence and rollback procedure.
 
 ## Current status
