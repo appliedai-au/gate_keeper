@@ -45,16 +45,23 @@ benchmarkHash.update(readFileSync(join(ROOT,"evals","score.ts")));
 const benchmarkSha256=benchmarkHash.digest("hex");
 if(process.env.GK_FROZEN_BENCHMARK_SHA256 && process.env.GK_FROZEN_BENCHMARK_SHA256!==benchmarkSha256) die("Frozen benchmark identity mismatch");
 const benchmarkFrozen=process.env.GK_FROZEN_BENCHMARK_SHA256===benchmarkSha256;
+// Preflight before taking the execution lock: deterministic refusals should
+// not strand a claim. Dirty source cannot be a reproducible learning baseline.
+if(!isClean("agent","evals")) die("Agent or benchmark has uncommitted changes");
+if(flag("allow-dirty")) die("Dirty evaluation is not permitted");
+const agentCommit=headSha();
+const LOCK=join(PRIVATE_ROOT,"eval.lock");
 let lockFD:number;
 let settled=false;
-try {lockFD=openSync(join(PRIVATE_ROOT,"eval.lock"),"wx",0o600);}
+let retainClaim=false;
+try {lockFD=openSync(LOCK,"wx",0o600);}
 catch {die("Evaluation already active or unreconciled");}
+// process.exit does not run finally. Only PRE-spend failures may release a lock;
+// after a paid intent is committed, a signal/crash must leave it for reconciliation.
+process.once("exit",()=>{if(!retainClaim){try{unlinkSync(LOCK);}catch{}}});
+process.once("SIGINT",()=>process.exit(130));
+process.once("SIGTERM",()=>process.exit(143));
 try {
-// 1. The agent and evaluation must be committed for reproducibility.
-if (!isClean("agent", "evals") && !flag("allow-dirty")) {
-  die("agent/ or evals/ has uncommitted changes. Commit them first, so agent_commit points at what ran.");
-}
-const agentCommit = headSha() + (isClean("agent", "evals") ? "" : "-dirty");
 
 if (!existsSync(SUMMARY_CSV) || readFileSync(SUMMARY_CSV, "utf8").trim() === "") writeFileSync(SUMMARY_CSV, HEADER + "\n");
 const rows = readFileSync(SUMMARY_CSV, "utf8").trim().split("\n").slice(1).filter(Boolean);
@@ -65,6 +72,7 @@ const nn = String(run).padStart(2, "0");
 // lock and cannot be rerun without explicit operator reconciliation.
 writeJson(join(dir, "intent.json"), {run, agent_commit:agentCommit, benchmark_sha256:benchmarkSha256,
   status:"admitted_no_verdict", budget:"externally_attested", promotion:"DISABLED"});
+retainClaim=true;
 
 // Evaluations must not modify the shared hosted TrueForge agent.
 // The inline agent manifest is tied to this immutable local source snapshot.
@@ -119,5 +127,5 @@ settled=true;
   closeSync(lockFD);
   // Crash, timeout, interrupted export or unknown cost => retain lock for
   // operator reconciliation. Deleting it would permit duplicate paid work.
-  if(settled) unlinkSync(join(PRIVATE_ROOT,"eval.lock"));
+  if(settled || !retainClaim) unlinkSync(LOCK);
 }
