@@ -20,16 +20,26 @@ import {normalizeEmail,verifyExpectedAccount,accountRef} from "./account-identit
 let root; // Resolved lazily so missing HOME is handled by the CLI error boundary.
 const die=message=>{console.error("CHATGPT_OAUTH_HELD: "+message);process.exitCode=2;};
 function storeReady() {
-  root ??= join(realpathSync(homedir()),".config","gate-keeper","chatgpt-oauth");
-  mkdirSync(root,{recursive:true,mode:0o700});
   let current=realpathSync(homedir());
+  // Verify each ancestor BEFORE creating the next component. Recursive
+  // mkdir through an untrusted symlink would otherwise write outside HOME.
   for(const p of [".config","gate-keeper","chatgpt-oauth"]){
-    current=join(current,p);
-    const st=lstatSync(current);
-    if(!st.isDirectory()||st.isSymbolicLink()||(process.getuid&&st.uid!==process.getuid()))
+    const candidate=join(current,p);
+    let st;
+    try {st=lstatSync(candidate);}
+    catch(err){
+      if(err?.code!=="ENOENT")throw err;
+      mkdirSync(candidate,{mode:0o700});
+      st=lstatSync(candidate);
+    }
+    if(!st.isDirectory()||st.isSymbolicLink()||
+       (process.getuid&&st.uid!==process.getuid()))
       throw Error("invalid credential store ownership");
-    if(current===root && (st.mode&0o077))throw Error("credential store is not private");
+    if(p==="chatgpt-oauth"&&(st.mode&0o077))
+      throw Error("credential store is not private");
+    current=candidate;
   }
+  root=current;
 }
 function findExistingClient(clientId) {
   if(!clientId)return null;
