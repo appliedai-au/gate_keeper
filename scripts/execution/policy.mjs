@@ -15,9 +15,12 @@ export function budgetAdmission({estimateUsd,remainingUsd,perRunUsd,lease,now=Da
   const cost=money(estimateUsd,"estimate");
   const remaining=money(remainingUsd,"remaining");
   const ceiling=money(perRunUsd,"per_run");
-  if (!lease || lease.independent!==true || lease.signatureVerified!==true ||
-      !lease.runId || !lease.tenantId || !lease.expiresAt ||
-      Date.parse(lease.expiresAt)<=now || lease.maxCalls<1)
+  const expiry = lease && typeof lease.expiresAt==="string" ? Date.parse(lease.expiresAt) : NaN;
+  if (!Number.isFinite(now) || !lease || lease.independent!==true ||
+      lease.signatureVerified!==true || typeof lease.runId!=="string" || !lease.runId ||
+      typeof lease.tenantId!=="string" || !lease.tenantId ||
+      !Number.isFinite(expiry) || expiry<=now ||
+      !Number.isSafeInteger(lease.maxCalls) || lease.maxCalls<1)
     return {admitted:false,reason:"INDEPENDENT_LEASE_REQUIRED"};
   const leaseCeiling=money(lease.maxUsd,"lease_cap");
   if(cost>remaining || cost>ceiling || cost>leaseCeiling)
@@ -61,8 +64,8 @@ export function assessLessonForCore(lesson, policy={}) {
   if(!lesson || typeof lesson!=="object") return {selected:false,reasons:["INVALID_LESSON"]};
   if(lesson.scope!=="user" || !lesson.tenantId) reasons.push("NOT_USER_SCOPED");
   if(lesson.userConsent!==true) reasons.push("CONSENT_REQUIRED");
-  if(lesson.containsSecrets===true || lesson.containsPersonalData===true ||
-     lesson.containsProprietaryCode===true) reasons.push("SENSITIVE_CONTENT");
+  if(lesson.containsSecrets!==false || lesson.containsPersonalData!==false ||
+     lesson.containsProprietaryCode!==false) reasons.push("SENSITIVE_CONTENT");
   if(lesson.anonymized!==true) reasons.push("ANONYMIZATION_REQUIRED");
   if(!Array.isArray(lesson.evidenceIds) || lesson.evidenceIds.length<2)
     reasons.push("INSUFFICIENT_EVIDENCE");
@@ -84,11 +87,21 @@ export function selectCoreCandidates(lessons,policy={}) {
 }
 // Promotion is deliberately separate from selection. This refuses unsigned
 // promotion even when a user has ticked "no human in the loop" for repairs.
-export function corePromotionAdmission({selection,approval,evidence}) {
-  if(!selection?.selected)return {permitted:false,reason:"NOT_QUALIFIED"};
-  if(!evidence?.sealed || !evidence?.independent || !evidence?.signatureVerified)
+export function corePromotionAdmission({selection,approval,evidence,lesson,policy}={}) {
+  // Never trust a caller-provided selection boolean. Re-evaluate against the
+  // canonical original lesson and the current operator policy.
+  const checked=assessLessonForCore(lesson,policy);
+  if(selection?.selected!==true || checked.selected!==true ||
+     typeof lesson?.id!=="string" || !lesson.id || selection.id!==lesson.id)
+    return {permitted:false,reason:"NOT_QUALIFIED"};
+  if(evidence?.sealed!==true || evidence?.independent!==true ||
+     evidence?.signatureVerified!==true)
     return {permitted:false,reason:"INDEPENDENT_EVIDENCE_REQUIRED"};
-  if(!approval?.coreOwnerApproved || !approval?.reviewedCommit)
+  if(approval?.coreOwnerApproved!==true ||
+     typeof approval.reviewedCommit!=="string" ||
+     !/^[0-9a-f]{40}$/.test(approval.reviewedCommit))
     return {permitted:false,reason:"CORE_OWNER_REVIEW_REQUIRED"};
-  return {permitted:true};
+  // This is a policy preflight, not cryptographic proof. The independent
+  // controller must verify signatures, source hashes and one-time settlement.
+  return {permitted:true,controllerVerificationRequired:true};
 }
