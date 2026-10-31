@@ -66,7 +66,7 @@ const nn = String(run).padStart(2, "0");
 writeJson(join(dir, "intent.json"), {run, agent_commit:agentCommit, benchmark_sha256:benchmarkSha256,
   status:"admitted_no_verdict", budget:"externally_attested", promotion:"DISABLED"});
 
-// Never call syncAgent() or update the shared TrueForge agent during evaluation.
+// Evaluations must not modify the shared hosted TrueForge agent.
 // The inline agent manifest is tied to this immutable local source snapshot.
 const tf = client();
 const agent = readAgent().agent;
