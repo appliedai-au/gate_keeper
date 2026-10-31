@@ -52,11 +52,11 @@ export function extractReplacementFile(reply) {
   return blocks.length ? blocks[blocks.length - 1] : null;
 }
 
+// Defence in depth only: the real boundary is the Node permission sandbox in runLevel.
 const FORBIDDEN = [
-  [/\beval\s*\(|\bnew\s+Function\s*\(|\bFunction\s*\(/, "dynamic code execution"],
-  [/child_process|worker_threads|node:vm|\bvm\./, "process or VM access"],
-  [/node:(?:net|http|https|dgram|tls)|\bfetch\s*\(|XMLHttpRequest|WebSocket/, "network access"],
-  [/process\.env|process\.exit|node:fs|from\s+["']fs["']|require\s*\(/, "environment, filesystem or require access"],
+  [/\beval\s*\(|\bFunction\s*\(|\bimport\s*\(/, "dynamic code execution or import"],
+  [/["'](?:node:)?(?:fs|child_process|worker_threads|vm|net|http|https|http2|dgram|tls|dns|os|module|inspector|cluster|process|v8|wasi)(?:\/[^"']*)?["']/, "restricted core module"],
+  [/\bprocess\s*[.[]|\bglobalThis\b|\brequire\s*\(|\bfetch\s*\(|XMLHttpRequest|WebSocket|\bBun\b|\bDeno\b/, "process, global or network access"],
 ];
 
 /** Apply an agent patch to a candidate clone, bounded by path, size and API rules. */
@@ -77,14 +77,20 @@ export function applyBoundedPatch(candidate, v, content) {
 function runLevel(cwd, level, timeoutMs) {
   return new Promise((resolveLevel) => {
     const started = Date.now();
-    const child = spawn(level.cmd[0], level.cmd.slice(1), { cwd, env: { PATH: process.env.PATH, HOME: cwd, NODE_ENV: "test" }, stdio: ["ignore", "pipe", "pipe"] });
+    // Sandbox: run under Node's permission model with reads confined to the
+    // candidate clone (no /proc/<ppid>/environ, no runner files), no writes and
+    // no child processes. "node --test X" runs X in-process instead.
+    if (level.cmd[0] !== "node") throw new Error("VMODEL_COMMAND_NOT_ALLOWED");
+    const rest = level.cmd.slice(1).filter((a) => a !== "--test");
+    const argv = ["--permission", "--allow-fs-read=" + cwd, ...rest];
+    const child = spawn(process.execPath, argv, { cwd, env: { PATH: process.env.PATH, HOME: cwd, NODE_ENV: "test" }, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     child.stdout.on("data", (d) => { if (out.length < 20000) out += d; });
     child.stderr.on("data", (d) => { if (out.length < 20000) out += d; });
     const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     child.on("close", (code, signal) => {
       clearTimeout(timer);
-      resolveLevel({ level: level.level, verifies: level.verifies, command: level.cmd.join(" "), exit_code: code,
+      resolveLevel({ level: level.level, verifies: level.verifies, command: "node " + argv.join(" ").replace(cwd, "<candidate>"), exit_code: code,
         signal, status: code === 0 ? "PASS" : "FAIL", duration_ms: Date.now() - started, output: out });
     });
   });
@@ -110,7 +116,7 @@ export function startValidation(candidate, v, { rounds = 2, levelTimeoutMs = 200
 export async function pollValidation(job, { intervalMs = 250, timeoutMs = 120000 } = {}) {
   const start = Date.now(); let polls = 0;
   while (job.status === "queued" || job.status === "running") {
-    if (Date.now() - start > timeoutMs) return { terminal: false, polls, status: "POLL_TIMEOUT" };
+    if (Date.now() - start > timeoutMs) return { terminal: false, polls, status: "POLL_TIMEOUT", verdict: "TIMEOUT", levels: {}, waited_ms: Date.now() - start };
     polls++; await new Promise((r) => setTimeout(r, intervalMs));
   }
   const flat = job.rounds.flat();

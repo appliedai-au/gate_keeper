@@ -95,7 +95,8 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
 
   // ---------- model call wrapper: reserve -> create turn -> poll -> settle ----------
   async function newSession(spec, meta) {
-    const { data } = await tf.sessions.create({ agent: { spec }, metadata: { purpose: "gk-proof", run_id: runId, ...meta } });
+    const metadata = Object.fromEntries(Object.entries({ purpose: "gk-proof", run_id: runId, ...meta }).map(([k, v]) => [k, String(v)]));
+    const { data } = await tf.sessions.create({ agent: { spec }, metadata });
     sessions.push({ id: data.id, ...meta });
     return data.id;
   }
@@ -332,8 +333,8 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
       if (polled.verdict !== "PASS") {
         state = nextExecutionState("testing", "failure"); rec.states.push(state);
         att.discard = discardCandidate(candidate); mark("rollback_failure_drill", att.discard.discarded ? "PASS" : "FAIL");
-        const failed = Object.entries(polled.levels).filter(([, s]) => s !== "PASS").map(([k]) => k);
-        feedback = `\nIndependent validation FAILED at levels: ${failed.join(", ")}. Re-read the requirements and threat model and return a corrected complete file.`;
+        const failed = Object.entries(polled.levels || {}).filter(([, s]) => s !== "PASS").map(([k]) => k);
+        feedback = `\nIndependent validation ${polled.verdict === "TIMEOUT" ? "TIMED OUT" : "FAILED"} at levels: ${failed.join(", ") || "(none completed)"}. Re-read the requirements and threat model and return a corrected complete file.`;
         continue;
       }
       state = nextExecutionState("testing", "pass"); rec.states.push(state);

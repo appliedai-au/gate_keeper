@@ -40,7 +40,7 @@ export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPe
     server: { getCapabilities: async () => ({ data: { sandbox: { enabled: false }, skill: { enabled: false } } }) },
     models: { list: async () => ({ data: models.map((name) => ({ name })) }) },
     sessions: {
-      create: async ({ agent }) => { const id = "s" + sessions.size; sessions.set(id, agent.spec); return { data: { id } }; },
+      create: async ({ agent, metadata = {} }) => { if (Object.values(metadata).some((v) => typeof v !== "string")) throw new Error("JsonError: metadata values must be strings"); const id = "s" + sessions.size; sessions.set(id, agent.spec); return { data: { id } }; },
       createTurn: async (sid, { input }) => {
         if (failCreate) throw new Error("synthetic create failure");
         n++; const id = "t" + n; const createdAt = new Date().toISOString();

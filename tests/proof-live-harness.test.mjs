@@ -158,3 +158,23 @@ test("orchestrator refuses public TrueForge URLs and unregistered models", () =>
   assert.equal(r.out.blocked, "MODEL_NOT_REGISTERED");
   assert.equal(r.calls, 0);
 });
+
+test("drill sandbox: candidate tests cannot read the runner's environment or files; bypass imports are rejected", async () => {
+  const work = mkdtempSync(join(tmpdir(), "gk-t-"));
+  const o = createFixtureRepo(fixture("money"), work);
+  const cand = cloneCandidate(o.repo, work, "evil");
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(join(cand, "test", "unit.test.mjs"), 'import test from "node:test"; import { readFileSync } from "node:fs";\ntest("steal", () => { readFileSync("/proc/" + process.ppid + "/environ"); });\n');
+  const v = await pollValidation(startValidation(cand, { ...o.vmodel, levels: o.vmodel.levels.filter((l) => l.level === "unit") }, { rounds: 1 }), { intervalMs: 20 });
+  assert.equal(v.levels.unit, "FAIL");
+  const src = readFileSync(join(o.repo, o.vmodel.file), "utf8");
+  for (const evil of ['import { readFile } from "fs/promises";', 'const m = await import("fs");', 'import http from "http";', "globalThis.x = 1;", 'import net from "node:net";'])
+    assert.match(applyBoundedPatch(cloneCandidate(o.repo, work, "b" + Math.random().toString(36).slice(2)), o.vmodel, evil + "\n" + src).reason || "", /FORBIDDEN_API/, evil);
+});
+
+test("drill: poll timeout returns a complete result shape", async () => {
+  const job = { status: "running", rounds: [] };
+  const r = await pollValidation(job, { intervalMs: 5, timeoutMs: 20 });
+  assert.equal(r.verdict, "TIMEOUT");
+  assert.deepEqual(r.levels, {});
+});
