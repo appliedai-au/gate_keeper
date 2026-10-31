@@ -44,7 +44,11 @@ export default async function gatekeeperStatus(req) {
       cache: "no-store",
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    if (!upstream.ok) return json({ connected: false, runtime: "unavailable", checkedAt }, 503);
+    // Cancel the unread body. Neither upstream content nor auth headers leave
+    // this backend function, even when the runtime reports an error.
+    const healthy = upstream.ok;
+    await upstream.body?.cancel().catch(() => {});
+    if (!healthy) return json({ connected: false, runtime: "unavailable", checkedAt }, 503);
     return json({ connected: true, runtime: "reachable", checkedAt }, 200);
   } catch {
     return json({ connected: false, runtime: "unavailable", checkedAt }, 503);
