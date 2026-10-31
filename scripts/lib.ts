@@ -166,6 +166,13 @@ export function buildManifest(gitRef?: string): TrueForgeApi.AgentSpec {
  */
 export async function syncAgent(tf: TrueForge, gitRef: string): Promise<TrueForgeApi.Agent> {
   const { agent, skills } = readAgent();
+  // setup.ts is not the only caller. Verify a managed selection against the
+  // actual TrueForge catalog BEFORE mutating skills or agent records.
+  if (process.env.GK_MODEL_PROVIDER==="trueforge") {
+    const { data: models } = await tf.models.list();
+    if (!models.some(m=>m.name===agent.model.name))
+      throw new Error("MODEL_CONFIG_REJECTED: managed model not available in TrueForge; agent sync held");
+  }
   if ((agent.skill_mode ?? "inline") === "git") {
     if (!env.repoUrl) die("skill_mode is \"git\": set SKILL_REPO_URL in .env to your public GitHub repo URL.");
     const { data: caps } = await tf.server.getCapabilities();

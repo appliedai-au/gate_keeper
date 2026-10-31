@@ -34,6 +34,17 @@ export function resolveTrueForgeModel(env=process.env) {
       throw Error("MODEL_CONFIG_REJECTED: default provider has no tier override");
     return undefined; // Existing agent/agent.json remains source of truth.
   }
+  // Gate Keeper is a consumer of the TrueForge model catalog. A managed
+  // gateway account belongs to TrueForge, never to each Gate Keeper user.
+  // The provider-qualified ID is verified by setup against tf.models.list().
+  if(provider==="trueforge"){
+    if(env.TF_MODEL) throw Error("MODEL_CONFIG_REJECTED: TF_MODEL conflicts with TrueForge-managed routing");
+    if(env.GK_MODEL_TIER) throw Error("MODEL_CONFIG_REJECTED: managed model tier must be resolved by TrueForge");
+    const id=env.GK_TRUEFORGE_MODEL;
+    if(!id || !MODEL_ID.test(id) || !id.includes("/"))
+      throw Error("MODEL_CONFIG_REJECTED: approved TrueForge model ID missing");
+    return id;
+  }
   if(provider!=="deepseek") throw Error("MODEL_CONFIG_REJECTED: unapproved model provider");
   // External source-code disclosure must be explicitly authorised by the
   // operator for this execution environment. Tenant BYOK consent is separate.
@@ -50,6 +61,12 @@ export function resolveTrueForgeModel(env=process.env) {
 }
 export function describeProviders(env=process.env) {
   return {
+    trueforge: {
+      managedModelConfigured:!!env.GK_TRUEFORGE_MODEL,
+      providerKeysExposedToGateKeeper:false,
+      mode:"PREFERRED",
+      note:"Use a model already enabled in TrueForge Settings -> Models; provider billing stays with its owner",
+    },
     deepseek: {
       configuredInTrueForge: !!(env.GK_TRUEFORGE_DEEPSEEK_ECONOMY_MODEL || env.GK_TRUEFORGE_DEEPSEEK_ADVANCED_MODEL),
       apiKeyPresentHere: !!env.DEEPSEEK_API_KEY,

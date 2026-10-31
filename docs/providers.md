@@ -1,4 +1,8 @@
-# Gate Keeper: DeepSeek API and ChatGPT OAuth
+# Gate Keeper: Model providers
+
+**Default:** use the model catalog configured in TrueForge; Gate Keeper never needs to ask an ordinary user for a provider API key or OAuth credential. Under `GK_MODEL_PROVIDER=trueforge`, set `GK_TRUEFORGE_MODEL` to the exact model ID already enabled in TrueForge Settings → Models. The setup refuses an absent model, rather than falling back to another provider. See [TrueForge-first model policy](trueforge-model-access.md).
+
+The DeepSeek and ChatGPT OAuth workflows below are **optional, advanced** connection paths, not required for using Gate Keeper. The self-hosted TrueForge instance does not automatically include paid model inference. The TrueFoundry AI Gateway can centrally govern provider keys, but external model charges remain separate.
 
 TrueForge remains the agent runtime and safety boundary. Connecting a model does **not** enable automatic learning, repair execution, or promotion.
 
