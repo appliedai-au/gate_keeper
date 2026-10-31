@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
+import {spawnSync} from "node:child_process";
 import {resolveTrueForgeModel,describeProviders} from "../scripts/providers/registry.mjs";
 
 test("TrueForge-managed model selection needs no Gate Keeper user credentials",()=>{
@@ -46,4 +47,19 @@ test("all TrueForge agent sync paths verify managed model before writing",()=>{
  assert.ok(start>=0&&check>start&&mutations>check,"model admission occurs before any TrueForge skill mutation");
  assert.match(lib.slice(start,mutations),/models\.some\(m=>m\.name===agent\.model\.name\)/);
  assert.match(lib.slice(start,mutations),/managed model not available in TrueForge/);
+});
+
+test("provider status never reports an active managed route when configuration is rejected",()=>{
+ const run=env=>spawnSync(process.execPath,["scripts/providers/status.mjs"],{
+   cwd:process.cwd(),env:{PATH:process.env.PATH,...env},encoding:"utf8",timeout:10000
+ });
+ const blocked=run({GK_MODEL_PROVIDER:"trueforge"});
+ assert.equal(blocked.status,0,blocked.stderr);
+ const output=JSON.parse(blocked.stdout);
+ assert.equal(output.activeRoute,"blocked");
+ assert.equal(output.selectedModel,null);
+ assert.match(output.selectionError,/approved TrueForge model ID missing/);
+ const ready=run({GK_MODEL_PROVIDER:"trueforge",GK_TRUEFORGE_MODEL:"anthropic/claude-sonnet-4-6"});
+ assert.equal(ready.status,0,ready.stderr);
+ assert.equal(JSON.parse(ready.stdout).activeRoute,"trueforge-managed");
 });
