@@ -6,10 +6,14 @@ import { createClientFromRequest } from "npm:@base44/sdk@0.8.20";
 const TRUEFORGE_PROXY = "https://proxy-production-9553.up.railway.app";
 const HEALTH_PATH = "/healthz";
 const TIMEOUT_MS = 7_000;
+const respond = (body, status) => Response.json(body, {
+  status,
+  headers: { "Cache-Control": "private, no-store, max-age=0" },
+});
 
 Deno.serve(async (request) => {
   if (request.method !== "POST") {
-    return Response.json({ error: "method_not_allowed" }, { status: 405 });
+    return respond({ error: "method_not_allowed" }, 405);
   }
 
   // Every request must have an authenticated Base44 administrator.
@@ -17,13 +21,13 @@ Deno.serve(async (request) => {
   try {
     user = await createClientFromRequest(request).auth.me();
   } catch {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
+    return respond({ error: "unauthorized" }, 401);
   }
   if (!user) {
-    return Response.json({ error: "unauthorized" }, { status: 401 });
+    return respond({ error: "unauthorized" }, 401);
   }
   if (user.role !== "admin") {
-    return Response.json({ error: "forbidden" }, { status: 403 });
+    return respond({ error: "forbidden" }, 403);
   }
 
   // These values must be configured as Base44 backend secrets. They are
@@ -31,11 +35,11 @@ Deno.serve(async (request) => {
   const username = Deno.env.get("GATEKEEPER_PROXY_USERNAME");
   const password = Deno.env.get("GATEKEEPER_PROXY_PASSWORD");
   if (!username || !password) {
-    return Response.json({
+    return respond({
       connected: false,
       reason: "credentials_not_configured",
       checkedAt: new Date().toISOString(),
-    }, { status: 503 });
+    }, 503);
   }
 
   try {
@@ -51,7 +55,7 @@ Deno.serve(async (request) => {
     // Do not relay upstream response bodies, cookies, headers, stack traces,
     // or session data to the application. A healthy container does NOT prove
     // the review agent is registered or that a model is billable.
-    return Response.json({
+    return respond({
       connected: upstream.ok,
       runtime: upstream.ok ? "reachable" : "unavailable",
       checkedAt: new Date().toISOString(),
@@ -61,6 +65,6 @@ Deno.serve(async (request) => {
       connected: false,
       runtime: "unavailable",
       checkedAt: new Date().toISOString(),
-    }, { status: 503 });
+    }, 503);
   }
 });
