@@ -29,8 +29,13 @@ export async function listChatGPTPlanModels({accessToken,fetchImpl=fetch}){
  if(raw.length>250000)held("model catalog too large");
  let data;
  try {data=JSON.parse(raw);}catch{held("invalid model catalog");}
+ // IMPORTANT: Sign in with ChatGPT plan-usage OAuth deliberately returns
+ // {models:[{slug,display_name,visibility}]} at this SAME public URL.
+ // The API-key model catalog returns {object:"list",data:[{id,...}]}.
+ // Do not replace this parser with the generic API-key schema:
+ // https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference
  const names=data?.models;
- if(!Array.isArray(names))held("no account-specific model catalog");
+ if(!Array.isArray(names))held("OAuth account-specific model catalog unavailable; API-key catalog is not a substitute");
  return names.filter(x=>x?.visibility==="list"&&typeof x.slug==="string"&&
    /^[a-zA-Z0-9._-]{2,120}$/.test(x.slug))
    .map(x=>({id:x.slug,name:typeof x.display_name==="string"?x.display_name:x.slug}));
