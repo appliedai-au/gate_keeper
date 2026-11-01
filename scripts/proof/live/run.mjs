@@ -94,7 +94,16 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     return { blocked: "MODEL_NOT_REGISTERED", preflight };
   }
   const mode = env.GK_PROOF_MODE || "compare";
-  if (!["compare", "learn"].includes(mode)) throw new Error("PROOF_MODE_INVALID");
+  if (!["compare", "learn", "inventory"].includes(mode)) throw new Error("PROOF_MODE_INVALID");
+  // Inventory: read-only, no model calls. Reports which provider route each configured model uses.
+  if (mode === "inventory") {
+    let providers = null, providerError = null;
+    try { providers = (await tf.settings.modelProviders.list()).data; } catch (e) { providerError = String(e?.message || e).slice(0, 160); }
+    const inventory = { models: models.map((m) => ({ id: m.name, provider: m.provider?.name ?? null })), providers: sanitizeProviders(providers), provider_error: providerError };
+    emit("GK_PROOF_INVENTORY", inventory);
+    ev.put("inventory.json", inventory, "model_inventory");
+    return { inventory };
+  }
   let phaseShare = mode === "learn" ? LEARN_PHASE_SHARE : PHASE_SHARE;
   if (mode === "compare" && env.GK_PROOF_PHASE_SHARE) {
     const [c, a, d] = env.GK_PROOF_PHASE_SHARE.split(",").map(Number);
@@ -280,6 +289,17 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   emitChunked(log, "GK_PROOF_PUBLIC_DATA", publicData);
   emit("GK_PROOF_DONE", { run_id: runId, spent_usd: budget.snapshot().spent_usd, evidence_manifest_sha256: manifest.sha256 });
   return { summary, publicData };
+}
+
+/** Provider summary safe to publish: name, type, endpoint host and model count. Never auth or full URLs. */
+export function sanitizeProviders(list) {
+  const arr = Array.isArray(list) ? list : Array.isArray(list?.data) ? list.data : [];
+  return arr.map((p) => {
+    let host = null;
+    try { host = p?.baseUrl ? new URL(p.baseUrl).hostname : null; } catch { host = "unparseable"; }
+    return { name: String(p?.name ?? ""), type: String(p?.type ?? p?.provider?.type ?? "unknown"), endpoint_host: host,
+      models: Array.isArray(p?.models) ? p.models.length : null, auth_configured: !!p?.auth };
+  });
 }
 
 const emptyArm = () => ({ trials: 0, defect_recall: null, precision: null, explanation_correctness: null, severity_accuracy: null, median_latency_ms: null, total_tokens: null, actual_cost_usd: null });

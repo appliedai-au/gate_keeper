@@ -456,3 +456,13 @@ test("gateway models resolve to their own list prices", async () => {
   assert.deepEqual(priceFor("google/gemini-4-argon"), [2, 10]);
   assert.deepEqual(priceFor("deepseek/deepseek-v4-pro"), [1.32, 3.96]);
 });
+
+test("inventory mode: read-only, no model calls, provider route reported without any secret", () => {
+  const r = e2e({ env: { GK_PROOF_MODE: "inventory" } });
+  assert.equal(r.calls, 0);
+  const line = r.lines.find((l) => l.startsWith("GK_PROOF_INVENTORY="));
+  const inv = JSON.parse(line.split("=").slice(1).join("="));
+  assert.deepEqual(inv.providers, [{ name: "anthropic-direct", type: "anthropic", endpoint_host: "api.anthropic.com", models: 2, auth_configured: true }]);
+  assert.equal(inv.models[0].provider, "anthropic-direct");
+  assert.ok(!/SECRET_/.test(r.lines.join("\n")), "no credential or URL parameter may reach stdout");
+});
