@@ -485,3 +485,7 @@ test("provider-remove: deletes exactly the named provider (no model calls), conf
   assert.ok(!/SECRET_/.test(r.lines.join("\n")));
   assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "not-there" } }), /PROVIDER_REMOVE_TARGET_NOT_FOUND/);
 });
+
+test("provider-remove fails closed when the provider is still listed after delete", () => {
+  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct" }, fake: { deleteNoop: true } }), /PROVIDER_REMOVE_NOT_CONFIRMED/);
+});

@@ -30,7 +30,7 @@ const PAGINATE_FIX = `export function paginate(items, page, size) {
   return { items: items.slice(start, start + size), page, totalPages };
 }
 export function pageSummary(items, page, size) { const p = paginate(items, page, size); return \`Page \${p.page} of \${p.totalPages}: \${p.items.join(", ")}\`; }`;
-export function fakeTrueForge({ models = ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1", "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false, failPollAt = 0, learnedHelps = false } = {}) {
+export function fakeTrueForge({ models = ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1", "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false, failPollAt = 0, learnedHelps = false, deleteNoop = false } = {}) {
   const sessions = new Map(); const turns = new Map(); let n = 0;
   const reply = (instructions, content) => {
     if (/independent adjudicator for a code-review benchmark/.test(instructions)) {
@@ -68,7 +68,7 @@ export function fakeTrueForge({ models = ["anthropic/claude-sonnet-5-5", "anthro
     server: { getCapabilities: async () => ({ data: { sandbox: { enabled: false }, skill: { enabled: false } } }) },
     models: { list: async () => ({ data: models.map((name) => ({ name, provider: { name: "anthropic-direct" } })) }) },
     settings: { modelProviders: (() => { let providers = [{ name: "anthropic-direct", type: "anthropic", baseUrl: "https://api.anthropic.com/v1?k=SECRET_URL_PARAM", auth: { apiKey: "SECRET_API_KEY" }, models: [{}, {}] }];
-      return { list: async () => ({ data: providers }), delete: async (name) => { providers = providers.filter((p) => p.name !== name); return { data: {} }; } }; })() },
+      return { list: async () => ({ data: providers }), delete: async (name) => { if (!deleteNoop) providers = providers.filter((p) => p.name !== name); return { data: {} }; } }; })() },
     sessions: {
       create: async ({ agent, metadata = {} }) => { if (Object.values(metadata).some((v) => typeof v !== "string")) throw new Error("JsonError: metadata values must be strings"); const id = "s" + sessions.size; sessions.set(id, agent.spec); return { data: { id } }; },
       createTurn: async (sid, { input }) => {

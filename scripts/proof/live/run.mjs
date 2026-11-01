@@ -103,6 +103,10 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     if (!target || !before.some((p) => p.name === target)) throw new Error("PROVIDER_REMOVE_TARGET_NOT_FOUND");
     await tf.settings.modelProviders.delete(target);
     const after = sanitizeProviders((await tf.settings.modelProviders.list()).data);
+    if (after.some((p) => p.name === target)) {
+      emit("GK_PROOF_BLOCKED", { reason: "PROVIDER_REMOVE_NOT_CONFIRMED", target });
+      throw new Error("PROVIDER_REMOVE_NOT_CONFIRMED");
+    }
     const { data: modelsAfter } = await tf.models.list();
     const result = { removed: target, providers_before: before, providers_after: after, models_after: modelsAfter.map((m) => ({ id: m.name, provider: m.provider?.name ?? null })) };
     emit("GK_PROOF_PROVIDER_REMOVED", result);
