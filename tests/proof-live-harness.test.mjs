@@ -432,6 +432,8 @@ test("locked baseline: per-role models in agent/models.json are the harness defa
   const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
   assert.equal(data.candidate_model, roles.reviewer.model);
   assert.equal(data.adjudicator_model, roles.adjudicator.model);
+  assert.equal(data.adjudicator_calibration, "pending", "a calibration run is stamped");
+  assert.ok(data.limitations.some((l) => /^CALIBRATION RUN: .*not a release proof/.test(l)));
   assert.equal(data.learning_model, roles.learning.model);
   const baseline = JSON.parse(readFileSync(join(ROOT, "proof", "baseline.json"), "utf8"));
   assert.equal(baseline.source_run, "gk-live-20261101-g");
@@ -597,4 +599,16 @@ test("provider listing reads TrueForge's manifest shape: type, endpoint host and
 test("provider-remove: GK_PROOF_ALLOW_LOCAL alone never lets an agent be deleted without an uploaded copy", () => {
   const agents = [{ id: "ag1", name: "gate-keeper", manifest: { model: { name: "anthropic-direct/claude-sonnet-5-5" } }, sessionIds: ["s-old-1"] }];
   assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct", GK_DETACH_AGENTS: "1", GK_PROOF_ALLOW_LOCAL: "1" }, fake: { agents, modelRoute: "anthropic" } }), /AGENT_EXPORT_NOT_UPLOADED/);
+});
+
+test("a comparison graded by a pending-calibration grader is stamped and can never validate as a PASS", async () => {
+  const { validatePublicProof } = await import("../scripts/proof/validate-public-proof.mjs");
+  const r = e2e({ trials: 1, env: { GK_PROOF_ADJUDICATOR_MODEL: "", GK_PROOF_CALIBRATION_RUN: "1" } });
+  const summary = decodeChunks(r.lines, "GK_PROOF_PUBLIC_SUMMARY");
+  assert.equal(summary.environment.adjudicator_calibration, "pending");
+  assert.ok(summary.limitations.some((l) => /^CALIBRATION RUN:/.test(l)));
+  assert.notEqual(summary.result, "PASS");
+  assert.throws(() => validatePublicProof({ ...summary, result: "PASS" }), /pending-calibration grader cannot be a PASS/);
+  const normal = decodeChunks(e2e({ trials: 1 }).lines, "GK_PROOF_PUBLIC_SUMMARY");
+  assert.equal(normal.environment.adjudicator_calibration, "calibrated");
 });
