@@ -5,12 +5,14 @@ import { readFileSync } from "node:fs";
 const page = readFileSync(new URL("../integrations/base44/pages/GateKeeper.jsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../integrations/base44/pages/GateKeeper.css", import.meta.url), "utf8");
 const status = readFileSync(new URL("../integrations/base44/functions/gatekeeperStatus.js", import.meta.url), "utf8");
+const benchmark = readFileSync(new URL("../integrations/base44/components/GateKeeperBenchmark.jsx", import.meta.url), "utf8");
 
 test("Base44 walkthrough prominently discloses sample-only results", () => {
   assert.match(page, /SAMPLE WALKTHROUGH/);
   assert.match(page, /not a live TrueForge review/);
-  assert.match(page, /No verified live runs shown/);
-  assert.match(page, /No independently qualified evidence shown/);
+  assert.match(page, /GateKeeperBenchmark section=\{page\}/);
+  assert.match(benchmark, /INCONCLUSIVE|proof\.result/);
+  assert.match(benchmark, /sourceCommit/);
   assert.match(page, /SAMPLE UI · NOT LIVE AI OUTPUT/);
 });
 
