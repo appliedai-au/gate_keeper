@@ -10,7 +10,7 @@ const benchmark = readFileSync(new URL("../integrations/base44/components/GateKe
 test("Base44 walkthrough prominently discloses sample-only results", () => {
   assert.match(page, /SAMPLE WALKTHROUGH/);
   assert.match(page, /not a live TrueForge review/);
-  assert.match(page, /GateKeeperBenchmark section=\{page\}/);
+  assert.ok(page.includes("GateKeeperBenchmark key={page} section={page}"));
   assert.match(benchmark, /INCONCLUSIVE|proof\.result/);
   assert.match(benchmark, /sourceCommit/);
   assert.match(page, /SAMPLE UI · NOT LIVE AI OUTPUT/);
