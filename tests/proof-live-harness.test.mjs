@@ -429,3 +429,13 @@ test("locked baseline: per-role models in agent/models.json are the harness defa
   assert.ok(existsSync(join(ROOT, baseline.report)));
   assert.equal(baseline.metrics.gate_keeper_sonnet_5_5.matched_issues, baseline.metrics.gate_keeper_sonnet_5_5.expected_issues);
 });
+
+test("the repair role model is read: bare drill arms repair with it, @model drill arms with their own; it is registration-checked", () => {
+  const models = ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1", "anthropic/claude-opus-5-5", "anthropic/claude-haiku-5-5"];
+  const r = e2e({ trials: 1, fake: { models }, env: { GK_PROOF_REPAIR_MODEL: "anthropic/claude-opus-5-5", GK_PROOF_DRILL_ARMS: "gate_keeper,gate_keeper@anthropic/claude-haiku-5-5" } });
+  const summary = decodeChunks(r.lines, "GK_PROOF_PUBLIC_SUMMARY");
+  assert.deepEqual(summary.environment.drill_arm_repair_models, { gate_keeper: "anthropic/claude-opus-5-5", "gate_keeper@anthropic/claude-haiku-5-5": "anthropic/claude-haiku-5-5" });
+  const blocked = e2e({ env: { GK_PROOF_REPAIR_MODEL: "anthropic/claude-haiku-5-5" }, fake: { models: ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1"] } });
+  assert.equal(blocked.out.blocked, "MODEL_NOT_REGISTERED");
+  assert.equal(blocked.calls, 0);
+});

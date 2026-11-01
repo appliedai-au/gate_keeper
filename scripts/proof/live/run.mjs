@@ -100,8 +100,11 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   const modelFor = (arm) => armModel(arm, model);
   // Every model a role or arm will use must be registered in TrueForge before any spend.
   const learningModel = env.GK_PROOF_LEARNING_MODEL || roleConfig.learning?.model || model;
+  // Bare drill arms repair with the repair role's model; "method@model" drill arms name their repairer explicitly.
+  const repairModel = env.GK_PROOF_REPAIR_MODEL || roleConfig.repair?.model || model;
+  const repairerFor = (arm) => arm.includes("@") ? modelFor(arm) : repairModel;
   // Role models are checked as given; only arm ids are mapped through modelFor.
-  const roleModels = mode === "learn" ? [learningModel] : [];
+  const roleModels = mode === "learn" ? [learningModel] : [repairModel];
   const missing = [...new Set([...roleModels, ...[...(compArms || []), ...drillArms].map(modelFor)])].filter((m) => !modelNames.includes(m));
   if (missing.length) { emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_REGISTERED", models: missing }); return { blocked: "MODEL_NOT_REGISTERED", preflight }; }
 
@@ -226,7 +229,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   emit("GK_PROOF_COMPARISON", { complete_trials: completeTrials, arms, budget: budget.snapshot() });
 
   // ---------- 3. autonomous loop drill on disposable fixtures ----------
-  const drill = await runDrill({ tf, model, adjudicatorModel, drillArms, modelFor, budget, callTurn, newSession, ev, emit, env });
+  const drill = await runDrill({ tf, model, adjudicatorModel, drillArms, repairerFor, budget, callTurn, newSession, ev, emit, env });
 
   // ---------- 4. evidence: sessions, ledger, upload ----------
   const { upload, manifest } = await exportEvidence();
@@ -248,7 +251,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     result: "INCONCLUSIVE",
     source: { repository: "appliedai-au/gate_keeper", gate_keeper_commit: sourceCommit, baseline_instructions_sha256: hashes.baseline_instructions_sha256,
       gate_keeper_instructions_sha256: hashes.gate_keeper_instructions_sha256, scorer_sha256: hashes.scorer_sha256 },
-    environment: { trueforge_version: TRUEFORGE_RUNTIME, model_id: model, adjudicator_model_id: adjudicatorModel, arm_models: Object.fromEntries(compArms.map((a) => [a, modelFor(a)])), drill_arm_models: Object.fromEntries(drillArms.map((a) => [a, modelFor(a)])), provider: model.split("/")[0], sandbox_provider: preflight.sandbox_enabled ? "trueforge-configured" : "none (disposable runner clone)" },
+    environment: { trueforge_version: TRUEFORGE_RUNTIME, model_id: model, adjudicator_model_id: adjudicatorModel, arm_models: Object.fromEntries(compArms.map((a) => [a, modelFor(a)])), drill_arm_repair_models: Object.fromEntries(drillArms.map((a) => [a, repairerFor(a)])), provider: model.split("/")[0], sandbox_provider: preflight.sandbox_enabled ? "trueforge-configured" : "none (disposable runner clone)" },
     benchmark: { id: `public evals/tasks (${publicTasks.length}) + owner-private holdout (${holdout.tasks.length})`, sha256: sha256(publicBenchmarkSha(publicTasks) + ":" + (holdout.sha256 || "none")), holdout_private: true },
     fairness: { same_model: true, same_provider: true, same_inputs: true, same_scoring: true, same_limits: true },
     arms: { baseline: pick(arms.baseline.all) || emptyArm(), gate_keeper: pick(arms.gate_keeper.all) || emptyArm() },
@@ -279,7 +282,7 @@ export function emitChunked(log, key, value) {
 }
 
 // ---------- autonomous repair-loop drill ----------
-async function runDrill({ model, adjudicatorModel, drillArms, modelFor, budget, callTurn, newSession, ev, emit, env }) {
+async function runDrill({ model, adjudicatorModel, drillArms, repairerFor, budget, callTurn, newSession, ev, emit, env }) {
   const work = mkdtempSync(join(tmpdir(), "gk-drill-"));
   const fixtures = Object.fromEntries([...REPAIR_FIXTURES, "archive"].map((id) => [id, join(ROOT, "proof", "fixtures", id)]));
   const params = { temperature: 0, maxTokens: 2500 };
@@ -323,7 +326,7 @@ async function runDrill({ model, adjudicatorModel, drillArms, modelFor, budget, 
     state = nextExecutionState(state, "finding"); rec.states.push(state);
     const repairInstr = (armBase(arm).startsWith("gate_keeper") ? gateKeeperMethodology("repair", armBase(arm) === "gate_keeper_lean" ? "lean" : "adversarial") : BASELINE_REPAIR) + "\n\n" + REPAIR_OUTPUT_CONTRACT + lessonText;
     // In the drill, "@model" selects the REPAIR model only; review and re-review stay on the candidate model so the gate is identical across arms.
-    const repairSession = await newSession({ model: { name: modelFor(arm), params }, instructions: repairInstr, config: RUNTIME_CONFIG }, { phase: "drill", arm, fixture: fixtureId, role: "repair" });
+    const repairSession = await newSession({ model: { name: repairerFor(arm), params }, instructions: repairInstr, config: RUNTIME_CONFIG }, { phase: "drill", arm, fixture: fixtureId, role: "repair" });
     let feedback = "";
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) { state = "repairing"; rec.states.push("repairing(bounded retry " + attempt + ")"); }
