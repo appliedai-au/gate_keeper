@@ -130,15 +130,25 @@ export async function inspectGatewayReadOnly(tf){
  });
 }
 
-function checkHost(value){
+/**
+ * Do not leak an operator's TrueForge access token to arbitrary HTTPS endpoints
+ * or to another tenant service on the private Railway network.
+ */
+export function validateTrueForgeHost(value,{approvedHosts=[],tokenPresent=false}={}){
  let url;
  try{url=new URL(value)}catch{fail("TRUEFORGE_BASE_URL missing/invalid")}
- if(url.username||url.password||url.search||url.hash)
-   fail("TrueForge URL must not include credentials, query or fragment");
- const localRailway=url.hostname.endsWith(".railway.internal");
- if((url.protocol!=="https:"&&! (url.protocol==="http:"&&localRailway))||
+ if(url.username||url.password||url.search||url.hash||
     (url.pathname!=="/"&&url.pathname!==""))
-   fail("approved HTTPS TrueForge URL required");
+   fail("TrueForge URL must not contain credentials, query, fragment or path");
+ const approved=Array.isArray(approvedHosts)?approvedHosts:
+   String(approvedHosts||"").split(",");
+ const hosts=approved.map(h=>String(h).trim().toLowerCase()).filter(Boolean);
+ const railwayPrivate=url.protocol==="http:"&&
+   url.hostname==="trueforge.railway.internal"&&url.port==="8080";
+ const publicApproved=url.protocol==="https:"&&tokenPresent===true&&
+   hosts.includes(url.hostname.toLowerCase());
+ if(!railwayPrivate&&!publicApproved)
+   fail("TrueForge endpoint host not approved");
  return url.origin;
 }
 
@@ -151,7 +161,10 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
      process.exitCode=3;
    }else{
      const {TrueForge}=await import("@truefoundry/trueforge-sdk");
-     const tf=new TrueForge({baseUrl:checkHost(baseUrl),token:process.env.TRUEFORGE_TOKEN||undefined,timeoutInSeconds:20});
+     const tf=new TrueForge({baseUrl:validateTrueForgeHost(baseUrl,{
+       approvedHosts:process.env.GK_TRUEFORGE_APPROVED_HOSTS||"",
+       tokenPresent:!!process.env.TRUEFORGE_TOKEN,
+     }),token:process.env.TRUEFORGE_TOKEN||undefined,timeoutInSeconds:20});
      const status=await inspectGatewayReadOnly(tf);
      console.log(JSON.stringify(status,null,2));
      // Even a registered provider cannot authorise a spend or production cutover.
