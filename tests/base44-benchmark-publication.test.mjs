@@ -49,7 +49,7 @@ test("published benchmark references locked run and never upgrades its qualified
     assert.equal(row.precision,item.precision);
     assert.equal(row.medianLatencyMs,item.median_latency_ms);
     assert.equal(item.actual_cost_usd,null,"historical billing is NOT actual cost");
-    assert.match(report,new RegExp(row.model.replaceAll("-","[- ]").split(" ").join("[- ]"),"i"));
+    assert.ok(report.includes(row.model),"source report missing model "+row.model);
   }
   assert.ok(display.limitations.some(x=>/invoice|invoiced/i.test(x)));
 });
