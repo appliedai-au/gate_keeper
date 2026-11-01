@@ -14,7 +14,7 @@ import { armInstructions, OUTPUT_CONTRACT, sha256 } from "./live/config.mjs";
 export const MODEL = "tfy-managed/deepseek-v4-flash-0731";
 export const ARMS = Object.freeze(["baseline", "gate_keeper"]);
 export const TASK_IDS = Object.freeze([
-  "01-python-utils", "02-express-users", "03-python-deploy", "04-ts-fetch",
+  "01-python-utils", "02-express-users", "03-python-deploy", "05-ts-task-pagination",
 ]);
 export const PARAMETERS = Object.freeze({ temperature: 0, maxOutputTokens: 2500 });
 export const PRIOR_PROOF = "gk-playground-deepseek-20261102-a";
@@ -27,7 +27,9 @@ const priorPath = new URL("../../proof/submissions/gk-playground-deepseek-202611
 
 export function fixtureForRound(n) {
   if (!Number.isInteger(n) || n < 1 || n > 4) fail("ROUND_OUT_OF_BOUNDS");
-  const path = new URL("../../evals/tasks/" + TASK_IDS[n - 1] + ".json", import.meta.url);
+  const path = n === 4
+    ? new URL("../../proof/fixtures/four-rounds/05-ts-task-pagination.json", import.meta.url)
+    : new URL("../../evals/tasks/" + TASK_IDS[n - 1] + ".json", import.meta.url);
   const t = JSON.parse(readFileSync(path, "utf8"));
   if (t.id !== TASK_IDS[n - 1] || t.holdout !== false ||
       !Array.isArray(t.code) || !Array.isArray(t.expected) || t.expected.length !== 3)
