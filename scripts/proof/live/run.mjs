@@ -84,6 +84,23 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   const emit = (k, v) => log(`${k}=${typeof v === "string" ? v : JSON.stringify(v)}`);
   const timeLeft = () => deadline - now();
 
+  /** Full trace of one TrueForge session (metadata, turns, turn events). */
+  async function exportSessionTrace(id) {
+    const { data: session } = await tf.sessions.get(id);
+    const turns = [];
+    for await (const turn of await tf.sessions.listTurns(id)) {
+      const events = [];
+      for await (const e of await tf.sessions.listTurnEvents(id, turn.id, { order: "asc" })) events.push(e);
+      turns.push({ ...turn, events });
+    }
+    return { id, session, turns };
+  }
+  function uploadEvidence() {
+    return ev.upload({ endpoint: env.GK_EVIDENCE_S3_ENDPOINT, bucket: env.GK_EVIDENCE_S3_BUCKET, region: env.GK_EVIDENCE_S3_REGION,
+      accessKeyId: env.GK_EVIDENCE_S3_ACCESS_KEY_ID, secretAccessKey: env.GK_EVIDENCE_S3_SECRET_ACCESS_KEY,
+      forcePathStyle: env.GK_EVIDENCE_S3_PATH_STYLE !== "false" }).catch((e) => ({ uploaded: false, reason: "UPLOAD_FAILED: " + String(e?.message || e).slice(0, 160) }));
+  }
+
   // ---------- preflight (no spend) ----------
   let health = null;
   try { health = (await fetchImpl(baseUrl.replace(/\/$/, "") + "/healthz", { signal: AbortSignal.timeout(8000) })).status; } catch (e) { health = "unreachable"; }
@@ -110,6 +127,35 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     const target = String(env.GK_REMOVE_PROVIDER || "");
     const before = sanitizeProviders((await tf.settings.modelProviders.list()).data);
     if (!target || !before.some((p) => p.name === target)) throw new Error("PROVIDER_REMOVE_TARGET_NOT_FOUND");
+    // TrueForge refuses to delete a provider that a saved agent still uses. With owner approval
+    // (GK_DETACH_AGENTS=1) each such agent and every session bound to it is exported to the private
+    // evidence bucket first; only after the upload is confirmed is the agent deleted. Learned data is
+    // never deleted without a verified copy.
+    const agentsUsing = [];
+    for await (const a of await tf.agents.list()) if (String(a.manifest?.model?.name || "").startsWith(target + "/")) agentsUsing.push(a);
+    let detached = [];
+    if (agentsUsing.length) {
+      if (env.GK_DETACH_AGENTS !== "1") {
+        emit("GK_PROOF_BLOCKED", { reason: "PROVIDER_IN_USE", target, agents: agentsUsing.map((a) => a.name) });
+        throw new Error("PROVIDER_IN_USE");
+      }
+      for (const a of agentsUsing) {
+        const sessionsOfAgent = [];
+        for await (const s of await tf.sessions.list({ agentId: a.id })) sessionsOfAgent.push(await exportSessionTrace(s.id));
+        ev.put(`private/agents/${a.name}.json`, { agent: a, sessions: sessionsOfAgent }, "trueforge_agent_export");
+        detached.push({ name: a.name, id: a.id, model: a.manifest?.model?.name ?? null, sessions_exported: sessionsOfAgent.length });
+      }
+      const upload = await uploadEvidence();
+      if (!upload.uploaded && env.GK_PROOF_ALLOW_LOCAL !== "1") {
+        emit("GK_PROOF_BLOCKED", { reason: "AGENT_EXPORT_NOT_UPLOADED", detail: upload.reason });
+        throw new Error("AGENT_EXPORT_NOT_UPLOADED");
+      }
+      emit("GK_PROOF_AGENTS_EXPORTED", { agents: detached, evidence: upload.uploaded ? { reference: upload.reference, manifest_sha256: upload.manifest_sha256 } : "local-selftest" });
+      for (const a of agentsUsing) await tf.agents.delete(a.id);
+      const remaining = [];
+      for await (const a of await tf.agents.list()) if (agentsUsing.some((u) => u.id === a.id)) remaining.push(a.name);
+      if (remaining.length) { emit("GK_PROOF_BLOCKED", { reason: "AGENT_DELETE_NOT_CONFIRMED", agents: remaining }); throw new Error("AGENT_DELETE_NOT_CONFIRMED"); }
+    }
     await tf.settings.modelProviders.delete(target);
     const after = sanitizeProviders((await tf.settings.modelProviders.list()).data);
     if (after.some((p) => p.name === target)) {
@@ -117,10 +163,15 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
       throw new Error("PROVIDER_REMOVE_NOT_CONFIRMED");
     }
     const { data: modelsAfter } = await tf.models.list();
-    const result = { removed: target, providers_before: before, providers_after: after, models_after: modelsAfter.map((m) => ({ id: m.name, provider: m.provider?.name ?? null })) };
+    const result = { removed: target, agents_detached: detached, providers_before: before, providers_after: after, models_after: modelsAfter.map((m) => ({ id: m.name, provider: m.provider?.name ?? null })) };
+    if (result.models_after.some((m) => m.provider === target || m.id.startsWith(target + "/"))) {
+      emit("GK_PROOF_BLOCKED", { reason: "PROVIDER_MODELS_STILL_LISTED", target });
+      throw new Error("PROVIDER_MODELS_STILL_LISTED");
+    }
     emit("GK_PROOF_PROVIDER_REMOVED", result);
     ev.put("provider-remove.json", result, "provider_change");
-    return { providerRemoved: result };
+    const upload = await uploadEvidence();
+    return { providerRemoved: result, upload };
   }
   // Inventory: read-only, no model calls. Reports which provider route each configured model uses.
   if (mode === "inventory") {
@@ -208,20 +259,12 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   async function exportEvidence() {
     for (const s of sessions) {
       try {
-        const { data: session } = await tf.sessions.get(s.id);
-        const turns = [];
-        for await (const turn of await tf.sessions.listTurns(s.id)) {
-          const events = [];
-          for await (const e of await tf.sessions.listTurnEvents(s.id, turn.id, { order: "asc" })) events.push(e);
-          turns.push({ ...turn, events });
-        }
+        const { session, turns } = await exportSessionTrace(s.id);
         ev.put(`private/sessions/${s.id}.json`, { meta: s, session, turns }, "trueforge_session_trace");
       } catch (e) { limitations.push(`Session ${s.id} export failed: ${String(e?.message || e).slice(0, 120)}`); }
     }
     ev.put("private/spend-ledger.json", { snapshot: budget.snapshot(), ledger: budget.ledger }, "spend_ledger");
-    const upload = await ev.upload({ endpoint: env.GK_EVIDENCE_S3_ENDPOINT, bucket: env.GK_EVIDENCE_S3_BUCKET, region: env.GK_EVIDENCE_S3_REGION,
-      accessKeyId: env.GK_EVIDENCE_S3_ACCESS_KEY_ID, secretAccessKey: env.GK_EVIDENCE_S3_SECRET_ACCESS_KEY,
-      forcePathStyle: env.GK_EVIDENCE_S3_PATH_STYLE !== "false" }).catch((e) => ({ uploaded: false, reason: "UPLOAD_FAILED: " + String(e?.message || e).slice(0, 160) }));
+    const upload = await uploadEvidence();
     if (!upload.uploaded) blockers.push("Private evidence upload failed or not configured: " + upload.reason);
     const manifest = ev.manifest();
 

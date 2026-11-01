@@ -541,3 +541,28 @@ test("offline e2e: hard drill set runs the hard fixtures and says plainly why th
   assert.ok(data.drill.events.some((e) => e.check === "drill_fixture_set" && e.set === "hard"));
   assert.ok(data.drill.events.some((e) => /drill set hard has no tenant-beta fixture \(by design\)/.test(e.outcome || "")));
 });
+
+test("provider-remove: an agent still using the provider blocks removal unless the owner approves detaching it", () => {
+  const agents = [{ id: "ag1", name: "gate-keeper", manifest: { model: { name: "anthropic-direct/claude-sonnet-5-5" }, instructions: "SECRET_INSTRUCTIONS" }, sessionIds: [] },
+    { id: "ag2", name: "other", manifest: { model: { name: "gateway/some-model" } } }];
+  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct" }, fake: { agents } }), /PROVIDER_IN_USE/);
+});
+
+test("provider-remove with GK_DETACH_AGENTS=1: exports the agent and its sessions privately, deletes only that agent, then the provider", () => {
+  const agents = [{ id: "ag1", name: "gate-keeper", manifest: { model: { name: "anthropic-direct/claude-sonnet-5-5" }, instructions: "SECRET_INSTRUCTIONS" }, sessionIds: ["s-old-1", "s-old-2"] },
+    { id: "ag2", name: "other", manifest: { model: { name: "gateway/some-model" } } }];
+  const r = e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct", GK_DETACH_AGENTS: "1", GK_PROOF_ALLOW_LOCAL: "1" }, fake: { agents } });
+  const out = r.lines.join("\n");
+  const exported = JSON.parse(r.lines.find((l) => l.startsWith("GK_PROOF_AGENTS_EXPORTED=")).split("=").slice(1).join("="));
+  assert.deepEqual(exported.agents.map((a) => [a.name, a.sessions_exported]), [["gate-keeper", 2]]);
+  const removed = JSON.parse(r.lines.find((l) => l.startsWith("GK_PROOF_PROVIDER_REMOVED=")).split("=").slice(1).join("="));
+  assert.deepEqual(removed.providers_after, []);
+  assert.deepEqual(removed.models_after, []);
+  assert.ok(!/SECRET_/.test(out), "instructions and provider secrets never reach the log");
+  assert.equal(r.calls, 0);
+});
+
+test("provider-remove with GK_DETACH_AGENTS=1 fails closed, deleting nothing, when the private export cannot be uploaded", () => {
+  const agents = [{ id: "ag1", name: "gate-keeper", manifest: { model: { name: "anthropic-direct/claude-sonnet-5-5" } }, sessionIds: ["s-old-1"] }];
+  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct", GK_DETACH_AGENTS: "1" }, fake: { agents } }), /AGENT_EXPORT_NOT_UPLOADED/);
+});
