@@ -1,0 +1,155 @@
+{
+  "schema": "gate-keeper-playground-smoke-v1",
+  "run_id": "gk-playground-deepseek-20261102-a",
+  "observed_date": "2026-11-02",
+  "result": "INCONCLUSIVE",
+  "evidence_status": "GATEWAY_CALLS_AND_COSTS_OBSERVED; INDEPENDENT_QUALIFICATION_AND_SPONSOR_DEDUCTION_UNVERIFIED",
+  "source": {
+    "repository": "appliedai-au/gate_keeper",
+    "commit": "b0b4b359ce482ddc3dc42c7332f8cbb232c05412",
+    "fixture": "evals/tasks/01-python-utils.json",
+    "expected_known_issues": [
+      {
+        "line": 7,
+        "category": "bug",
+        "severity": "high"
+      },
+      {
+        "line": 12,
+        "category": "bug",
+        "severity": "medium"
+      },
+      {
+        "line": 22,
+        "category": "error-handling",
+        "severity": "medium"
+      }
+    ]
+  },
+  "execution": {
+    "channel": "TrueFoundry Playground",
+    "upstream_provider": "tfy-managed",
+    "model": "deepseek-v4-flash-0731",
+    "gateway": "https://stranger-builds.truefoundry.cloud/api/llm",
+    "trueforge_sdk_executed": false,
+    "code_executed": false,
+    "api_route_claim": "not tested",
+    "trials": 1,
+    "temperature": 0,
+    "effective_max_output_tokens": 2500,
+    "requested_max_output_tokens": 500,
+    "identical_user_fixture": true,
+    "identical_model": true,
+    "methodological_difference": "system review instructions only",
+    "gateway_request_count": 2
+  },
+  "arms": {
+    "baseline": {
+      "method": "standard plain TrueForge-style reviewer prompt",
+      "detected_known_issues": 2,
+      "expected_known_issues": 3,
+      "reported_findings": 2,
+      "matched_lines": [
+        7,
+        12
+      ],
+      "missed_lines": [
+        22
+      ],
+      "severity_matches": 1,
+      "severity_matches_out_of": 2,
+      "misstated_severity_lines": [
+        12
+      ],
+      "reported_total_tokens_approx": 529,
+      "gateway_latency_ms": 3140,
+      "gateway_reported_cost_usd": 0.00009408,
+      "span_suffix": "8db65042d03d",
+      "model_answer": [
+        {
+          "line": 7,
+          "category": "bug",
+          "severity": "high",
+          "comment": "range(0, len(items) - size, size) drops the final chunk"
+        },
+        {
+          "line": 12,
+          "category": "bug",
+          "severity": "high",
+          "comment": "mutable default list shared across calls"
+        }
+      ]
+    },
+    "gate_keeper": {
+      "method": "Gate Keeper adversarial + review checklist",
+      "detected_known_issues": 3,
+      "expected_known_issues": 3,
+      "reported_findings": 3,
+      "matched_lines": [
+        7,
+        12,
+        22
+      ],
+      "missed_lines": [],
+      "severity_matches": 3,
+      "severity_matches_out_of": 3,
+      "misstated_severity_lines": [],
+      "unsupported_subclaims": [
+        {
+          "line": 7,
+          "claim": "size=0 causes an infinite loop",
+          "correction": "Python range() with step zero raises ValueError; it does not infinite-loop."
+        }
+      ],
+      "reported_total_tokens_approx": 1200,
+      "gateway_latency_ms": 2620,
+      "gateway_reported_cost_usd": 0.00018522,
+      "span_suffix": "3f84ea8a69e4",
+      "model_answer": [
+        {
+          "line": 7,
+          "category": "bug",
+          "severity": "high",
+          "comment": "range stops at len(items)-size, so the last chunk is always dropped; also size=0 causes an infinite loop."
+        },
+        {
+          "line": 12,
+          "category": "bug",
+          "severity": "medium",
+          "comment": "Mutable default argument is shared across calls, so tags accumulate between posts."
+        },
+        {
+          "line": 22,
+          "category": "error-handling",
+          "severity": "medium",
+          "comment": "Swallows all exceptions including JSON syntax errors and permission errors, silently returning an empty config."
+        }
+      ]
+    }
+  },
+  "totals": {
+    "gateway_reported_cost_usd": 0.0002793,
+    "reported_token_count_approx": 1729,
+    "requests": 2
+  },
+  "billing": {
+    "gateway_costs_observed": true,
+    "sponsor_credit_deduction_verified": false,
+    "personal_billing_route_used": false,
+    "credit_balance_verified": false,
+    "team_policy_name": "Applied-AI-budget",
+    "team_policy_ceiling_usd": 50,
+    "team_policy_mode": "Enforce",
+    "separate_smoke_policy_present": false
+  },
+  "limitations": [
+    "Two one-turn Playground calls, not a TrueForge SDK/runtime end-to-end test; the baseline was a plain TrueForge-style reviewer instruction, not an independently deployed TrueForge agent.",
+    "One public fixture and one trial per arm, with no holdout or independent reviewer; results are not statistically generalizable.",
+    "The Playground max output tokens setting was 2500; a 500-token ceiling was requested but could not be set in the UI.",
+    "The baseline and Gate Keeper shared an equivalent output contract and user fixture; prompt bytes were not independently escrowed.",
+    "Gateway bills are platform-reported request costs; their deduction from any sponsor credit grant was not independently established.",
+    "Reported total tokens are approximate, no input/output split was displayed, full gateway trace IDs were not exposed.",
+    "Gate Keeper made an incorrect subsidiary claim about size=0 causing an infinite loop. Automated location matching does not validate explanations.",
+    "No model repair, self-learning, autonomous tooling, tenant interaction or source writes occurred."
+  ]
+}
