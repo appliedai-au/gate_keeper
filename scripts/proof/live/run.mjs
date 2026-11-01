@@ -222,6 +222,17 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_ON_TRUEFOUNDRY", models: route.offending });
     return { blocked: "MODEL_NOT_ON_TRUEFOUNDRY", preflight };
   }
+  // A role model marked pending_calibration (the owner-chosen replacement grader) may grade nothing until it is
+  // calibrated. Only an explicit calibration run may use it; pointing GK_PROOF_ADJUDICATOR_MODEL at it does not help.
+  const pendingModels = Object.values(roleConfig).filter((r) => r?.status === "pending_calibration").map((r) => r.model);
+  const calibrationRun = pendingModels.includes(adjudicatorModel);
+  if (calibrationRun && env.GK_PROOF_CALIBRATION_RUN !== "1") {
+    emit("GK_PROOF_BLOCKED", { reason: "ADJUDICATOR_CALIBRATION_PENDING", model: adjudicatorModel });
+    return { blocked: "ADJUDICATOR_CALIBRATION_PENDING", preflight };
+  }
+  // A calibration run is stamped everywhere it is published and can never be a PASS (validatePublicProof enforces it).
+  const adjudicatorCalibration = calibrationRun ? "pending" : "calibrated";
+  if (calibrationRun) limitations.push(`CALIBRATION RUN: grader ${adjudicatorModel} is pending calibration; these results are calibration evidence only, not a release proof`);
   const sessionModel = new Map();
 
   // ---------- model call wrapper: reserve -> create turn -> poll -> settle ----------
@@ -291,7 +302,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     limitations.push(adjudicatorModel === model ? "Adjudicator is a separate, blinded TrueForge session on the same model as the candidates" : `Adjudicator is a separate, blinded session on a different model (${adjudicatorModel}) from the same provider family, not a human`);
     limitations.push("Holdouts were written by the evaluator (Claude), not by an independent party");
     const hashes = instructionHashes();
-    const publicData = { mode: "learn", run_id: runId, source_commit: sourceCommit, preflight, candidate_model: model, adjudicator_model: adjudicatorModel, learning_model: learningModel, learning: learning.public, budget: budget.snapshot(),
+    const publicData = { mode: "learn", run_id: runId, source_commit: sourceCommit, preflight, candidate_model: model, adjudicator_model: adjudicatorModel, adjudicator_calibration: adjudicatorCalibration, learning_model: learningModel, learning: learning.public, budget: budget.snapshot(),
       sessions: sessions.map((s) => ({ id: s.id, phase: s.phase, arm: s.arm, trial: s.trial, role: s.role })), blockers, limitations,
       hashes: { ...hashes, ...learning.hashes, evidence_manifest_sha256: manifest.sha256 },
       evidence_items: manifest.body.items.map(({ kind, path, sha256: h, bytes }) => ({ kind, path, sha256: h, bytes })), upload, elapsed_ms: now() - t0 };
@@ -351,7 +362,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     result: "INCONCLUSIVE",
     source: { repository: "appliedai-au/gate_keeper", gate_keeper_commit: sourceCommit, baseline_instructions_sha256: hashes.baseline_instructions_sha256,
       gate_keeper_instructions_sha256: hashes.gate_keeper_instructions_sha256, scorer_sha256: hashes.scorer_sha256 },
-    environment: { trueforge_version: TRUEFORGE_RUNTIME, model_id: model, adjudicator_model_id: adjudicatorModel, arm_models: Object.fromEntries(compArms.map((a) => [a, modelFor(a)])), drill_arm_repair_models: Object.fromEntries(drillArms.map((a) => [a, repairerFor(a)])), provider: model.split("/")[0], sandbox_provider: preflight.sandbox_enabled ? "trueforge-configured" : "none (disposable runner clone)" },
+    environment: { trueforge_version: TRUEFORGE_RUNTIME, model_id: model, adjudicator_model_id: adjudicatorModel, adjudicator_calibration: adjudicatorCalibration, arm_models: Object.fromEntries(compArms.map((a) => [a, modelFor(a)])), drill_arm_repair_models: Object.fromEntries(drillArms.map((a) => [a, repairerFor(a)])), provider: model.split("/")[0], sandbox_provider: preflight.sandbox_enabled ? "trueforge-configured" : "none (disposable runner clone)" },
     benchmark: { id: `public evals/tasks (${publicTasks.length}) + owner-private holdout (${holdout.tasks.length})`, sha256: sha256(publicBenchmarkSha(publicTasks) + ":" + (holdout.sha256 || "none")), holdout_private: true },
     fairness: { same_model: true, same_provider: true, same_inputs: true, same_scoring: true, same_limits: true },
     arms: { baseline: pick(arms.baseline.all) || emptyArm(), gate_keeper: pick(arms.gate_keeper.all) || emptyArm() },

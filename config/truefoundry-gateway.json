@@ -1,0 +1,33 @@
+{
+  "schema": "gate-keeper-truefoundry-gateway-v1",
+  "organisation": "stranger-builds",
+  "gatewayBaseUrl": "https://stranger-builds.truefoundry.cloud/api/llm",
+  "trueForgeProviderType": "truefoundry",
+  "trueForgeProviderName": "truefoundry",
+  "upstreamProviderAccount": "tfy-managed",
+  "modelsVisibleInOwnerAccount": [
+    "claude-sonnet-5-5",
+    "claude-opus-5-5"
+  ],
+  "activeRoleMappings": {
+    "reviewer": "truefoundry/claude-sonnet-5-5",
+    "repair": "truefoundry/claude-sonnet-5-5",
+    "learning": "truefoundry/claude-opus-5-5",
+    "adjudicator": "truefoundry/claude-opus-5-5"
+  },
+  "blockedUntilQualified": {
+    "triage": "Model not selected or qualified."
+  },
+  "release": {
+    "active": false,
+    "gatewayVirtualAccountRequired": true,
+    "independentSponsorCreditAndBillingAttestationRequired": true,
+    "gatewayEnforcedCumulativeBudgetRequired": true,
+    "roleModelQualificationRequired": true,
+    "signedIndependentVerdictRequired": true,
+    "allowSilentFallback": false,
+    "allowPaidInferenceInSetup": false,
+    "productionChangeApproved": false
+  },
+  "adjudicatorCalibration": "Owner chose Opus 5.5 as grader on 2026-11-01 because Fable 5.1 is not in the gateway catalogue. It must be calibrated against the Fable 5.1 judgements of run gk-live-20261101-g before any re-baseline is accepted."
+}

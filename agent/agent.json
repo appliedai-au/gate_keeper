@@ -2,7 +2,7 @@
   "name": "gate-keeper",
   "description": "Read-only code review agent: identifies concrete problems in proposed code changes, without executing repairs or accessing production systems.",
   "model": {
-    "name": "anthropic/claude-sonnet-5-5",
+    "name": "truefoundry/claude-sonnet-5-5",
     "params": {
       "temperature": 0
     }

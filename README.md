@@ -29,7 +29,7 @@ Gate Keeper reviews proposed code changes, identifies substantive defects and re
        Reviewed promotion PR     <-- NEVER automatic
 ```
 
-The example agent in [`agent/`](agent/) is a **read-only code reviewer**. Its default manifest names `anthropic/claude-sonnet-5-5`. Models are chosen per role on measured merit and recorded in [`agent/models.json`](agent/models.json): reviewer and repair Sonnet 5.5, grader/gate Fable 5.1, learning Opus 5.5. The locked reference results are in [`proof/baseline.json`](proof/baseline.json) (run `gk-live-20261101-g`). Models are reached only through TrueForge's model catalogue (optionally TrueFoundry AI Gateway); Gate Keeper holds no provider credentials. The Railway-hosted TrueForge used for the proof runs is temporary: the harness accepts any owner-approved https TrueForge host (`GK_TRUEFORGE_APPROVED_HOSTS` plus `TRUEFORGE_TOKEN`). A model name is a configuration value, **not proof that the model is enabled or billed** on a particular TrueForge instance.
+The example agent in [`agent/`](agent/) is a **read-only code reviewer**. Its default manifest names `truefoundry/claude-sonnet-5-5`. **The agent operates only through TrueFoundry** (the AI Gateway: the owner's account or the stranger-builds allowance, see [`config/truefoundry-gateway.json`](config/truefoundry-gateway.json)); the proof harness refuses, before any spend, a model not served by a `truefoundry` provider. Models are chosen per role on measured merit and recorded in [`agent/models.json`](agent/models.json): reviewer and repair Sonnet 5.5, learning Opus 5.5, grader/gate Opus 5.5 (owner decision: the baseline grader Fable 5.1 is not on the gateway; held until calibrated against the Fable 5.1 judgements). The locked reference results are in [`proof/baseline.json`](proof/baseline.json) (run `gk-live-20261101-g`, graded by Fable 5.1 over the then-direct route). Gate Keeper holds no provider credentials. The Railway-hosted TrueForge used for the proof runs is temporary: the harness accepts any owner-approved https TrueForge host (`GK_TRUEFORGE_APPROVED_HOSTS` plus `TRUEFORGE_TOKEN`). A model name is a configuration value, **not proof that the model is enabled or billed** on a particular TrueForge instance.
 
 ### Ownership boundaries
 
@@ -61,6 +61,12 @@ npm run providers:status
 ```
 
 The source-only suite tests policy, private evidence boundaries, model-routing guards, benchmark integrity and negative security cases. It does **not** test a real model's defect-detection accuracy or a live independent gateway.
+
+### Stranger Builds TrueFoundry Gateway (operator-staged, not active)
+
+The owner has an active `stranger-builds` TrueFoundry account and has seen TrueFoundry-managed models in the gateway. A **native TrueForge provider bridge** is staged in [the cutover runbook](docs/truefoundry-gateway-cutover.md), using `config/truefoundry-gateway.json` and `npm run gateway:status`. The command is **read-only** and never invokes paid models, creates keys, or changes the deployed agent. Its current status is **HELD**: no dedicated virtual-account credential, gateway-enforced spend/credit attestation or calibrated grader exists in the evidence (Opus 5.5 is the owner's chosen grader, pending calibration against Fable 5.1).
+
+**Claude's engineering work stays on its subscription.** The TrueFoundry gateway is a separate possible Gate Keeper *runtime* provider, not an instruction to bill the developer subscription via API. The agent operates only through TrueFoundry: the direct `anthropic` provider was removed from TrueForge on 2026-11-01, and no fallback to a direct paid API is permitted. Until a signed release/cost decision, Railway production configuration is otherwise unchanged.
 
 ### Connect to TrueForge
 

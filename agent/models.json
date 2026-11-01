@@ -4,24 +4,28 @@
   "basis": "proof/submissions/gk-live-20261101-g",
   "roles": {
     "reviewer": {
-      "model": "anthropic/claude-sonnet-5-5",
+      "model": "truefoundry/claude-sonnet-5-5",
       "why": "48/48 key issues, 7 false positives (plain reviewer 15); Opus 5.5 gave 6 at ~2.4x cost"
     },
     "repair": {
-      "model": "anthropic/claude-sonnet-5-5",
+      "model": "truefoundry/claude-sonnet-5-5",
       "why": "6/6 fixtures first attempt; Opus 5.5 repairer showed no gain"
     },
     "adjudicator": {
-      "model": "anthropic/claude-fable-5-1",
-      "why": "Grades and gates: strongest available and never a model under test"
+      "model": "truefoundry/claude-opus-5-5",
+      "why": "Grades and gates. Fable 5.1 (the baseline grader) is not on the TrueFoundry gateway; Opus 5.5 is the strongest model there and is not the reviewer under test (Sonnet 5.5).",
+      "status": "pending_calibration",
+      "calibration": "Before re-baselining, re-grade the locked run gk-live-20261101-g findings with Opus 5.5 and compare against the Fable 5.1 judgements; adopt only if agreement holds on matched key issues and false positives."
     },
     "learning": {
-      "model": "anthropic/claude-opus-5-5",
+      "model": "truefoundry/claude-opus-5-5",
       "why": "Lesson capture and shared-rule selection: low volume, judgement-heavy, errors spread to every tenant"
     },
     "triage": {
       "model": null,
       "why": "Haiku 5.5 missed 5-8/48 key issues reviewing alone; triage in front of the reviewer is untested"
     }
-  }
+  },
+  "route": "truefoundry",
+  "route_note": "The agent operates only through TrueFoundry: the owner's account or the stranger-builds allowance (config/truefoundry-gateway.json). Model ids are <TrueForge provider>/<model>. Direct provider keys are not used."
 }

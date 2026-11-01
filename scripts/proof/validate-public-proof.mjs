@@ -40,6 +40,9 @@ export function validatePublicProof(v){
  digest(v.source.scorer_sha256,"scorer_sha256");
  if(!obj(v.environment))fail("environment missing");
  for(const f of ["trueforge_version","model_id","provider","sandbox_provider"])field(v.environment[f],"environment."+f);
+ // A run graded by a grader that is still pending calibration is calibration evidence only.
+ if(v.environment.adjudicator_calibration!==undefined&&!["calibrated","pending"].includes(v.environment.adjudicator_calibration))fail("environment.adjudicator_calibration invalid");
+ if(v.environment.adjudicator_calibration==="pending"&&v.result==="PASS")fail("a run graded by a pending-calibration grader cannot be a PASS");
  if(!obj(v.benchmark))fail("benchmark missing");
  field(v.benchmark.id,"benchmark.id");digest(v.benchmark.sha256,"benchmark.sha256");
  if(v.benchmark.holdout_private!==true)fail("holdout privacy not attested");
