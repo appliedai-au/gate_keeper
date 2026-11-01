@@ -161,8 +161,8 @@ test("no signature: zero metadata calls and zero sessions; valid synthetic recei
     put:(...args)=>{published.push(args);},
     upload:async()=>({uploaded:true,reference:"private://smoke/evidence",manifest_sha256:"a".repeat(64)}),
   };
-  const claimRunOnce=async()=>{calls.push("claimRunOnce");};
-  const common={tf,publicKeyPem:pem,pinnedKeySha256:fingerprint,sourceCommit:sha,runId,model,now:()=>now,claimRunOnce,evidenceStore:store};
+  const claimRunOnce=async()=>{calls.push("claimRunOnce");return {created:true};};
+  const common={tf,publicKeyPem:pem,pinnedKeySha256:fingerprint,sourceCommit:sha,runId,model,now:()=>now,claimRunOnce,evidenceStore:store,railwayEnv:{RAILWAY_PROJECT_ID:"a8f4c4a4-0f32-4166-ba92-dad9baf2b652",RAILWAY_ENVIRONMENT_ID:"03fb9181-2f19-409b-a9b1-823cb32e56c2",RAILWAY_ENVIRONMENT_NAME:"qualification",RAILWAY_GIT_COMMIT_SHA:sha}};
   await assert.rejects(runPairedSmoke({...common,signedEvidence:{...signed(),signature:"bad"}}),/SPONSOR_RECEIPT_SIGNATURE_INVALID/);
   assert.deepEqual(calls,[]);
   const result=await runPairedSmoke({...common,signedEvidence:signed()});
@@ -174,4 +174,5 @@ test("no signature: zero metadata calls and zero sessions; valid synthetic recei
   assert.equal(result.actual_gateway_billing_usd,null);
   assert.equal(result.localBudget.calls,2);
   assert.equal(published.filter(p=>p[0].startsWith("private/reviews/")).length,2);
+  assert.equal(published.filter(p=>p[0].startsWith("private/scores/")).length,2);
 });
