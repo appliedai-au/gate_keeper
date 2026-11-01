@@ -31,7 +31,7 @@ export default function GateKeeperBenchmark({ section = "Runs" }) {
         <h2 style={{ fontSize: 20, margin: "10px 0 8px" }}>DeepSeek v4 Flash — four reviews per method</h2>
         <p style={{ fontSize: 13, lineHeight: 1.6 }}>
           {study.agents.map((arm) => arm.label + ": " + arm.observedRounds + "/" + arm.requiredRounds).join("  ·  ")}.
-          Six review calls still need gateway evidence. Separate own-model learning calls have not been observed.
+          {study.reviewTurnsMissing} review calls still need gateway evidence. Learning status: {study.learningStatus}.
         </p>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", minWidth: 440, borderCollapse: "collapse", fontSize: 12 }}>
