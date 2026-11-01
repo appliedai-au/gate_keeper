@@ -1,0 +1,82 @@
+{
+  "schema": "gate-keeper-public-proof-v1",
+  "run_id": "gk-live-20261101-d",
+  "submitted_at": "2026-10-31T22:47:44.295Z",
+  "result": "INCONCLUSIVE",
+  "source": {
+    "repository": "appliedai-au/gate_keeper",
+    "gate_keeper_commit": "f527ea05c307f12502c742ae0353a255b8f2a365",
+    "baseline_instructions_sha256": "59cd16ce41a81706f387efe3972e6f1e1a7c518f821f8ffa3ac37789eeb70741",
+    "gate_keeper_instructions_sha256": "cada3295fe49d0a032b99afe21da9f554cc5031e9c0079b25b117c3cd14bb685",
+    "scorer_sha256": "8096f1c871b327ba425ff3368cec34fbac400f777a4061f2ff7ae6ac55aecefd"
+  },
+  "environment": {
+    "trueforge_version": "@truefoundry/trueforge@0.180.0",
+    "model_id": "anthropic/claude-sonnet-4-6",
+    "provider": "anthropic",
+    "sandbox_provider": "none (disposable runner clone)"
+  },
+  "benchmark": {
+    "id": "public evals/tasks (4) + owner-private holdout (4)",
+    "sha256": "04a98b4318b5caf54e39c82a1e2324df21dd759b0e05c08c10ded76106422e71",
+    "holdout_private": true
+  },
+  "fairness": {
+    "same_model": true,
+    "same_provider": true,
+    "same_inputs": true,
+    "same_scoring": true,
+    "same_limits": true
+  },
+  "arms": {
+    "baseline": {
+      "trials": 3,
+      "defect_recall": 0.9841,
+      "precision": 0.8481,
+      "explanation_correctness": 1,
+      "severity_accuracy": 0.3548,
+      "median_latency_ms": 15068.5,
+      "total_tokens": 76618,
+      "actual_cost_usd": null
+    },
+    "gate_keeper": {
+      "trials": 3,
+      "defect_recall": 1,
+      "precision": 0.8205,
+      "explanation_correctness": 1,
+      "severity_accuracy": 0.6667,
+      "median_latency_ms": 16266,
+      "total_tokens": 59397,
+      "actual_cost_usd": null
+    }
+  },
+  "loop": {
+    "adversarial_review": "PASS",
+    "sandbox_repair": "PASS",
+    "v_model_validation": "PASS",
+    "polling": "PASS",
+    "post_repair_review": "PASS",
+    "rollback_failure_drill": "PASS",
+    "user_lesson_capture": "PASS",
+    "core_candidate_selection": "PASS",
+    "independent_qualification": "BLOCKED"
+  },
+  "evidence": [
+    {
+      "kind": "private_evidence_manifest",
+      "private_reference": "railway-bucket://gk-proof-evidence-kylc9za/gate-keeper-proof/gk-live-20261101-d/",
+      "sha256": "dc6d0030a4edd3bc96d49ea6313140d1811b54be66ca305eca6ffd6359e977d0"
+    }
+  ],
+  "blockers": [
+    "No independent verifier/signing identity: qualification cannot be signed, so no PASS is claimable",
+    "No independent budget gateway lease: spend was capped by the evaluator process (outside the agents), not a signed gateway"
+  ],
+  "limitations": [
+    "Adjudicator is a separate, blinded TrueForge session on the same model as the candidates, not a human or a different model family",
+    "actual_cost_usd is TrueForge's per-turn cost estimate (turn metrics), not a provider billing statement",
+    "Node permission sandbox confines candidate file reads but not network sockets; network access by candidate code is blocked only by the patch denylist",
+    "Re-review gate precision is judged by a same-model blinded adjudicator session",
+    "TrueForge sandbox provider not enabled; candidate patches were validated in a disposable clone inside the one-shot runner container"
+  ]
+}

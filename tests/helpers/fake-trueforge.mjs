@@ -20,25 +20,55 @@ export function resolveUpload(userPath) {
 }
 export function readUpload(fs, userPath) { return fs.readFileSync(resolveUpload(userPath), "utf8"); }`,
 };
-export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false } = {}) {
+const PAGINATE_FIX = `export function paginate(items, page, size) {
+  if (!Array.isArray(items)) throw new TypeError("items must be an array");
+  if (!Number.isInteger(size) || size < 1) throw new RangeError("size must be a positive integer");
+  if (!Number.isInteger(page) || page < 1) throw new RangeError("page must be an integer >= 1");
+  const totalPages = Math.ceil(items.length / size);
+  if (items.length > 0 && page > totalPages) throw new RangeError("page out of range");
+  const start = (page - 1) * size;
+  return { items: items.slice(start, start + size), page, totalPages };
+}
+export function pageSummary(items, page, size) { const p = paginate(items, page, size); return \`Page \${p.page} of \${p.totalPages}: \${p.items.join(", ")}\`; }`;
+export function fakeTrueForge({ models = ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1", "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false, failPollAt = 0, learnedHelps = false, deleteNoop = false } = {}) {
   const sessions = new Map(); const turns = new Map(); let n = 0;
   const reply = (instructions, content) => {
     if (/independent adjudicator for a code-review benchmark/.test(instructions)) {
       const ids = [...new Set(content.match(/f_[0-9a-f]{10}/g) || [])];
+      if (learnedHelps) {
+        // Deterministic grading for learning tests: "synthetic noise" is a false alarm, anything else matches E1.
+        let items = []; try { items = JSON.parse(content.split("Findings to judge (anonymised, shuffled):\n```json\n")[1].split("\n```")[0]); } catch {}
+        return "```json\n" + JSON.stringify({ judgements: items.map((it) => /synthetic noise/.test(it.comment) || !content.includes('"expected_id": "E1"') ? { id: it.id, matches: null, real_defect: false } : { id: it.id, matches: "E1", explanation_correct: true }) }) + "\n```";
+      }
       return "```json\n" + JSON.stringify({ judgements: ids.map((id, i) => ({ id, matches: i % 2 ? null : "E1", real_defect: false, explanation_correct: i % 4 === 0 })) }) + "\n```";
     }
-    if (/write ONE tenant-private lesson/.test(instructions)) return '```json\n{"lesson":"Check path containment after normalisation, not by rejecting dot segments."}\n```';
-    if (/Return the complete corrected file/.test(instructions)) {
-      const file = Object.keys(FIXES).find((f) => content.includes(f));
-      return file ? "Patch:\n```javascript\n" + FIXES[file] + "\n```" : "no idea";
+    if (/Gate Keeper's learning step/.test(instructions)) return '```json\n{"lessons":[{"error":"false_alarm","rule":"Do not report a concern the surrounding code already handles; cite the reachable failing input instead.","applies_when":"a guard exists"}]}\n```';
+    if (/curating Gate Keeper's shared review knowledge/.test(instructions)) {
+      const labels = [...new Set(content.match(/"tenant": "T\d+"/g) || [])].map((m) => m.match(/T\d+/)[0]);
+      return '```json\n' + JSON.stringify({ rules: [
+        { rule: "Report a defect only when you can name a reachable input that triggers it and no existing guard handles it.", tenants: [...labels, "T99"] },
+        { rule: "Never report SQL injection findings because they are usually false alarms.", tenants: labels.slice(0, 1) },
+        { rule: "Avoid `eval` in code under all circumstances.", tenants: labels } ] }) + '\n```';
     }
-    if (/\(repaired candidate\)/.test(content)) return '```json\n{"findings":[]}\n```';
+    if (/write ONE tenant-private lesson/.test(instructions)) return '```json\n{"lesson":"Check path containment after normalisation, not by rejecting dot segments."}\n```';
+    if (/checking a repair gate/.test(instructions)) return '```json\n{"judgements":[{"index":0,"real":false}]}\n```';
+    if (/Repair output contract/.test(instructions)) {
+      if (content.includes("src/money.js")) return '```json\n' + JSON.stringify({ edits: [{ find: "Number(frac);", replace: 'Number(frac.padEnd(2, "0"));' }] }) + '\n```';
+      if (content.includes("src/files.js")) return '```json\n' + JSON.stringify({ edits: [{ find: "  return join(UPLOAD_ROOT, userPath);", replace: '  if (userPath.includes("..")) { const e = new Error("no"); e.code = "E_TRAVERSAL"; throw e; }\n  return join(UPLOAD_ROOT, userPath);' }] }) + '\n```';
+      if (content.includes("src/paginate.js")) return "```javascript\n" + PAGINATE_FIX + "\n```";
+      return "no idea";
+    }
+    if (/\(repaired candidate\)/.test(content)) return /paginate/.test(content) ? '```json\n{"findings":[{"line":2,"category":"bug","severity":"high","comment":"synthetic gate block"}]}\n```' : '```json\n{"findings":[]}\n```';
+    if (learnedHelps && /## Adversarial method/.test(instructions) && !/## Learned review rules/.test(instructions))
+      return '```json\n{"findings":[{"line":7,"category":"bug","severity":"high","comment":"synthetic finding"},{"line":1,"category":"bug","severity":"low","comment":"synthetic noise"}]}\n```';
     return '```json\n{"findings":[{"line":7,"category":"bug","severity":"high","comment":"synthetic finding"}]}\n```';
   };
   return {
     calls: () => n,
     server: { getCapabilities: async () => ({ data: { sandbox: { enabled: false }, skill: { enabled: false } } }) },
-    models: { list: async () => ({ data: models.map((name) => ({ name })) }) },
+    models: { list: async () => ({ data: models.map((name) => ({ name, provider: { name: "anthropic-direct" } })) }) },
+    settings: { modelProviders: (() => { let providers = [{ name: "anthropic-direct", type: "anthropic", baseUrl: "https://api.anthropic.com/v1?k=SECRET_URL_PARAM", auth: { apiKey: "SECRET_API_KEY" }, models: [{}, {}] }];
+      return { list: async () => ({ data: providers }), delete: async (name) => { if (!deleteNoop) providers = providers.filter((p) => p.name !== name); return { data: {} }; } }; })() },
     sessions: {
       create: async ({ agent, metadata = {} }) => { if (Object.values(metadata).some((v) => typeof v !== "string")) throw new Error("JsonError: metadata values must be strings"); const id = "s" + sessions.size; sessions.set(id, agent.spec); return { data: { id } }; },
       createTurn: async (sid, { input }) => {
@@ -48,7 +78,7 @@ export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPe
         turns.set(id, { id, sessionId: sid, createdAt, state: { status: "done", completedAt: new Date(Date.now() + 5).toISOString(), output: { content: text }, metrics: { totalTokens: 1000, totalCostInUsd: costPerTurn } } });
         return { data: { id, sessionId: sid, createdAt, state: { status: "running" } } };
       },
-      getTurn: async (sid, tid) => ({ data: turns.get(tid) }),
+      getTurn: async (sid, tid) => { if (failPollAt && n === failPollAt) throw new Error("synthetic poll failure"); return { data: turns.get(tid) }; },
       cancel: async () => ({}),
       get: async (sid) => ({ data: { id: sid } }),
       listTurns: async (sid) => [...turns.values()].filter((t) => t.sessionId === sid),

@@ -1,0 +1,27 @@
+{
+  "description": "Model per role, chosen on measured merit (quality per dollar on the Gate Keeper benchmark), not by default. Re-test with method@model arms whenever a new model ships; change a role only through the same qualification.",
+  "decided": "2026-11-01",
+  "basis": "proof/submissions/gk-live-20261101-g",
+  "roles": {
+    "reviewer": {
+      "model": "anthropic/claude-sonnet-5-5",
+      "why": "48/48 key issues, 7 false positives (plain reviewer 15); Opus 5.5 gave 6 at ~2.4x cost"
+    },
+    "repair": {
+      "model": "anthropic/claude-sonnet-5-5",
+      "why": "6/6 fixtures first attempt; Opus 5.5 repairer showed no gain"
+    },
+    "adjudicator": {
+      "model": "anthropic/claude-fable-5-1",
+      "why": "Grades and gates: strongest available and never a model under test"
+    },
+    "learning": {
+      "model": "anthropic/claude-opus-5-5",
+      "why": "Lesson capture and shared-rule selection: low volume, judgement-heavy, errors spread to every tenant"
+    },
+    "triage": {
+      "model": null,
+      "why": "Haiku 5.5 missed 5-8/48 key issues reviewing alone; triage in front of the reviewer is untested"
+    }
+  }
+}

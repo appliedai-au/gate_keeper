@@ -52,17 +52,46 @@ export function extractReplacementFile(reply) {
   return blocks.length ? blocks[blocks.length - 1] : null;
 }
 
+/**
+ * Resolve a repair reply against the current source. Preferred format: the
+ * last ```json block {"edits":[{find, replace}]}, each find matching exactly
+ * once (applied in order). Fallback: a complete ```javascript file.
+ */
+export function extractPatch(reply, source) {
+  const blocks = [...String(reply || "").matchAll(/```json\s*\n([\s\S]*?)```/g)].map((m) => m[1]);
+  for (const raw of blocks.reverse()) {
+    let obj; try { obj = JSON.parse(raw.trim()); } catch { continue; }
+    if (!obj || !Array.isArray(obj.edits)) continue;
+    if (!obj.edits.length) return { content: null, format: "edits", reason: "NO_EDITS" };
+    let out = source;
+    for (const e of obj.edits) {
+      if (!e || typeof e.find !== "string" || typeof e.replace !== "string" || !e.find) return { content: null, format: "edits", reason: "EDIT_INVALID" };
+      const first = out.indexOf(e.find);
+      if (first < 0) return { content: null, format: "edits", reason: "EDIT_NOT_FOUND" };
+      if (out.indexOf(e.find, first + 1) >= 0) return { content: null, format: "edits", reason: "EDIT_AMBIGUOUS" };
+      out = out.slice(0, first) + e.replace + out.slice(first + e.find.length);
+    }
+    return { content: out, format: "edits", edits: obj.edits.length };
+  }
+  const full = extractReplacementFile(reply);
+  return full ? { content: full, format: "full_file" } : { content: null, format: "none", reason: "NO_PATCH" };
+}
+
 // Defence in depth only: the real boundary is the Node permission sandbox in runLevel.
 const FORBIDDEN = [
   [/\beval\s*\(|\bFunction\s*\(|\bimport\s*\(/, "dynamic code execution or import"],
-  [/["'](?:node:)?(?:fs|child_process|worker_threads|vm|net|http|https|http2|dgram|tls|dns|os|module|inspector|cluster|process|v8|wasi)(?:\/[^"']*)?["']/, "restricted core module"],
+  // Module names count only where something is imported (static import/export-from, side-effect
+  // import, require); a plain string such as an allow-list entry "http" is not an import.
+  [/(?:\bfrom\s*|\bimport\s*|\brequire\s*\(\s*)["'](?:node:)?(?:fs|child_process|worker_threads|vm|net|http|https|http2|dgram|tls|dns|os|module|inspector|cluster|process|v8|wasi)(?:\/[^"']*)?["']/, "restricted core module"],
   [/\bprocess\s*[.[]|\bglobalThis\b|\brequire\s*\(|\bfetch\s*\(|XMLHttpRequest|WebSocket|\bBun\b|\bDeno\b/, "process, global or network access"],
 ];
 
 /** Apply an agent patch to a candidate clone, bounded by path, size and API rules. */
 export function applyBoundedPatch(candidate, v, content) {
   if (typeof content !== "string" || !content.trim()) return { applied: false, reason: "NO_PATCH" };
-  for (const [re, why] of FORBIDDEN) if (re.test(content)) return { applied: false, reason: "FORBIDDEN_API: " + why };
+  // Check both the raw text and a comment-stripped copy so comments cannot split a pattern.
+  const stripped = content.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1 ");
+  for (const [re, why] of FORBIDDEN) if (re.test(content) || re.test(stripped)) return { applied: false, reason: "FORBIDDEN_API: " + why };
   writeFileSync(join(candidate, v.file), content.endsWith("\n") ? content : content + "\n");
   // Tracked modifications plus any untracked files (never parse trimmed porcelain output).
   const changedPaths = [...git(candidate, "diff", "--name-only").split("\n"), ...git(candidate, "ls-files", "--others", "--exclude-standard").split("\n")].filter(Boolean);

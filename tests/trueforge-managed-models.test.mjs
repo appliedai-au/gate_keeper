@@ -25,18 +25,13 @@ test("TrueForge model catalog must approve configured managed choice before sync
  assert.match(setup,/GK_MODEL_PROVIDER==="trueforge"/);
  assert.match(setup,/Approved managed model is not registered in TrueForge/);
 });
-test("managed provider is preferred, but existing default remains and local OAuth is optional",()=>{
+test("TrueForge is the only provider route; legacy adapter routes fail closed",()=>{
  assert.equal(resolveTrueForgeModel({}),undefined);
+ for(const p of ["chatgpt","chatgpt_oauth","deepseek","openai"])
+  assert.throws(()=>resolveTrueForgeModel({GK_MODEL_PROVIDER:p,GK_TRUEFORGE_MODEL:"anthropic/claude-sonnet-4-6"}),/unapproved model provider/);
  const status=readFileSync(new URL("../scripts/providers/status.mjs",import.meta.url),"utf8");
- assert.match(status,/connectionPolicy:"trueforge-first"/);
- assert.match(status,/localOpenSourcePlanConnection:"OPT_IN"/);
- assert.match(status,/hostedInference:"NOT_AUTHORISED"/);
- assert.doesNotMatch(status,/credentialPresentLocally/);
- assert.doesNotMatch(status,/apiKeyPresentHere/);
-});
-test("per-user ChatGPT plan must never be treated as managed TrueForge credentials",()=>{
- assert.throws(()=>resolveTrueForgeModel({GK_MODEL_PROVIDER:"chatgpt",
-   GK_TRUEFORGE_MODEL:"anthropic/claude-sonnet-4-6"}),/unapproved model provider/);
+ assert.match(status,/connectionPolicy:"trueforge-only"/);
+ assert.doesNotMatch(status,/apiKeyPresentHere|credentialPresentLocally|connect:chatgpt/);
 });
 
 test("all TrueForge agent sync paths verify managed model before writing",()=>{
