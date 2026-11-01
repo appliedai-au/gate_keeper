@@ -62,6 +62,12 @@ npm run providers:status
 
 The source-only suite tests policy, private evidence boundaries, model-routing guards, benchmark integrity and negative security cases. It does **not** test a real model's defect-detection accuracy or a live independent gateway.
 
+### Stranger Builds TrueFoundry Gateway (operator-staged, not active)
+
+The owner has an active `stranger-builds` TrueFoundry account and has seen TrueFoundry-managed models in the gateway. A **native TrueForge provider bridge** is staged in [the cutover runbook](docs/truefoundry-gateway-cutover.md), using `config/truefoundry-gateway.json` and `npm run gateway:status`. The command is **read-only** and never invokes paid models, creates keys, or changes the deployed agent. Its current status is **HELD**: no dedicated virtual-account credential, gateway-enforced spend/credit attestation or independently qualified adjudicator exists in the evidence.
+
+**Claude's engineering work stays on its subscription.** The TrueFoundry gateway is a separate possible Gate Keeper *runtime* provider, not an instruction to bill the developer subscription via API. Until a signed release/cost decision, existing `anthropic/*` routes and Railway production configuration are unchanged; no fallback to a paid API is permitted.
+
 ### Connect to TrueForge
 
 Start your own local TrueForge instance separately if you do not already have one:
