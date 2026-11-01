@@ -64,9 +64,9 @@ The source-only suite tests policy, private evidence boundaries, model-routing g
 
 ### Stranger Builds TrueFoundry Gateway (operator-staged, not active)
 
-The owner has an active `stranger-builds` TrueFoundry account and has seen TrueFoundry-managed models in the gateway. A **native TrueForge provider bridge** is staged in [the cutover runbook](docs/truefoundry-gateway-cutover.md), using `config/truefoundry-gateway.json` and `npm run gateway:status`. The command is **read-only** and never invokes paid models, creates keys, or changes the deployed agent. Its current status is **HELD**: no dedicated virtual-account credential, gateway-enforced spend/credit attestation or independently qualified adjudicator exists in the evidence.
+The owner has an active `stranger-builds` TrueFoundry account and has seen TrueFoundry-managed models in the gateway. A **native TrueForge provider bridge** is staged in [the cutover runbook](docs/truefoundry-gateway-cutover.md), using `config/truefoundry-gateway.json` and `npm run gateway:status`. The command is **read-only** and never invokes paid models, creates keys, or changes the deployed agent. Its current status is **HELD**: no dedicated virtual-account credential, gateway-enforced spend/credit attestation or calibrated grader exists in the evidence (Opus 5.5 is the owner's chosen grader, pending calibration against Fable 5.1).
 
-**Claude's engineering work stays on its subscription.** The TrueFoundry gateway is a separate possible Gate Keeper *runtime* provider, not an instruction to bill the developer subscription via API. Until a signed release/cost decision, existing `anthropic/*` routes and Railway production configuration are unchanged; no fallback to a paid API is permitted.
+**Claude's engineering work stays on its subscription.** The TrueFoundry gateway is a separate possible Gate Keeper *runtime* provider, not an instruction to bill the developer subscription via API. The agent operates only through TrueFoundry: the direct `anthropic` provider was removed from TrueForge on 2026-11-01, and no fallback to a direct paid API is permitted. Until a signed release/cost decision, Railway production configuration is otherwise unchanged.
 
 ### Connect to TrueForge
 

@@ -360,14 +360,14 @@ test("learning: qualification detects a swapped key issue (identity, not counts)
 });
 
 test("adjudication can run on a different registered model, priced at that model's rates; unregistered adjudicator blocks", () => {
-  const models = ["truefoundry/claude-sonnet-5-5", "truefoundry/claude-opus-5-5"];
-  const r = e2e({ env: { GK_PROOF_MODE: "learn", GK_PROOF_ADJUDICATOR_MODEL: "truefoundry/claude-opus-5-5" }, fake: { learnedHelps: true, models } });
+  const models = ["truefoundry/claude-sonnet-5-5", "truefoundry/claude-opus-5-5", "truefoundry/claude-fable-5-1"];
+  const r = e2e({ env: { GK_PROOF_MODE: "learn", GK_PROOF_ADJUDICATOR_MODEL: "truefoundry/claude-fable-5-1" }, fake: { learnedHelps: true, models } });
   const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
-  assert.equal(data.adjudicator_model, "truefoundry/claude-opus-5-5");
+  assert.equal(data.adjudicator_model, "truefoundry/claude-fable-5-1");
   const adj = data.sessions.filter((s) => s.role === "adjudicator");
   assert.ok(adj.length >= 3);
-  assert.ok(data.limitations.some((l) => /different model \(truefoundry\/claude-opus-5-5\)/.test(l)));
-  const b = e2e({ env: { GK_PROOF_ADJUDICATOR_MODEL: "truefoundry/claude-opus-5-5" }, fake: { models: ["truefoundry/claude-sonnet-5-5"] } });
+  assert.ok(data.limitations.some((l) => /different model \(truefoundry\/claude-fable-5-1\)/.test(l)));
+  const b = e2e({ env: { GK_PROOF_ADJUDICATOR_MODEL: "truefoundry/claude-fable-5-1" }, fake: { models: ["truefoundry/claude-sonnet-5-5"] } });
   assert.equal(b.out.blocked, "ADJUDICATOR_MODEL_NOT_REGISTERED");
   assert.equal(b.calls, 0);
 });
@@ -383,7 +383,7 @@ test("budget reserves and settles each call at its own model's price", () => {
 test("model comparison arms: method@model runs the same method on another registered model; drill @model selects the repairer", () => {
   const models = ["truefoundry/claude-sonnet-5-5", "truefoundry/claude-fable-5-1", "truefoundry/claude-haiku-5-5", "truefoundry/claude-opus-5-5"];
   const r = e2e({ trials: 1, fake: { models }, env: { GK_PROOF_ARMS: "baseline,gate_keeper,gate_keeper@truefoundry/claude-haiku-5-5",
-    GK_PROOF_DRILL_ARMS: "gate_keeper,gate_keeper@truefoundry/claude-opus-5-5", GK_PROOF_ADJUDICATOR_MODEL: "truefoundry/claude-opus-5-5" } });
+    GK_PROOF_DRILL_ARMS: "gate_keeper,gate_keeper@truefoundry/claude-opus-5-5", GK_PROOF_ADJUDICATOR_MODEL: "truefoundry/claude-fable-5-1" } });
   const summary = decodeChunks(r.lines, "GK_PROOF_PUBLIC_SUMMARY");
   assert.equal(validatePublicProof(summary).valid, true);
   assert.equal(summary.environment.arm_models["gate_keeper@truefoundry/claude-haiku-5-5"], "truefoundry/claude-haiku-5-5");
@@ -421,7 +421,14 @@ test("locked baseline: per-role models in agent/models.json are the harness defa
   for (const r of Object.values(roles)) if (r.model) assert.match(r.model, /^truefoundry\//, "every role runs through TrueFoundry");
   assert.notEqual(roles.adjudicator.model, roles.reviewer.model, "the grader must never be the model under test");
   assert.equal(JSON.parse(readFileSync(join(ROOT, "agent", "agent.json"), "utf8")).model.name, roles.reviewer.model);
-  const r = e2e({ env: { GK_PROOF_MODE: "learn" }, fake: { learnedHelps: true } });
+  // The owner-chosen grader is held until calibrated: a normal run graded by it is refused before any call,
+  // and pointing GK_PROOF_ADJUDICATOR_MODEL at it explicitly does not get round the hold.
+  for (const adj of ["", roles.adjudicator.model]) {
+    const held = e2e({ env: { GK_PROOF_MODE: "learn", GK_PROOF_ADJUDICATOR_MODEL: adj }, fake: { learnedHelps: true } });
+    assert.equal(held.out.blocked, "ADJUDICATOR_CALIBRATION_PENDING");
+    assert.equal(held.calls, 0);
+  }
+  const r = e2e({ env: { GK_PROOF_MODE: "learn", GK_PROOF_ADJUDICATOR_MODEL: "", GK_PROOF_CALIBRATION_RUN: "1" }, fake: { learnedHelps: true } });
   const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
   assert.equal(data.candidate_model, roles.reviewer.model);
   assert.equal(data.adjudicator_model, roles.adjudicator.model);

@@ -222,6 +222,13 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_ON_TRUEFOUNDRY", models: route.offending });
     return { blocked: "MODEL_NOT_ON_TRUEFOUNDRY", preflight };
   }
+  // A role model marked pending_calibration (the owner-chosen replacement grader) may grade nothing until it is
+  // calibrated. Only an explicit calibration run may use it; pointing GK_PROOF_ADJUDICATOR_MODEL at it does not help.
+  const pendingModels = Object.values(roleConfig).filter((r) => r?.status === "pending_calibration").map((r) => r.model);
+  if (pendingModels.includes(adjudicatorModel) && env.GK_PROOF_CALIBRATION_RUN !== "1") {
+    emit("GK_PROOF_BLOCKED", { reason: "ADJUDICATOR_CALIBRATION_PENDING", model: adjudicatorModel });
+    return { blocked: "ADJUDICATOR_CALIBRATION_PENDING", preflight };
+  }
   const sessionModel = new Map();
 
   // ---------- model call wrapper: reserve -> create turn -> poll -> settle ----------
