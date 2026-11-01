@@ -1,0 +1,104 @@
+{
+  "schema": "gate-keeper-public-four-round-progress-v1",
+  "studyId": "gk-deepseek-four-round-20261102",
+  "model": "tfy-managed/deepseek-v4-flash-0731",
+  "channel": "TrueFoundry Playground",
+  "status": "INCOMPLETE_EXPLORATORY_PROMPT_LEARNING",
+  "sourceProof": "gk-playground-deepseek-20261102-a",
+  "existingProofUrl": "https://github.com/appliedai-au/gate_keeper/blob/af012932ad19c39d912a9be924de8ed0c2e10861/proof/submissions/gk-playground-deepseek-20261102-a/report.md",
+  "agents": [
+    {
+      "id": "baseline",
+      "label": "Plain TrueForge-style reviewer",
+      "observedRounds": 1,
+      "requiredRounds": 4,
+      "observedOwnModelLearningCalls": 0
+    },
+    {
+      "id": "gate_keeper",
+      "label": "Gate Keeper adversarial reviewer",
+      "observedRounds": 1,
+      "requiredRounds": 4,
+      "observedOwnModelLearningCalls": 0
+    }
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "fixtureId": "01-python-utils",
+      "baseline": {
+        "status": "OBSERVED",
+        "detected": 2,
+        "expected": 3,
+        "gatewayChargeUsd": 0.00009408
+      },
+      "gate_keeper": {
+        "status": "OBSERVED",
+        "detected": 3,
+        "expected": 3,
+        "gatewayChargeUsd": 0.00018522
+      }
+    },
+    {
+      "round": 2,
+      "fixtureId": "02-express-users",
+      "baseline": {
+        "status": "NOT_RUN",
+        "detected": null,
+        "expected": 3,
+        "gatewayChargeUsd": null
+      },
+      "gate_keeper": {
+        "status": "NOT_RUN",
+        "detected": null,
+        "expected": 3,
+        "gatewayChargeUsd": null
+      }
+    },
+    {
+      "round": 3,
+      "fixtureId": "03-python-deploy",
+      "baseline": {
+        "status": "NOT_RUN",
+        "detected": null,
+        "expected": 3,
+        "gatewayChargeUsd": null
+      },
+      "gate_keeper": {
+        "status": "NOT_RUN",
+        "detected": null,
+        "expected": 3,
+        "gatewayChargeUsd": null
+      }
+    },
+    {
+      "round": 4,
+      "fixtureId": "05-ts-task-pagination",
+      "baseline": {
+        "status": "NOT_RUN",
+        "detected": null,
+        "expected": 3,
+        "gatewayChargeUsd": null
+      },
+      "gate_keeper": {
+        "status": "NOT_RUN",
+        "detected": null,
+        "expected": 3,
+        "gatewayChargeUsd": null
+      }
+    }
+  ],
+  "totalReviewTurnsObserved": 2,
+  "totalReviewTurnsRequired": 8,
+  "reviewTurnsMissing": 6,
+  "currentGatewayChargeUsd": 0.0002793,
+  "learningStatus": "NO_SAME_MODEL_LEARNING_TURNS_OBSERVED",
+  "nativeTrueForgeAgentCompared": false,
+  "limitations": [
+    "The only two observed review calls were a direct TrueFoundry Playground prompt comparison, not a native TrueForge agent experiment.",
+    "No individual agent learning has been observed; round 1 is not proof of self-improvement.",
+    "Different public fixtures per round limit causal conclusions about improvement.",
+    "Actual sponsor-credit deduction is not independently itemised.",
+    "The original proposed fourth fixture is marked holdout=true; it is intentionally excluded and replaced by a separate public task."
+  ]
+}
