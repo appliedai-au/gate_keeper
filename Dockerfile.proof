@@ -12,6 +12,9 @@ COPY agent ./agent
 COPY evals ./evals
 COPY scripts ./scripts
 COPY proof/fixtures ./proof/fixtures
+# The locked baseline and the published reports it points to (public, sanitised).
+COPY proof/baseline.json ./proof/baseline.json
+COPY proof/submissions ./proof/submissions
 COPY tests ./tests
 RUN node --test tests/proof-live-harness.test.mjs tests/proof-public-summary.test.mjs
 USER node
