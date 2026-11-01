@@ -1,6 +1,10 @@
 # Disposable Gate Keeper source-only qualification. No TrueForge service,
 # database, model key, Git credentials, or network-capable agent executes here.
 FROM node:24.19.0-bookworm-slim
+# The complete proof-harness suite creates disposable Git repositories.
+# Install only the git CLI (not credentials) in this test-only image.
+RUN apt-get update && apt-get install --no-install-recommends -y git \
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY package.json package-lock.json tsconfig.json ./
 RUN npm ci --no-audit --no-fund
