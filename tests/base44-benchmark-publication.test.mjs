@@ -59,7 +59,7 @@ test("published benchmark references locked run and never upgrades its qualified
 });
 
 test("Base44 public site exposes historical evidence and model selection without billable actions", () => {
-  assert.match(page,/GateKeeperBenchmark section=\{page\}/);
+  assert.ok(page.includes("GateKeeperBenchmark key={page} section={page}"));
   assert.match(component,/catalogue\.chatModels\.map/);
   assert.match(component,/proof\.arms\.map/);
   assert.match(component,/INCONCLUSIVE|proof\.result/);
