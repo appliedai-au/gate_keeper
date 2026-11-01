@@ -14,6 +14,7 @@ COPY tests ./tests
 # Include the production proof image recipe so the qualification suite can
 # verify that new proof services cannot auto-start billable inference.
 COPY Dockerfile.proof ./Dockerfile.proof
+COPY Dockerfile.qualify ./Dockerfile.qualify
 COPY integrations ./integrations
 COPY agent ./agent
 COPY config ./config
