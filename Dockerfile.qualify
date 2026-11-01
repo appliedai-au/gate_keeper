@@ -10,6 +10,7 @@ COPY tests ./tests
 COPY integrations ./integrations
 COPY agent ./agent
 COPY config ./config
+COPY proof ./proof
 RUN npm run typecheck > /tmp/gk-typecheck.log 2>&1; rc=$?; cat /tmp/gk-typecheck.log; if [ "$rc" -ne 0 ]; then exit "$rc"; fi; npm run score -- --selftest && npm run test:learning-policy
 RUN adduser --disabled-password --gecos '' --uid 10001 verifier
 USER verifier
