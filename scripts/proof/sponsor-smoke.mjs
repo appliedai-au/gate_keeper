@@ -92,8 +92,9 @@ export async function pollSingleTurn(tf, sessionId, initialTurn, {
 export async function runPairedSmoke({
   tf, signedEvidence, publicKeyPem, pinnedKeySha256, sourceCommit, runId,
   model = smokePlan().model, now = () => Date.now(),
-  claimRunOnce, evidenceStore, pollOptions = {},
+  claimRunOnce, evidenceStore, pollOptions = {}, railwayEnv = process.env,
 } = {}) {
+  requireIsolatedRailway(railwayEnv);
   const fixture = publicFixture();
   const evidence = verifySponsorAdmission({
     evidence: signedEvidence, publicKeyPem, pinnedKeySha256,
@@ -111,64 +112,105 @@ export async function runPairedSmoke({
   const route = await requireExactRoute(tf, model);
   // Claim the run id in owner-controlled S3 with atomic create-if-absent
   // semantics before making any sessions or potentially chargeable requests.
-  await claimRunOnce({ runId, evidence, model, sourceCommit });
-  evidenceStore.put("private/commissioning.json", {
-    status: evidence.status, evidenceSha256: evidence.evidenceSha256,
-    virtualAccountId: evidence.virtualAccountId, sourceCommit,
-    model, upstreamId: route.upstreamId,
-  }, "commissioning_receipt_reference");
-  const budget = new BudgetController({
-    capUsd: Math.min(1, evidence.hardCapUsd),
-    phaseShare: { comparison: 1 },
-    model, now,
-  });
+  const claim = await claimRunOnce({ runId, evidence, model, sourceCommit });
+  if (claim?.created !== true) fail("ATOMIC_ONCE_CLAIM_UNVERIFIED");
+  let budget = null;
   const out = [];
-  for (const arm of RUNS) {
-    const instructions = armInstructions(arm);
-    const prompt = taskPrompt(fixture);
-    const reservation = budget.reserve("comparison", arm, instructions.length + prompt.length, 500, model);
-    if (!reservation) fail("LOCAL_BUDGET_EXCEEDED");
-    let sessionId = null;
-    let rawTurn = null;
-    try {
-      const spec = {
-        model: { name: model, params: { ...MODEL_SETTINGS } },
-        instructions, config: NO_EXECUTION, tools: [],
-      };
-      const created = await tf.sessions.create({
-        agent: { spec },
-        metadata: { purpose: "gk-sponsor-smoke", run_id: runId, phase: "comparison", arm },
-      });
-      sessionId = created?.data?.id;
-      if (typeof sessionId !== "string" || !sessionId) fail("SESSION_CREATE_FAILED");
-      const createdTurn = await tf.sessions.createTurn(sessionId, {
-        input: [{ type: "user.message", content: prompt }],
-        previousTurnId: "none",
-      }, { maxRetries: 0 });
-      if (!createdTurn?.data?.id) fail("TURN_CREATE_FAILED");
-      rawTurn = await pollSingleTurn(tf, sessionId, createdTurn.data, pollOptions);
-    } catch (error) {
-      if (sessionId) await tf.sessions.cancel(sessionId).catch(() => {});
-      // Unknown charge: settle the FULL reservation. Never replay this run.
-      budget.settle(reservation, null);
-      fail("MODEL_CALL_FAILED_OR_INCOMPLETE");
-    }
-    const score = scoreTask(fixture, textOf(rawTurn?.state?.output));
-    const metrics = rawTurn?.state?.metrics ?? null;
-    budget.settle(reservation, metrics);
-    evidenceStore.put("private/reviews/" + arm + ".json", {
-      runId, model, arm, sessionId, turnId: rawTurn?.id, prompt, instructions,
-      rawOutput: rawTurn?.state?.output, metrics, score,
-    }, "private_review_trace");
-    out.push({
-      arm, model, task_id: fixture.id,
-      parsed: score.parsed, caught: score.caught.length,
-      missed: score.missed.length, noise: score.noise.length, score: score.score,
-      // Never claim invoice billing from a TrueForge turn metric.
-      gateway_billed_usd: null, gateway_request_trace: "NOT_YET_CORRELATED",
+  let failure = null;
+  let uploaded = null;
+  // Once STARTED is claimed, every possible exit path uploads private
+  // evidence, even if one arm was already billable and the next fails.
+  try {
+    evidenceStore.put("private/commissioning.json", {
+      status: evidence.status, evidenceSha256: evidence.evidenceSha256,
+      virtualAccountId: evidence.virtualAccountId, sourceCommit,
+      model, upstreamId: route.upstreamId,
+    }, "commissioning_receipt_reference");
+    budget = new BudgetController({
+      capUsd: Math.min(1, evidence.hardCapUsd),
+      phaseShare: { comparison: 1 },
+      model, now,
     });
+    for (const arm of RUNS) {
+      const instructions = armInstructions(arm);
+      const prompt = taskPrompt(fixture);
+      const reservation = budget.reserve("comparison", arm, instructions.length + prompt.length, 500, model);
+      if (!reservation) fail("LOCAL_BUDGET_EXCEEDED");
+      let sessionId = null;
+      let turnId = null;
+      let rawTurn = null;
+      try {
+        const spec = {
+          model: { name: model, params: { ...MODEL_SETTINGS } },
+          instructions, config: NO_EXECUTION, tools: [],
+        };
+        const created = await tf.sessions.create({
+          agent: { spec },
+          metadata: { purpose: "gk-sponsor-smoke", run_id: runId, phase: "comparison", arm },
+        });
+        sessionId = created?.data?.id;
+        if (typeof sessionId !== "string" || !sessionId) fail("SESSION_CREATE_FAILED");
+        const createdTurn = await tf.sessions.createTurn(sessionId, {
+          input: [{ type: "user.message", content: prompt }],
+          previousTurnId: "none",
+        }, { maxRetries: 0 });
+        turnId = createdTurn?.data?.id;
+        if (!turnId) fail("TURN_CREATE_FAILED");
+        rawTurn = await pollSingleTurn(tf, sessionId, createdTurn.data, pollOptions);
+      } catch (error) {
+        if (sessionId) await tf.sessions.cancel(sessionId).catch(() => {});
+        // A failed or unknown call may still have incurred a charge. Never retry.
+        try { budget.settle(reservation, null); } catch {}
+        const reason = /^SPONSOR_SMOKE_BLOCKED: ([A-Z_]+)$/.exec(String(error?.message || ""))?.[1] ||
+          "MODEL_CALL_FAILED_OR_INCOMPLETE";
+        try {
+          evidenceStore.put("private/reviews/" + arm + "-incomplete.json", {
+            runId, model, arm, sessionId, turnId, reason,
+          }, "private_incomplete_turn_reference");
+        } catch {}
+        fail(reason);
+      }
+      // Capture the billable trace BEFORE scoring; a scoring fault must never
+      // erase the session/turn IDs and raw output needed for reconciliation.
+      const metrics = rawTurn?.state?.metrics ?? null;
+      evidenceStore.put("private/reviews/" + arm + ".json", {
+        runId, model, arm, sessionId, turnId: rawTurn?.id, prompt, instructions,
+        rawOutput: rawTurn?.state?.output, metrics,
+      }, "private_review_trace");
+      const score = scoreTask(fixture, textOf(rawTurn?.state?.output));
+      budget.settle(reservation, metrics);
+      evidenceStore.put("private/scores/" + arm + ".json", { runId, model, arm, score },
+        "private_deterministic_score");
+      out.push({
+        arm, model, task_id: fixture.id,
+        parsed: score.parsed, caught: score.caught.length,
+        missed: score.missed.length, noise: score.noise.length, score: score.score,
+        // Never claim invoice billing from a TrueForge turn metric.
+        gateway_billed_usd: null, gateway_request_trace: "NOT_YET_CORRELATED",
+      });
+    }
+  } catch (error) {
+    failure = error;
+    // Only a stable error code is retained; SDK messages can contain private
+    // upstream data and must never escape to stdout or public submissions.
+    const reason = /^SPONSOR_SMOKE_BLOCKED: ([A-Z_]+)$/.exec(String(error?.message || ""))?.[1] ||
+      "RUN_FAILED_AFTER_CLAIM";
+    try {
+      evidenceStore.put("private/FAILED.json", {
+        runId, model, reason, completedArms: out.map((x) => x.arm),
+        budgetSnapshot: budget?.snapshot() ?? null,
+      }, "private_failure_marker");
+    } catch {}
+  } finally {
+    try { uploaded = await evidenceStore.upload(); } catch { uploaded = null; }
   }
-  const uploaded = await evidenceStore.upload();
+  if (failure) {
+    // A failed upload after the STARTED claim is explicitly unreconciled.
+    // Reusing the run id or silently claiming a result is forbidden.
+    if (!uploaded?.uploaded || !uploaded?.manifest_sha256)
+      fail("PRIVATE_EVIDENCE_UPLOAD_FAILED_AFTER_RUN_FAILURE");
+    throw failure;
+  }
   if (!uploaded?.uploaded || !uploaded?.manifest_sha256) fail("PRIVATE_EVIDENCE_UPLOAD_FAILED");
   return {
     run_id: runId, status: "INCONCLUSIVE",
@@ -207,6 +249,7 @@ async function privateEvidenceConnection(env) {
         Body: JSON.stringify({ runId, evidence_sha256: evidence.evidenceSha256, model, sourceCommit }),
         ContentType: "application/json", IfNoneMatch: "*",
       }));
+      return { created: true };
     } catch {
       fail("ATOMIC_ONCE_CLAIM_UNAVAILABLE_OR_DUPLICATE");
     }
@@ -261,7 +304,7 @@ async function cli() {
     tf, signedEvidence: receipt, publicKeyPem,
     pinnedKeySha256: pin.signerPublicKeySha256,
     sourceCommit: env.RAILWAY_GIT_COMMIT_SHA, runId: env.GK_SPONSOR_SMOKE_RUN_ID,
-    model, claimRunOnce, evidenceStore,
+    model, claimRunOnce, evidenceStore, railwayEnv: env,
   });
   console.log(JSON.stringify(result));
 }
