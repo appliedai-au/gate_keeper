@@ -176,3 +176,100 @@ test("no signature: zero metadata calls and zero sessions; valid synthetic recei
   assert.equal(published.filter(p=>p[0].startsWith("private/reviews/")).length,2);
   assert.equal(published.filter(p=>p[0].startsWith("private/scores/")).length,2);
 });
+
+
+test("a later paused turn preserves first billable trace, specific failure code and uploads private evidence",async()=>{
+  const records=[],calls=[];
+  let sessionCount=0,uploads=0;
+  const tf={
+    settings:{modelProviders:{list:async()=>({data:provider()})}},
+    models:{list:async()=>({data:models()})},
+    sessions:{
+      create:async()=>({data:{id:"session"+(++sessionCount)}}),
+      createTurn:async(id)=>{
+        calls.push(id);
+        if(id==="session2")return {data:{id:"turn2",state:{status:"paused"}}};
+        return {data:{id:"turn1",state:{status:"done",
+          output:{content:'{"findings":[]}'},
+          metrics:{totalCostInUsd:0.0005,totalInputTokens:2000,totalOutputTokens:300},
+        }}};
+      },
+      getTurn:async()=>{throw Error("must not poll a paused turn");},
+      cancel:async(id)=>{calls.push("cancel:"+id);},
+    },
+  };
+  const store={
+    put:(path,value,kind)=>{records.push({path,value,kind});},
+    upload:async()=>{uploads++;return{uploaded:true,reference:"private://synthetic",manifest_sha256:"a".repeat(64)};},
+  };
+  const env={RAILWAY_PROJECT_ID:"a8f4c4a4-0f32-4166-ba92-dad9baf2b652",
+    RAILWAY_ENVIRONMENT_ID:"03fb9181-2f19-409b-a9b1-823cb32e56c2",
+    RAILWAY_ENVIRONMENT_NAME:"qualification",RAILWAY_GIT_COMMIT_SHA:sha};
+  await assert.rejects(runPairedSmoke({
+    tf,signedEvidence:signed(),publicKeyPem:pem,pinnedKeySha256:fingerprint,
+    sourceCommit:sha,runId,model,now:()=>now,railwayEnv:env,
+    claimRunOnce:async()=>({created:true}),evidenceStore:store,
+  }),/SPONSOR_SMOKE_BLOCKED: TURN_NOT_SUCCESSFUL/);
+  assert.equal(uploads,1,"a claimed run MUST upload even after a later turn fails");
+  assert.deepEqual(calls.filter(x=>x.startsWith("session")),["session1","session2"]);
+  assert.ok(records.some(r=>r.path==="private/reviews/baseline.json"),"first billable reply preserved");
+  assert.ok(records.some(r=>r.path==="private/scores/baseline.json"),"first deterministic score preserved");
+  const incomplete=records.find(r=>r.path==="private/reviews/gate_keeper-incomplete.json");
+  assert.equal(incomplete.value.turnId,"turn2","second turn reference retained for billing reconciliation");
+  assert.equal(incomplete.value.reason,"TURN_NOT_SUCCESSFUL");
+  const marker=records.find(r=>r.path==="private/FAILED.json");
+  assert.equal(marker.value.reason,"TURN_NOT_SUCCESSFUL");
+  assert.deepEqual(marker.value.completedArms,["baseline"]);
+});
+
+test("failed private evidence upload never creates a successful or retryable result",async()=>{
+  const records=[];
+  const tf={
+    settings:{modelProviders:{list:async()=>({data:provider()})}},
+    models:{list:async()=>({data:models()})},
+    sessions:{
+      create:async()=>({data:{id:"one"}}),
+      createTurn:async()=>{throw Error("provider-secret-sensitive-details");},
+      getTurn:async()=>{throw Error("not polled");},
+      cancel:async()=>{},
+    },
+  };
+  const env={RAILWAY_PROJECT_ID:"a8f4c4a4-0f32-4166-ba92-dad9baf2b652",
+    RAILWAY_ENVIRONMENT_ID:"03fb9181-2f19-409b-a9b1-823cb32e56c2",
+    RAILWAY_ENVIRONMENT_NAME:"qualification",RAILWAY_GIT_COMMIT_SHA:sha};
+  await assert.rejects(runPairedSmoke({
+    tf,signedEvidence:signed(),publicKeyPem:pem,pinnedKeySha256:fingerprint,
+    sourceCommit:sha,runId,model,now:()=>now,railwayEnv:env,
+    claimRunOnce:async()=>({created:true}),
+    evidenceStore:{
+      put:(path,value)=>records.push({path,value}),
+      upload:async()=>{throw Error("synthetic storage outage");},
+    },
+  }),/PRIVATE_EVIDENCE_UPLOAD_FAILED_AFTER_RUN_FAILURE/);
+  assert.ok(records.some(r=>r.path==="private/FAILED.json"));
+  assert.doesNotMatch(JSON.stringify(records),/provider-secret-sensitive-details/,"never persist raw SDK errors");
+});
+
+test("a no-op one-shot claim cannot authorize a paid turn",async()=>{
+  let sessions=0;
+  const tf={
+    settings:{modelProviders:{list:async()=>({data:provider()})}},
+    models:{list:async()=>({data:models()})},
+    sessions:{
+      create:async()=>{sessions++;throw Error("should not call");},
+      createTurn:async()=>{throw Error("should not call");},
+      getTurn:async()=>{throw Error("should not call");},
+      cancel:async()=>{},
+    },
+  };
+  await assert.rejects(runPairedSmoke({
+    tf,signedEvidence:signed(),publicKeyPem:pem,pinnedKeySha256:fingerprint,
+    sourceCommit:sha,runId,model,now:()=>now,
+    railwayEnv:{RAILWAY_PROJECT_ID:"a8f4c4a4-0f32-4166-ba92-dad9baf2b652",
+      RAILWAY_ENVIRONMENT_ID:"03fb9181-2f19-409b-a9b1-823cb32e56c2",
+      RAILWAY_ENVIRONMENT_NAME:"qualification",RAILWAY_GIT_COMMIT_SHA:sha},
+    claimRunOnce:async()=>undefined,
+    evidenceStore:{put:()=>{},upload:async()=>({uploaded:true})},
+  }),/ATOMIC_ONCE_CLAIM_UNVERIFIED/);
+  assert.equal(sessions,0);
+});
