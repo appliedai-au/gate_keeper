@@ -395,7 +395,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   for (const arm of compArms) if (!completeTrials.length) summary.arms[arm] = emptyArm();
   if (!completeTrials.length) summary.fairness = { same_model: null, same_provider: null, same_inputs: null, same_scoring: null, same_limits: null };
   validatePublicProof(summary);
-  const publicData = { preflight, complete_trials: completeTrials, arms: publicArms, drill: drill.public, budget: budget.snapshot(), sessions: sessions.map((s) => ({ phase: s.phase, arm: s.arm, trial: s.trial, task_id: s.task_id })),
+  const publicData = { preflight, complete_trials: completeTrials, arms: publicArms, drill: drill.public, budget: budget.snapshot(), sessions: sessions.map((s) => ({ phase: s.phase, arm: s.arm, trial: s.trial })),
     hashes: { ...hashes, public_benchmark_sha256: publicBenchmarkSha(publicTasks), private_holdout_sha256: holdout.sha256, evidence_manifest_sha256: manifest.sha256 },
     private_evidence_item_count: manifest.body.items.length, upload, elapsed_ms: now() - t0 };
   emitChunked(log, "GK_PROOF_PUBLIC_SUMMARY", summary);
