@@ -64,6 +64,10 @@ test("the initial ledger acknowledges just TWO actual Playground calls, not eigh
 
 test("public schedule has four unique non-holdout fixtures with three seeded issues each", () => {
   assert.equal(new Set(TASK_IDS).size,4);
+  const sealed=JSON.parse(readFileSync(new URL("../evals/tasks/04-ts-fetch.json",import.meta.url),"utf8"));
+  assert.equal(sealed.holdout,true,"never reveal or repurpose a protected holdout");
+  assert.equal(TASK_IDS.includes(sealed.id),false,"sealed holdout cannot be a public study fixture");
+
   for(let n=1;n<=4;n++) {
     const t=fixtureForRound(n);
     assert.equal(t.id,TASK_IDS[n-1]);
