@@ -60,7 +60,7 @@ function publicBenchmarkSha(tasks) {
   return sha256(JSON.stringify(tasks.map((t) => ({ id: t.id, code: t.code, expected: t.expected }))));
 }
 
-export async function main({ tf, env = process.env, log = console.log, now = () => Date.now(), fetchImpl = fetch }) {
+export async function main({ tf, env = process.env, log = console.log, now = () => Date.now(), fetchImpl = fetch, selftestFake = false }) {
   const t0 = now();
   const runId = env.GK_PROOF_RUN_ID;
   if (!runId || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{5,79}$/.test(runId)) throw new Error("RUN_ID_REQUIRED");
@@ -146,10 +146,11 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
         detached.push({ name: a.name, id: a.id, model: a.manifest?.model?.name ?? null, sessions_exported: sessionsOfAgent.length });
       }
       const upload = await uploadEvidence();
-      // Deletion needs a confirmed private upload. The only exception is the offline self-test against the fake,
-      // which must also name an explicit evidence directory; GK_PROOF_ALLOW_LOCAL never bypasses this.
-      const selftest = env.GK_PROOF_SELFTEST_FAKE === "1" && !!env.GK_EVIDENCE_DIR;
-      if (!upload.uploaded && !selftest) {
+      // Only the injected offline fake-harness option can permit a local test export.
+      // No environment variable can waive the private-upload requirement for real TrueForge agents.
+      // The production CLI entrypoint deliberately never supplies selftestFake.
+      const offlineExport = selftestFake === true && typeof env.GK_EVIDENCE_DIR === "string" && env.GK_EVIDENCE_DIR.length > 0;
+      if (!upload.uploaded && !offlineExport) {
         emit("GK_PROOF_BLOCKED", { reason: "AGENT_EXPORT_NOT_UPLOADED", detail: upload.reason });
         throw new Error("AGENT_EXPORT_NOT_UPLOADED");
       }
@@ -222,15 +223,21 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_ON_TRUEFOUNDRY", models: route.offending });
     return { blocked: "MODEL_NOT_ON_TRUEFOUNDRY", preflight };
   }
-  // A role model marked pending_calibration (the owner-chosen replacement grader) may grade nothing until it is
-  // calibrated. Only an explicit calibration run may use it; pointing GK_PROOF_ADJUDICATOR_MODEL at it does not help.
-  const pendingModels = Object.values(roleConfig).filter((r) => r?.status === "pending_calibration").map((r) => r.model);
-  const calibrationRun = pendingModels.includes(adjudicatorModel);
+  // Positive evidence only: a different registered grader is NOT automatically calibrated.
+  // A real grader must be the declared adjudicator, explicitly approved in source with a
+  // calibration receipt digest. The synthetic baseline grader is trusted only by the injected
+  // fake test harness; no environment variable can turn this exception on in a live CLI run.
+  const graderRole = roleConfig.adjudicator;
+  const graderCalibrated = graderRole?.model === adjudicatorModel &&
+    graderRole?.status === "calibrated" &&
+    /^[a-f0-9]{64}$/.test(graderRole?.calibration_receipt_sha256 || "");
+  const syntheticBaseline = selftestFake === true && adjudicatorModel === "truefoundry/claude-fable-5-1";
+  const calibrationRun = !(graderCalibrated || syntheticBaseline);
   if (calibrationRun && env.GK_PROOF_CALIBRATION_RUN !== "1") {
     emit("GK_PROOF_BLOCKED", { reason: "ADJUDICATOR_CALIBRATION_PENDING", model: adjudicatorModel });
     return { blocked: "ADJUDICATOR_CALIBRATION_PENDING", preflight };
   }
-  // A calibration run is stamped everywhere it is published and can never be a PASS (validatePublicProof enforces it).
+  // Calibration runs are evidence-only and cannot be a PASS (validatePublicProof enforces it).
   const adjudicatorCalibration = calibrationRun ? "pending" : "calibrated";
   if (calibrationRun) limitations.push(`CALIBRATION RUN: grader ${adjudicatorModel} is pending calibration; these results are calibration evidence only, not a release proof`);
   const sessionModel = new Map();

@@ -29,6 +29,7 @@ function sample(){
 }
 function passable(){
  const v=sample();v.result="PASS";v.blockers=[];
+ v.environment.adjudicator_calibration="calibrated";
  const measures={trials:2,defect_recall:0.5,precision:0.8,explanation_correctness:0.7,
   severity_accuracy:0.7,median_latency_ms:1200,total_tokens:800,actual_cost_usd:0.15};
  v.arms.baseline={...measures};v.arms.gate_keeper={...measures,defect_recall:0.65};
@@ -54,6 +55,10 @@ test("PASS structure demands both arms, complete loop and independent receipt",(
  const q=passable();delete q.verifier;assert.throws(()=>validatePublicProof(q));
  const s=passable();s.loop.polling="NOT_RUN";assert.throws(()=>validatePublicProof(s));
  const t=passable();t.blockers=["gateway unavailable"];assert.throws(()=>validatePublicProof(t));
+ const u=passable();delete u.environment.adjudicator_calibration;
+ assert.throws(()=>validatePublicProof(u),/explicitly calibrated adjudicator/);
+ const w=passable();w.environment.adjudicator_calibration="pending";
+ assert.throws(()=>validatePublicProof(w),/pending-calibration grader cannot be a PASS/);
 });
 test("proof summary cannot omit or rename the learning loop stages",()=>{
  for(const stage of REQUIRED_STAGES){

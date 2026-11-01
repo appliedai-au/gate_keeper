@@ -562,7 +562,7 @@ test("provider-remove: an agent still using the provider blocks removal unless t
 test("provider-remove with GK_DETACH_AGENTS=1: exports the agent and its sessions privately, deletes only that agent, then the provider", () => {
   const agents = [{ id: "ag1", name: "gate-keeper", manifest: { model: { name: "anthropic-direct/claude-sonnet-5-5" }, instructions: "SECRET_INSTRUCTIONS" }, sessionIds: ["s-old-1", "s-old-2"] },
     { id: "ag2", name: "other", manifest: { model: { name: "gateway/some-model" } } }];
-  const r = e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct", GK_DETACH_AGENTS: "1", GK_PROOF_SELFTEST_FAKE: "1", GK_EVIDENCE_DIR: mkdtempSync(join(tmpdir(), "gk-detach-")) }, fake: { agents, modelRoute: "anthropic" } });
+  const r = e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct", GK_DETACH_AGENTS: "1", GK_EVIDENCE_DIR: mkdtempSync(join(tmpdir(), "gk-detach-")) }, fake: { agents, modelRoute: "anthropic" } });
   const out = r.lines.join("\n");
   const exported = JSON.parse(r.lines.find((l) => l.startsWith("GK_PROOF_AGENTS_EXPORTED=")).split("=").slice(1).join("="));
   assert.deepEqual(exported.agents.map((a) => [a.name, a.sessions_exported]), [["gate-keeper", 2]]);
@@ -599,6 +599,28 @@ test("provider listing reads TrueForge's manifest shape: type, endpoint host and
 test("provider-remove: GK_PROOF_ALLOW_LOCAL alone never lets an agent be deleted without an uploaded copy", () => {
   const agents = [{ id: "ag1", name: "gate-keeper", manifest: { model: { name: "anthropic-direct/claude-sonnet-5-5" } }, sessionIds: ["s-old-1"] }];
   assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct", GK_DETACH_AGENTS: "1", GK_PROOF_ALLOW_LOCAL: "1" }, fake: { agents, modelRoute: "anthropic" } }), /AGENT_EXPORT_NOT_UPLOADED/);
+});
+
+test("provider-remove never accepts an env-spoofed fake marker in a live-style invocation", () => {
+  const agents = [{ id: "ag1", name: "gate-keeper", manifest: { model: { name: "anthropic-direct/claude-sonnet-5-5" } }, sessionIds: ["s-old-1"] }];
+  assert.throws(() => e2e({ offlineFake: false, env: {
+    GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct",
+    GK_DETACH_AGENTS: "1", GK_PROOF_SELFTEST_FAKE: "1",
+    GK_EVIDENCE_DIR: mkdtempSync(join(tmpdir(), "gk-env-spoof-")),
+  }, fake: { agents, modelRoute: "anthropic" } }), /AGENT_EXPORT_NOT_UPLOADED/);
+});
+
+test("a registered grader without a positive calibration receipt is held, not labelled calibrated", () => {
+  const models = ["truefoundry/claude-sonnet-5-5", "truefoundry/claude-fable-5-1",
+    "truefoundry/claude-opus-5-5", "truefoundry/claude-haiku-5-5"];
+  const env = { GK_PROOF_MODE: "learn", GK_PROOF_ADJUDICATOR_MODEL: "truefoundry/claude-haiku-5-5" };
+  const held = e2e({ offlineFake: false, env, fake: { models } });
+  assert.equal(held.out.blocked, "ADJUDICATOR_CALIBRATION_PENDING");
+  assert.equal(held.calls, 0);
+  const calibration = e2e({ offlineFake: false, env: { ...env, GK_PROOF_CALIBRATION_RUN: "1" }, fake: { models } });
+  const data = decodeChunks(calibration.lines, "GK_PROOF_PUBLIC_DATA");
+  assert.equal(data.adjudicator_calibration, "pending");
+  assert.ok(data.limitations.some((l) => /^CALIBRATION RUN:/.test(l)));
 });
 
 test("a comparison graded by a pending-calibration grader is stamped and can never validate as a PASS", async () => {
