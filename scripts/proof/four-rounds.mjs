@@ -125,6 +125,70 @@ export function progress(study = initialStudy()) {
   };
 }
 
+/**
+ * A separate, identical self-reflection contract for BOTH methods, run only
+ * after the prior review was independently checked. Uses the reviewer's OWN
+ * prior evidence and no next-task source or key. Produces a candidate lesson,
+ * not a certified automated learning event.
+ *
+ * For round 1, historical public output is only a sanitised excerpt; this
+ * limitation is carried into the request so it is never called a raw trace.
+ * For later rounds the raw reply must be provided privately and checked by
+ * SHA-256 against the stored gateway response digest before creating a prompt.
+ */
+export function prepareSelfReflection(study, n, arm, {
+  ownReviewText = null, ownPriorAdjudication = null,
+} = {}) {
+  if (!ARMS.includes(arm) || !Number.isInteger(n) || n < 1 || n > 3)
+    fail("SELF_REFLECTION_SCOPE_INVALID");
+  if (study.model !== MODEL || study.channel !== CHANNEL) fail("MODEL_OR_STUDY_MISMATCH");
+  const record = study.rounds[n - 1]?.arms?.[arm];
+  if (!record || record.status !== "OBSERVED_PLAYGROUND")
+    fail("NO_PRIOR_REVIEW_TO_LEARN_FROM");
+  let priorText, critique, provenance;
+  if (n === 1) {
+    const source = JSON.parse(readFileSync(priorPath, "utf8"));
+    priorText = JSON.stringify(source.arms[arm].model_answer);
+    critique = arm === "baseline"
+      ? "Independent previous-round scoring: one error-handling defect was missed; one matched finding's severity was rated too high."
+      : "Independent previous-round fact check: a subsidiary claim about the behavior of a zero step in Python range was incorrect.";
+    provenance = "sanitised historical answer excerpt plus publicly documented previous-round critique";
+  } else {
+    if (typeof ownReviewText !== "string" || !ownReviewText.trim() ||
+        !hex64(record.rawOutputSha256) ||
+        sha256(ownReviewText) !== record.rawOutputSha256 ||
+        typeof ownPriorAdjudication !== "string" ||
+        !ownPriorAdjudication.trim() || ownPriorAdjudication.length > 500)
+      fail("PRIVATE_PRIOR_REPLY_AND_ADJUDICATION_REQUIRED");
+    priorText = ownReviewText;
+    critique = ownPriorAdjudication;
+    provenance = "private digest-matched previous-round reply and independent previous-round critique";
+  }
+  const sys = [
+    "You are reviewing only your OWN previous code-review result.",
+    "Produce exactly one general review principle of at most 40 words that",
+    "could improve your next review. Do not reproduce code, file names,",
+    "secrets, example answers, expected line numbers, or later fixtures.",
+    "Return exactly one JSON object: {\"lesson\":\"...\"}.",
+    "Do not discuss the other reviewer, speculate about other model outputs,",
+    "or claim any tests passed.",
+  ].join(" ");
+  const usr = [
+    "Previous round: " + n,
+    "Own review method: " + arm,
+    "Own prior answer: " + priorText,
+    "Prior round feedback only: " + critique,
+    "Write one transferable principle, not a code patch.",
+  ].join("\n\n");
+  return {
+    arm, afterRound: n, model: MODEL, channel: CHANNEL,
+    parameters: { temperature: 0, maxOutputTokens: 180 },
+    provenance, systemPrompt: sys, userPrompt: usr,
+    systemSha256: sha256(sys), userSha256: sha256(usr),
+    noTools: true, noAutoRetry: true, learningOnly: true,
+  };
+}
+
 function requireOwnFeedback(feedback, arm, prior, n) {
   // Feedback must be created by a separate call to the same LLM for the same
   // arm AFTER review n, then reviewed by an external evaluator. Never import
