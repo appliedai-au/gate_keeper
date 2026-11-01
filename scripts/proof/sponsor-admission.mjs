@@ -114,7 +114,7 @@ export function requireIsolatedRailway(env = {}) {
   if (env.RAILWAY_PROJECT_ID !== ISOLATED_RAILWAY_PROJECT ||
       env.RAILWAY_ENVIRONMENT_ID !== ISOLATED_RAILWAY_ENV ||
       !env.RAILWAY_GIT_COMMIT_SHA ||
-      env.RAILWAY_ENVIRONMENT_NAME === "production" ||
+      env.RAILWAY_ENVIRONMENT_NAME !== "qualification" ||
       env.RAILWAY_PROJECT_ID === "507ae09d-7dbb-444a-bd62-a5a16405c874")
     fail("ISOLATED_RAILWAY_ENVIRONMENT_REQUIRED");
   return true;
