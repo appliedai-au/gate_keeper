@@ -236,6 +236,13 @@ export function prepareRound(study, n, feedbackByArm) {
       study.rounds?.[n - 1]?.fixtureId !== TASK_IDS[n - 1])
     fail("MODEL_OR_STUDY_MISMATCH");
   if (!feedbackByArm || typeof feedbackByArm !== "object") fail("OWN_FEEDBACK_MISSING");
+  const learningTurns = ARMS.flatMap((arm) =>
+    [...(study.learning?.[arm] || []), feedbackByArm[arm]].map((x) => x?.learningTurnId).filter(Boolean));
+  if (new Set(learningTurns).size !== learningTurns.length) fail("LEARNING_TURN_REUSED");
+  const reviewSuffixes = study.rounds.flatMap((r) =>
+    ARMS.map((arm) => r.arms?.[arm]?.traceIdSuffix).filter(Boolean));
+  if (learningTurns.some((id) => reviewSuffixes.some((suffix) => String(id).endsWith(suffix))))
+    fail("LEARNING_REVIEW_TRACE_COLLISION");
   const t = fixtureForRound(n);
   const prompt = publicTaskPrompt(t);
   const bundle = {};
@@ -278,7 +285,12 @@ export function recordObservedPair(study, n, bundle, observed, feedbackByArm) {
   const expected = prepareRound(study, n, feedbackByArm);
   if (!bundle || !observed || typeof observed !== "object")
     fail("GATEWAY_EVIDENCE_MISSING");
-  const ids = new Set();
+  const ids = new Set(study.rounds.flatMap((r) =>
+    ARMS.map((arm) => r.arms?.[arm]?.traceIdSuffix).filter(Boolean)));
+  const digests = new Set(study.rounds.flatMap((r) =>
+    ARMS.map((arm) => r.arms?.[arm]?.rawOutputSha256).filter(Boolean)));
+  const learningIds = new Set(ARMS.flatMap((arm) =>
+    [...(study.learning?.[arm] || []), feedbackByArm[arm]].map((f) => f?.learningTurnId).filter(Boolean)));
   const records = {};
   for (const arm of ARMS) {
     const input = bundle[arm], item = observed[arm];
@@ -288,13 +300,15 @@ export function recordObservedPair(study, n, bundle, observed, feedbackByArm) {
         item.temperature !== PARAMETERS.temperature ||
         item.maxOutputTokens !== PARAMETERS.maxOutputTokens ||
         item.provider !== "tfy-managed" ||
-        typeof item.gatewayTraceRef !== "string" || !item.gatewayTraceRef ||
-        ids.has(item.gatewayTraceRef) ||
-        !hex64(item.rawOutputSha256) ||
+        typeof item.gatewayTraceRef !== "string" || item.gatewayTraceRef.length < 12 ||
+        ids.has(item.gatewayTraceRef.slice(-12)) ||
+        learningIds.has(item.gatewayTraceRef) ||
+        !hex64(item.rawOutputSha256) || digests.has(item.rawOutputSha256) ||
         !Number.isInteger(item.found) || item.found < 0 || item.found > 3 ||
         !Number.isFinite(item.gatewayReportedCostUsd) || item.gatewayReportedCostUsd < 0)
       fail("NEW_GATEWAY_TRACE_NOT_CORRELATED:" + arm);
-    ids.add(item.gatewayTraceRef);
+    ids.add(item.gatewayTraceRef.slice(-12));
+    digests.add(item.rawOutputSha256);
     records[arm] = {
       status: "OBSERVED_PLAYGROUND", arm, model: MODEL,
       fixtureId: TASK_IDS[n - 1], round: n, method: arm,
