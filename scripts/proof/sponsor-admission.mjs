@@ -52,7 +52,7 @@ export function smokePlan({ model = CHEAP_SMOKE_MODELS[0] } = {}) {
  * A protected trusted key with a separately pinned fingerprint is mandatory.
  */
 export function verifySponsorAdmission({
-  evidence, publicKeyPem, pinnedKeySha256, sourceCommit, model,
+  evidence, publicKeyPem, pinnedKeySha256, sourceCommit, model, runId,
   now = Date.now(),
 } = {}) {
   smokePlan({ model });
@@ -77,6 +77,8 @@ export function verifySponsorAdmission({
     fail("SPONSOR_FUNDING_UNATTESTED");
   if (s.model !== model || s.fixture !== "01-python-utils")
     fail("MODEL_OR_FIXTURE_MISMATCH");
+  if (!/^gk-sponsor-[a-zA-Z0-9_-]{8,65}$/.test(runId || "") || s.runId !== runId)
+    fail("RUN_ID_NOT_BOUND");
   if (!exact(s.virtualAccountId) || !/^gate-keeper-smoke-[a-zA-Z0-9-]+$/.test(s.virtualAccountId))
     fail("DEDICATED_VIRTUAL_ACCOUNT_REQUIRED");
   if (!Number.isFinite(s.sponsorCreditRemainingUsd) || s.sponsorCreditRemainingUsd <= 0)
@@ -93,7 +95,8 @@ export function verifySponsorAdmission({
       p.remainingUsd <= 0 || p.remainingUsd > p.limitUsd)
     fail("GATEWAY_BUDGET_NOT_ENFORCED");
   if (s.maxTurns !== 2 || s.maxOutputTokensPerTurn !== 500 ||
-      s.noAutomaticRetry !== true)
+      s.noAutomaticRetry !== true || s.allowTools !== false ||
+      s.allowRepair !== false || s.allowLearning !== false || s.publicFixtureOnly !== true)
     fail("CALL_SCOPE_NOT_APPROVED");
   return Object.freeze({
     status: "SIGNED_RECEIPT_VALID_STRUCTURE_AND_SIGNATURE",
