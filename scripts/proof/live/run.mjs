@@ -14,7 +14,7 @@ import { ALL_ARMS, armBase, armModel, comparisonArms, validArmId, DEFAULT_CAP_US
   armInstructions, gateKeeperMethodology, instructionHashes, sha256 } from "./config.mjs";
 import { BudgetController } from "./budget.mjs";
 import { aggregateArm, parseFindingsWithSeverity, shuffle, validFinding } from "./metrics.mjs";
-import { applyBoundedPatch, cloneCandidate, createFixtureRepo, discardCandidate, extractPatch, pollValidation,
+import { applyBoundedPatch, cloneCandidate, createFixtureRepo, discardCandidate, extractPatch, loadVmodel, pollValidation,
   repairBrief, startValidation, verifyOrigin } from "./drill.mjs";
 import { EvidenceStore } from "./evidence.mjs";
 import { ADJUDICATOR, adjudicateTasks, decodeHoldout, reviewTasks, taskPrompt } from "./review.mjs";
@@ -497,11 +497,16 @@ async function runDrill({ model, adjudicatorModel, drillArms, repairerFor, budge
     if (lessons.length) mark("core_candidate_selection", "PASS");
 
     // Improve and repeat: same tenant, new fixture, without and then with the lesson.
-    const betaLesson = lessons.find((l) => l.tenantId === "tenant-beta");
+    // The repeat fixture belongs to one tenant; it needs a lesson from that tenant's earlier cycle.
+    const repeatTenant = loadVmodel(fixtures.archive).tenant;
+    const betaLesson = lessons.find((l) => l.tenantId === repeatTenant);
+    const setHasRepeatTenant = drillSet.some((id) => loadVmodel(fixtures[id]).tenant === repeatTenant);
     if (betaLesson) {
       cycles.push(await cycle("gate_keeper", "archive", { label: "gate_keeper-archive-control" }));
       cycles.push(await cycle("gate_keeper", "archive", { lesson: betaLesson.text, label: "gate_keeper-archive-with-lesson" }));
-    } else events.push({ outcome: "repeat-after-improvement not run: no tenant-beta lesson captured" });
+    } else events.push({ outcome: setHasRepeatTenant
+      ? `repeat-after-improvement not run: no ${repeatTenant} lesson captured`
+      : `repeat-after-improvement not run: drill set ${env.GK_PROOF_DRILL_SET || "standard"} has no ${repeatTenant} fixture (by design)` });
   }
   stage.independent_qualification = "BLOCKED";
   if (stage.core_candidate_selection === "PASS" && !lessons.some((l) => l.core_selection?.selected)) {

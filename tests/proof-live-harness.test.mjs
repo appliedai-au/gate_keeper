@@ -532,3 +532,12 @@ test("hard repair fixtures: shipped code fails at least one V-model level and ev
     assert.ok(!failed.includes("static"), `${id}: shipped code should parse`);
   }
 });
+
+test("offline e2e: hard drill set runs the hard fixtures and says plainly why the lesson-repeat step is skipped", () => {
+  const r = e2e({ trials: 1, env: { GK_PROOF_DRILL_SET: "hard" } });
+  const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
+  const fixturesRun = [...new Set(data.drill.cycles.map((c) => c.fixture))].sort();
+  assert.deepEqual(fixturesRun, ["csv", "daykey", "merge", "ratelimit", "semver"]);
+  assert.ok(data.drill.events.some((e) => e.check === "drill_fixture_set" && e.set === "hard"));
+  assert.ok(data.drill.events.some((e) => /drill set hard has no tenant-beta fixture \(by design\)/.test(e.outcome || "")));
+});
