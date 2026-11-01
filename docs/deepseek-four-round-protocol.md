@@ -31,7 +31,7 @@ or agent runtime requires a new run ID and restarted baseline.
 | 1 | `evals/tasks/01-python-utils.json` | **2 OBSERVED** | self-reflection **NOT OBSERVED** |
 | 2 | `evals/tasks/02-express-users.json` | 2 pending | own Round 1 lesson required first |
 | 3 | `evals/tasks/03-python-deploy.json` | 2 pending | own Round 2 lesson required first |
-| 4 | `evals/tasks/04-ts-fetch.json` | 2 pending | own Round 3 lesson required first |
+| 4 | `proof/fixtures/four-rounds/05-ts-task-pagination.json` | 2 pending | own Round 3 lesson required first |
 
 Each public fixture has three known seeded defects. **Do not give the model
 the expected findings for the next fixture, or the other reviewer's
@@ -102,3 +102,5 @@ originating browser extension to operate the open TrueFoundry session.
 No new actual DeepSeek calls occurred during this change. Use an
 authorised browser/Work session or commissioned isolated TrueForge
 connection, then resume under the exact route and capture new traces.
+
+**Frozen benchmark protection:** The original fourth suggested task (`evals/tasks/04-ts-fetch.json`) is marked `holdout: true` and is *not* exposed in this public four-round series. The new fourth fixture is stored outside the sealed `evals/tasks` corpus to avoid changing historical scoring baselines.
