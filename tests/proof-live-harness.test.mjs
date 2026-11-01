@@ -473,3 +473,15 @@ test("inventory still reports provider routes when the reviewer model is not reg
   assert.ok(r.lines.some((l) => l.startsWith("GK_PROOF_INVENTORY=")));
   assert.ok(!r.lines.some((l) => l.startsWith("GK_PROOF_BLOCKED=")));
 });
+
+test("provider-remove: deletes exactly the named provider (no model calls), confirms it is gone, never prints secrets", () => {
+  const r = e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct" } });
+  assert.equal(r.calls, 0);
+  const line = r.lines.find((l) => l.startsWith("GK_PROOF_PROVIDER_REMOVED="));
+  const res = JSON.parse(line.split("=").slice(1).join("="));
+  assert.equal(res.removed, "anthropic-direct");
+  assert.equal(res.providers_before.length, 1);
+  assert.deepEqual(res.providers_after, []);
+  assert.ok(!/SECRET_/.test(r.lines.join("\n")));
+  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "not-there" } }), /PROVIDER_REMOVE_TARGET_NOT_FOUND/);
+});

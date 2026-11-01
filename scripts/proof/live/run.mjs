@@ -90,12 +90,25 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   emit("GK_PROOF_PREFLIGHT", preflight);
   ev.put("preflight.json", preflight, "preflight");
   // Inventory only reads provider routes, so it must still run when the reviewer model is the thing that is missing.
-  if (!modelNames.includes(model) && (env.GK_PROOF_MODE || "compare") !== "inventory") {
+  if (!modelNames.includes(model) && !["inventory", "provider-remove"].includes(env.GK_PROOF_MODE || "compare")) {
     emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_REGISTERED", model, available: modelNames });
     return { blocked: "MODEL_NOT_REGISTERED", preflight };
   }
   const mode = env.GK_PROOF_MODE || "compare";
-  if (!["compare", "learn", "inventory"].includes(mode)) throw new Error("PROOF_MODE_INVALID");
+  if (!["compare", "learn", "inventory", "provider-remove"].includes(mode)) throw new Error("PROOF_MODE_INVALID");
+  // Owner-requested removal of one named model provider from TrueForge (no model calls). The name must match exactly.
+  if (mode === "provider-remove") {
+    const target = String(env.GK_REMOVE_PROVIDER || "");
+    const before = sanitizeProviders((await tf.settings.modelProviders.list()).data);
+    if (!target || !before.some((p) => p.name === target)) throw new Error("PROVIDER_REMOVE_TARGET_NOT_FOUND");
+    await tf.settings.modelProviders.delete(target);
+    const after = sanitizeProviders((await tf.settings.modelProviders.list()).data);
+    const { data: modelsAfter } = await tf.models.list();
+    const result = { removed: target, providers_before: before, providers_after: after, models_after: modelsAfter.map((m) => ({ id: m.name, provider: m.provider?.name ?? null })) };
+    emit("GK_PROOF_PROVIDER_REMOVED", result);
+    ev.put("provider-remove.json", result, "provider_change");
+    return { providerRemoved: result };
+  }
   // Inventory: read-only, no model calls. Reports which provider route each configured model uses.
   if (mode === "inventory") {
     let providers = null, providerError = null;

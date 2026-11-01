@@ -67,7 +67,8 @@ export function fakeTrueForge({ models = ["anthropic/claude-sonnet-5-5", "anthro
     calls: () => n,
     server: { getCapabilities: async () => ({ data: { sandbox: { enabled: false }, skill: { enabled: false } } }) },
     models: { list: async () => ({ data: models.map((name) => ({ name, provider: { name: "anthropic-direct" } })) }) },
-    settings: { modelProviders: { list: async () => ({ data: [{ name: "anthropic-direct", type: "anthropic", baseUrl: "https://api.anthropic.com/v1?k=SECRET_URL_PARAM", auth: { apiKey: "SECRET_API_KEY" }, models: [{}, {}] }] }) } },
+    settings: { modelProviders: (() => { let providers = [{ name: "anthropic-direct", type: "anthropic", baseUrl: "https://api.anthropic.com/v1?k=SECRET_URL_PARAM", auth: { apiKey: "SECRET_API_KEY" }, models: [{}, {}] }];
+      return { list: async () => ({ data: providers }), delete: async (name) => { providers = providers.filter((p) => p.name !== name); return { data: {} }; } }; })() },
     sessions: {
       create: async ({ agent, metadata = {} }) => { if (Object.values(metadata).some((v) => typeof v !== "string")) throw new Error("JsonError: metadata values must be strings"); const id = "s" + sessions.size; sessions.set(id, agent.spec); return { data: { id } }; },
       createTurn: async (sid, { input }) => {
