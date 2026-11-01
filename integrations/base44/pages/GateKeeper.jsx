@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import GateKeeperConnectionPanel from "../components/GateKeeperConnectionPanel";
 import AdversarialLab from "../components/AdversarialLab";
+import GateKeeperBenchmark from "../components/GateKeeperBenchmark";
 import "./GateKeeper.css";
 
 // A product walkthrough fixture, not output from TrueForge. Never display it
@@ -150,25 +151,6 @@ function Review({ onControls }) {
   );
 }
 
-function EmptyView({ kind, onDemo }) {
-  const isRuns = kind === "Runs";
-  return (
-    <>
-      <div className="gk-section-heading">
-        <Eyebrow>{isRuns ? "REAL RUN HISTORY" : "VERIFIED EVIDENCE"}</Eyebrow>
-        <h1>{isRuns ? "Every run should tell a story." : "Trust requires proof."}</h1>
-        <p>{isRuns ? "A real run will show its status, inputs, findings and traceable outcome here." : "Evidence must come from independently qualified runs—not from a polished user interface."}</p>
-      </div>
-      <div className="gk-empty">
-        <div className="gk-empty-glyph">{isRuns ? "◷" : "◇"}</div>
-        <h2>{isRuns ? "No verified live runs shown" : "No independently qualified evidence shown"}</h2>
-        <p>{isRuns ? "Live session history has not yet been connected to this Base44 application." : "Private evidence and independently signed qualification are not connected to this interface."}</p>
-        <button type="button" className="gk-button gk-button-primary" onClick={onDemo}>Explore sample review <span>↗</span></button>
-      </div>
-    </>
-  );
-}
-
 function Settings() {
   return (
     <>
@@ -227,7 +209,7 @@ export default function GateKeeper() {
         <main id="gk-main-content" className="gk-content">
           {page === "Overview" && <AdversarialLab onReview={() => navigate("Review")} onControls={() => navigate("Settings")} />}
           {page === "Review" && <Review onControls={() => navigate("Settings")} />}
-          {(page === "Runs" || page === "Evidence") && <EmptyView kind={page} onDemo={() => navigate("Review")} />}
+          {(page === "Runs" || page === "Evidence") && <GateKeeperBenchmark section={page} />}
           {page === "Settings" && <Settings />}
           <footer className="gk-footer"><span>GATE / KEEPER</span><span>REVIEW WITH EVIDENCE. SHIP WITH INTENT.</span><span>SAMPLE UI · NOT LIVE AI OUTPUT</span></footer>
         </main>

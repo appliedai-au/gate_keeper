@@ -1,0 +1,82 @@
+{
+  "schema": "gate-keeper-public-benchmark-display-v1",
+  "runId": "gk-live-20261101-g",
+  "headline": "First published multi-model comparison",
+  "recordedAt": "2026-11-01T00:56:53.420Z",
+  "result": "INCONCLUSIVE",
+  "sourceCommit": "9d2c7249836689fbd772069b753e3375e73f6f7b",
+  "trueForgeVersion": "0.180.0",
+  "modelProviderAtRun": "anthropic",
+  "sponsorCreditAttribution": "UNVERIFIED",
+  "independentQualification": "BLOCKED",
+  "reportUrl": "https://github.com/appliedai-au/gate_keeper/blob/feat/base44-gatekeeper-integration/proof/submissions/gk-live-20261101-g/report.md",
+  "summaryUrl": "https://github.com/appliedai-au/gate_keeper/blob/feat/base44-gatekeeper-integration/proof/submissions/gk-live-20261101-g/summary.json",
+  "method": "2 trials × 12 code review tasks (4 public; 8 owner-private holdouts). Candidate arms used the same input code, model, output contract and scoring for the corresponding model pair.",
+  "tasks": 12,
+  "trials": 2,
+  "expectedDefects": 48,
+  "arms": [
+    {
+      "id": "baseline-haiku",
+      "model": "claude-haiku-5-5",
+      "method": "Standard TrueForge",
+      "detected": 40,
+      "falsePositives": 7,
+      "precision": 0.8627,
+      "medianLatencyMs": 5445,
+      "estimatedCostUsdPerReview": 0.0006
+    },
+    {
+      "id": "keeper-haiku",
+      "model": "claude-haiku-5-5",
+      "method": "Gate Keeper adversarial",
+      "detected": 43,
+      "falsePositives": 10,
+      "precision": 0.8276,
+      "medianLatencyMs": 5294.5,
+      "estimatedCostUsdPerReview": 0.0007
+    },
+    {
+      "id": "baseline-sonnet",
+      "model": "claude-sonnet-5-5",
+      "method": "Standard TrueForge",
+      "detected": 48,
+      "falsePositives": 15,
+      "precision": 0.7794,
+      "medianLatencyMs": 5759.5,
+      "estimatedCostUsdPerReview": 0.0091
+    },
+    {
+      "id": "keeper-sonnet",
+      "model": "claude-sonnet-5-5",
+      "method": "Gate Keeper adversarial",
+      "detected": 48,
+      "falsePositives": 7,
+      "precision": 0.8833,
+      "medianLatencyMs": 6234,
+      "estimatedCostUsdPerReview": 0.0118
+    },
+    {
+      "id": "keeper-opus",
+      "model": "claude-opus-5-5",
+      "method": "Gate Keeper adversarial",
+      "detected": 48,
+      "falsePositives": 6,
+      "precision": 0.9,
+      "medianLatencyMs": 10145.5,
+      "estimatedCostUsdPerReview": 0.0284
+    }
+  ],
+  "conclusions": [
+    "With Sonnet 5.5, both methods detected 48/48 key issues; Gate Keeper reduced false positives from 15 to 7 at higher token cost.",
+    "The cheaper Haiku 5.5 missed 5–8 key issues; it is not qualified as a standalone review model.",
+    "The 6/6 repair fixtures were saturated across all evaluated repair configurations and do not establish a meaningful repair-method advantage."
+  ],
+  "limitations": [
+    "Run result is INCONCLUSIVE, not independently qualified.",
+    "Original run routed through a direct Anthropic provider, not a proven Stranger Builds sponsor-funded gateway.",
+    "Dollar figures are estimated from token counts and list prices, not provider invoices or verified sponsor credit deductions.",
+    "The 8 holdout cases and raw session traces remain private; no evidence from them is exposed in this display.",
+    "A separate Fable 5.1 LLM graded the original run; that is not an independent human verifier."
+  ]
+}

@@ -11,6 +11,13 @@ import {fileURLToPath} from "node:url";
 import {resolve} from "node:path";
 
 const profile=JSON.parse(readFileSync(new URL("../../config/truefoundry-gateway.json",import.meta.url),"utf8"));
+const catalogue=JSON.parse(readFileSync(new URL("../../config/stranger-builds-catalogue.json",import.meta.url),"utf8"));
+if(catalogue.tenant!=="stranger-builds"||catalogue.providerAccount!=="tfy-managed"||
+  !Array.isArray(catalogue.chatModels)||catalogue.chatModels.length<1||
+  !Array.isArray(catalogue.embeddingModels)||new Set([...catalogue.chatModels,...catalogue.embeddingModels]).size!==
+  catalogue.chatModels.length+catalogue.embeddingModels.length)
+  throw Error("TRUEFOUNDRY_CATALOGUE_INVALID");
+export const selectableChatModels=Object.freeze([...catalogue.chatModels]);
 const allowedGatewayUrl="https://stranger-builds.truefoundry.cloud/api/llm";
 const ROLES=["reviewer","repair","adjudicator","learning","triage"];
 const unexpected=/[\r\n\u0000]/;
@@ -34,17 +41,21 @@ export function validateGatewayUrl(value) {
  * Never print this manifest or put it in Git, logs, build args or PR comments.
  * No network or provider mutation occurs here.
  */
-export function buildProviderManifest({virtualAccountKey}={}) {
+export function buildProviderManifest({virtualAccountKey,selectedModels=profile.modelsVisibleInOwnerAccount}={}) {
  validateGatewayUrl(profile.gatewayBaseUrl);
  if(typeof virtualAccountKey!=="string"||virtualAccountKey.length<10||
     unexpected.test(virtualAccountKey)||virtualAccountKey.trim()!==virtualAccountKey)
     fail("protected virtual-account credential required");
  if(profile.trueForgeProviderType!=="truefoundry"||profile.trueForgeProviderName!=="truefoundry"||
     profile.upstreamProviderAccount!=="tfy-managed")fail("unapproved gateway provider configuration");
- const names=profile.modelsVisibleInOwnerAccount;
- if(!Array.isArray(names)||names.length!==2||new Set(names).size!==2||
-    !names.includes("claude-sonnet-5-5")||!names.includes("claude-opus-5-5"))
-   fail("approved model allow-list changed");
+ // Explicit operator choice, from the full observed chat catalogue. Default
+ // stays the original two until a qualified virtual account grants more.
+ // No embedding model can be registered for reviewer inference.
+ const names=selectedModels;
+ if(!Array.isArray(names)||!names.length||names.length>selectableChatModels.length||
+    new Set(names).size!==names.length||names.some(n=>typeof n!=="string"||
+    !selectableChatModels.includes(n)))
+   fail("model selection outside tenant chat catalogue");
  return {
    type:"truefoundry",
    base_url:profile.gatewayBaseUrl,
@@ -83,6 +94,16 @@ export function assessGatewayReadiness({providers=[],models=[]}={}) {
  const catalog=new Set(Array.isArray(models)?
    models.filter(m=>m?.provider?.name==="truefoundry").map(modelName):[]);
  const mapped={};
+ // Read-only snapshot display; listed models are not necessarily usable by the
+ // current TrueForge provider identity or covered by sponsor inference credit.
+ const selectableModels=selectableChatModels.map(name=>({
+   model:"truefoundry/"+name,
+   chat:true,
+   catalogueObserved:true,
+   registeredInTrueForge:catalog.has("truefoundry/"+name) &&
+     Array.isArray(existing?.manifest?.models) &&
+     existing.manifest.models.some(m=>modelName(m)===name&&modelId(m)==="tfy-managed/"+name),
+ }));
  for(const role of ROLES){
    const expected=profile.activeRoleMappings?.[role];
    if(!expected){
@@ -111,6 +132,8 @@ export function assessGatewayReadiness({providers=[],models=[]}={}) {
    gatewayHost:"stranger-builds.truefoundry.cloud",
    trueForgeProvider:"truefoundry",
    configuredProviderSeen:!!existing,
+   selectableModels,
+   embeddingModelsExcludedFromReview:catalogue.embeddingModels.length,
    mappedRoles:mapped,
    blockers:[...new Set(blockers)],
    status:"HELD",

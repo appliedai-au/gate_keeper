@@ -1,0 +1,35 @@
+{
+  "schema": "gate-keeper-ui-catalogue-v1",
+  "source": "TrueFoundry Stranger Builds Models tab",
+  "observedOn": "2026-11-01",
+  "tenant": "stranger-builds",
+  "providerAccount": "tfy-managed",
+  "chatModels": [
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "deepseek-v4-flash-0731",
+    "deepseek-v4-pro-0813",
+    "deepseek-v4.1-flash",
+    "glm-5.3",
+    "glm-5.3-flash",
+    "gpt-6-astra",
+    "gpt-6-luna",
+    "gpt-6.1-sol",
+    "gpt-oss-120b",
+    "grok-4.7",
+    "kimi-k2.7-code",
+    "kimi-k3",
+    "mimo-v2.6-flash",
+    "mimo-v2.6-pro",
+    "minimax-m3",
+    "nemotron-3-ultra",
+    "qwen3.8-max"
+  ],
+  "embeddingModels": [
+    "text-embedding-3-large",
+    "text-embedding-3-small"
+  ],
+  "creditsVerified": false,
+  "metadataOnly": true
+}

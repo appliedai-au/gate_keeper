@@ -12,6 +12,7 @@ const pages=[
  "integrations/base44/components/ControlDeck.jsx",
  "integrations/base44/components/LearningLab.jsx",
  "integrations/base44/components/GateKeeperConnectionPanel.jsx",
+ "integrations/base44/components/GateKeeperBenchmark.jsx",
 ];
 
 for(const path of pages){

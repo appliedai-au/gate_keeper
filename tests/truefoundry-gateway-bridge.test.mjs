@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {
-  validateGatewayUrl,validateTrueForgeHost,buildProviderManifest,assessGatewayReadiness,inspectGatewayReadOnly,
+  validateGatewayUrl,validateTrueForgeHost,buildProviderManifest,assessGatewayReadiness,inspectGatewayReadOnly,selectableChatModels,
 } from "../scripts/truefoundry/gateway.mjs";
 
 const gateway="https://stranger-builds.truefoundry.cloud/api/llm";
@@ -47,7 +47,16 @@ test("the provider payload uses TrueForge's native type and upstream tfy-managed
    ],
  });
  assert.notEqual(m.type,"anthropic");
- assert.equal(m.models.length,2,"do not expose unqualified or expensive extras");
+ assert.equal(m.models.length,2,"default remains the original conservative subset");
+ assert.equal(selectableChatModels.length,20);
+ const all=buildProviderManifest({virtualAccountKey:key,selectedModels:selectableChatModels});
+ assert.equal(all.models.length,20,"all observed chat models are individually selectable");
+ assert.equal(all.models.every(m=>m.model_id==="tfy-managed/"+m.name),true);
+ assert.deepEqual(buildProviderManifest({virtualAccountKey:key,selectedModels:["gpt-6-luna"]}).models,
+   [{name:"gpt-6-luna",model_id:"tfy-managed/gpt-6-luna",properties:{}}]);
+ for(const invalid of [
+   ["text-embedding-3-large"],["arbitrary-unregistered-model"],[],["gpt-6-luna","gpt-6-luna"],
+ ])assert.throws(()=>buildProviderManifest({virtualAccountKey:key,selectedModels:invalid}),/model selection outside tenant chat catalogue/);
 });
 test("no credential or individual account means no provider payload",()=>{
  for(const virtualAccountKey of [undefined,"", "too-short","with\nnewline-credential", " space-at-end ",null])
@@ -61,6 +70,10 @@ test("provider must exactly match endpoint, type and upstream model identity",()
  assert.ok(good.blockers.includes("ADJUDICATOR_CALIBRATION_PENDING"));
  assert.equal(good.productionReady,false);
  assert.equal(good.status,"HELD");
+ assert.equal(good.selectableModels.length,20);
+ assert.equal(good.embeddingModelsExcludedFromReview,2);
+ assert.equal(good.selectableModels.find(m=>m.model==="truefoundry/claude-sonnet-5-5").registeredInTrueForge,true);
+ assert.equal(good.selectableModels.find(m=>m.model==="truefoundry/gpt-6-luna").registeredInTrueForge,false);
  const badOrigin=assessGatewayReadiness({
    providers:[{...provider,manifest:{...provider.manifest,baseUrl:"https://attacker.example/api/llm"}}],models,
  });
