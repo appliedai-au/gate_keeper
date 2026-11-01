@@ -1,0 +1,18 @@
+# One-shot Gate Keeper live-proof runner. Runs inside the Gate Keeper Railway
+# project only, reaches TrueForge over the private network, enforces its own
+# spend cap, writes private evidence to an owner bucket, prints hashes and the
+# sanitised summary, then exits. Restart policy must be NEVER.
+FROM node:24.19.0-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --no-audit --no-fund \
+    && npm install --no-save --package-lock=false --no-audit --no-fund @aws-sdk/client-s3@3.705.0
+COPY agent ./agent
+COPY evals ./evals
+COPY scripts ./scripts
+COPY proof/fixtures ./proof/fixtures
+COPY tests ./tests
+RUN node --test tests/proof-live-harness.test.mjs tests/proof-public-summary.test.mjs
+USER node
+CMD ["node", "--import", "tsx", "scripts/proof/live/run.mjs"]

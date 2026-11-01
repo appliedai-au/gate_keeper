@@ -80,6 +80,16 @@ test("proof rejects claims that benchmark comparison was not fair",()=>{
  }
 });
 
+test("fairness may be null only when nothing ran and the result is not PASS",()=>{
+ const nulls=d=>{for(const f of Object.keys(d.fairness))d.fairness[f]=null;return d;};
+ assert.equal(validatePublicProof(nulls(sample())).valid,true);
+ rejected(d=>(nulls(d),d.arms.baseline.trials=1,d));
+ rejected(d=>(nulls(d),d.arms.gate_keeper.trials=1,d));
+ rejected(d=>(nulls(d),d.result="FAIL",d.arms.baseline.trials=1,d));
+ assert.throws(()=>validatePublicProof(nulls(passable())),/PUBLIC_PROOF_INVALID/);
+ rejected(d=>(d.fairness.same_model=null,d.arms.baseline.trials=2,d));
+});
+
 test("TrueForge-native instructions retain the entire repair and learning loop",()=>{
  const instructions=readFileSync(new URL("../agent/native-trueforge-instructions.md",import.meta.url),"utf8");
  for(const phrase of ["Scope and budget admission","Review:","Repair:","V-model validation",

@@ -44,9 +44,16 @@ export function validatePublicProof(v){
  field(v.benchmark.id,"benchmark.id");digest(v.benchmark.sha256,"benchmark.sha256");
  if(v.benchmark.holdout_private!==true)fail("holdout privacy not attested");
  if(!obj(v.fairness))fail("fairness missing");
- for(const f of ["same_model","same_provider","same_inputs","same_scoring","same_limits"])
-  if(v.fairness[f]!==true)fail("fairness."+f+" must be true");
  if(!obj(v.arms))fail("arms missing");
+ // null ("not applicable: nothing ran") is allowed only for a non-PASS result in
+ // which BOTH arms have zero trials. false, or anything for a run that executed,
+ // must still be an explicit true.
+ const nothingRan=v.result!=="PASS"&&["baseline","gate_keeper"].every(k=>obj(v.arms[k])&&v.arms[k].trials===0);
+ for(const f of ["same_model","same_provider","same_inputs","same_scoring","same_limits"]){
+  if(v.fairness[f]===true)continue;
+  if(v.fairness[f]===null&&nothingRan)continue;
+  fail("fairness."+f+(nothingRan?" must be true or null":" must be true"));
+ }
  for(const arm of ["baseline","gate_keeper"]){
   const a=v.arms[arm];
   if(!obj(a))fail("arms."+arm+" missing");
