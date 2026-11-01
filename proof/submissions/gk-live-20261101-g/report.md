@@ -11,10 +11,10 @@ Runs 1–3 used `claude-sonnet-4-6` because it was the configured default, not b
 
 | Role | Model in this run | Why |
 |---|---|---|
-| Main candidate (primary fair pair) | `anthropic/claude-sonnet-5-5` | Current mid-tier (/0 per Mtok) |
-| Reviewer sweep | Opus 5.5 (/0), Haiku 5.5 (/bin/bash.10//bin/bash.50) | Is a stronger or much cheaper reviewer better value? |
+| Main candidate (primary fair pair) | `anthropic/claude-sonnet-5-5` | Current mid-tier ($2 input / $10 output per 1M tokens) |
+| Reviewer sweep | Opus 5.5 ($4 / $20), Haiku 5.5 ($0.10 / $0.50) per 1M input/output tokens | Is a stronger or much cheaper reviewer better value? |
 | Repair sweep (drill) | Sonnet 5.5 vs Opus 5.5 | Review and re-review are held identical, so only the repairer varies |
-| Grader and gate adjudicator | `anthropic/claude-fable-5-1` (0/0) | Stronger than, and different from, every model under test |
+| Grader and gate adjudicator | `anthropic/claude-fable-5-1` ($10 / $50 per 1M input/output tokens) | Stronger than, and different from, every model under test |
 
 Prices are from platform.claude.com/docs/en/about-claude/pricing (checked 2026-11-01). All models are from one provider family, so the grader is not fully independent.
 
@@ -334,3 +334,9 @@ These choices should be re-tested when models change. The harness supports `meth
 | trueforge_session_trace | `private/sessions/01m6a9py9smm70rhm6qybv7fkc.json` | `badb1d10df776a133b2d44da74f006058edb04e955bbef783fc737e7f065bc7c` |
 | trueforge_session_trace | `private/sessions/01m6a9qanx29dt26t1w2tb5rme.json` | `75085687a5c41b57ea9a448250c935137e0b2c740fa1bbe3e35731c548f684ff` |
 | spend_ledger | `private/spend-ledger.json` | `01bf56088a21254a71cf324ca4d4405fc3a94eec6d73ccd99d997961b88c20a3` |
+
+## Public website publication note (1 November 2026)
+
+This is the earlier **fourth** proof run and the first multi-model comparison being prepared for display in Gate Keeper's Base44 Runs and Evidence sections. The website's sanitised dataset lives at `integrations/base44/data/firstBenchmark.json` and is tested against this run's `summary.json`. It does not publish raw session traces, holdout answers, credentials or evidence-bucket contents.
+
+The publication preserves the original **INCONCLUSIVE** verdict and the historical `anthropic` provider identity. Dollar-per-review figures are list-price estimates; sponsor-funded TrueFoundry credit consumption and invoice totals remain **unverified**. Reproducing this study with Stranger Builds free credits will require a separate source-pinned run and its own receipt. The originally corrupted price notation in the role table above was repaired as an editorial erratum; no benchmark scores or experimental data changed.
