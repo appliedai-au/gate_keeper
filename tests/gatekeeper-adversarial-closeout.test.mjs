@@ -113,5 +113,5 @@ test("wrong subsidiary claims lose explanation-validated precision, even when th
 
 test("the Evidence view must remount so limitations cannot remain collapsed from Runs",()=>{
   const source=readFileSync(new URL("../integrations/base44/pages/GateKeeper.jsx",import.meta.url),"utf8");
-  assert.match(source,/GateKeeperBenchmark key=\\{page\\} section=\\{page\\}/);
+  assert.ok(source.includes("GateKeeperBenchmark key={page} section={page}"));
 });
