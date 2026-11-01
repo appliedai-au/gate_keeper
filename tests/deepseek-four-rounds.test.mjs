@@ -108,7 +108,7 @@ test("the paired round-2 payloads share the exact code, model and settings but N
   assert.ok(plain.systemPrompt.includes("Benchmark output contract"));
   assert.ok(keeper.systemPrompt.includes("Benchmark output contract"));
   for(const p of [plain,keeper]){
-    assert.ok(p.userPrompt.includes("express"));
+    assert.ok(p.userPrompt.includes(fixtureForRound(2).filename));
     assert.ok(!p.userPrompt.includes("expected"));
     assert.ok(!p.userPrompt.includes("why"));
     assert.ok(!p.userPrompt.includes("python-deploy"));
