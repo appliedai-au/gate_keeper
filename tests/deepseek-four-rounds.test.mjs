@@ -17,7 +17,7 @@ function fakeOwnFeedback(study, arm, priorRound) {
     priorTraceIdSuffix: prev.traceIdSuffix,
     model: MODEL, origin: "same_model_self_reflection",
     evaluatorChecked: true,
-    learningTurnId: "synthetic-learning-" + priorRound + "-" + arm,
+    learningTurnId: "learning-" + sha256("synthetic-feedback|" + priorRound + "|" + arm),
     lesson: arm === "baseline"
       ? "Recheck error-handling branches and silent fallback behavior."
       : "Verify edge-case language semantics before asserting loops or hangs.",
@@ -35,7 +35,7 @@ function mockEvidence(bundle, round) {
     fixtureId: TASK_IDS[round - 1],
     temperature: PARAMETERS.temperature,
     maxOutputTokens: PARAMETERS.maxOutputTokens,
-    gatewayTraceRef: "mock-only-round-" + round + "-" + arm,
+    gatewayTraceRef: "gateway-" + sha256("synthetic-gateway|" + round + "|" + arm),
     rawOutputSha256: sha256("synthetic test transcript " + round + "-" + arm),
     found: i + 1,
     gatewayReportedCostUsd: 0.0001 + i * 0.0001,
@@ -85,7 +85,7 @@ test("round 2 refuses to start until BOTH arms independently produce verified ow
   const baseline=fakeOwnFeedback(s,"baseline",1);
   assert.throws(()=>prepareRound(s,2,{baseline}),/INDEPENDENT_OWN_FEEDBACK_REQUIRED:gate_keeper/);
   const forged={...baseline,arm:"gate_keeper"};
-  assert.throws(()=>prepareRound(s,2,{baseline,gate_keeper:forged}),/INDEPENDENT_OWN_FEEDBACK_REQUIRED:gate_keeper/);
+  assert.throws(()=>prepareRound(s,2,{baseline,gate_keeper:forged}),/LEARNING_TURN_REUSED/);
   const unverified={...baseline,evaluatorChecked:false};
   assert.throws(()=>prepareRound(s,2,{baseline:unverified,gate_keeper:fakeOwnFeedback(s,"gate_keeper",1)}),/INDEPENDENT_OWN_FEEDBACK_REQUIRED:baseline/);
   const wrongModel={...baseline,model:"truefoundry/deepseek-v4-flash-0731"};
