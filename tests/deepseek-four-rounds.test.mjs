@@ -209,3 +209,37 @@ test("the command line only exposes status, never an execution or model-call com
   assert.throws(()=>execFileSync(process.execPath,[script.pathname,"--prepare-round-2"],{encoding:"utf8",stdio:"pipe"}),/Command failed/);
   assert.throws(()=>execFileSync(process.execPath,[script.pathname,"--run"],{encoding:"utf8",stdio:"pipe"}),/Command failed/);
 });
+
+test("Base44 model progression is source-bound and never fills missing rounds with scores",()=>{
+  const json=JSON.parse(readFileSync(new URL("../integrations/base44/data/deepseekFourRoundProgress.json",import.meta.url),"utf8"));
+  const first=JSON.parse(readFileSync(new URL("../proof/submissions/gk-playground-deepseek-20261102-a/summary.json",import.meta.url),"utf8"));
+  const component=readFileSync(new URL("../integrations/base44/components/GateKeeperBenchmark.jsx",import.meta.url),"utf8");
+  const p=progress();
+  assert.equal(json.studyId,p.studyId);
+  assert.equal(json.model,p.model);
+  assert.equal(json.channel,p.channel);
+  assert.equal(json.status,p.status);
+  assert.equal(json.totalReviewTurnsObserved,2);
+  assert.equal(json.reviewTurnsMissing,6);
+  assert.equal(json.currentGatewayChargeUsd,p.gatewayReportedCostUsd);
+  assert.equal(json.agents.length,2);
+  assert.ok(json.agents.every(x=>x.observedRounds===1&&x.requiredRounds===4&&x.observedOwnModelLearningCalls===0));
+  assert.deepEqual(json.rounds.map(x=>x.fixtureId),TASK_IDS);
+  assert.equal(json.rounds[0].baseline.detected,first.arms.baseline.detected_known_issues);
+  assert.equal(json.rounds[0].gate_keeper.detected,first.arms.gate_keeper.detected_known_issues);
+  assert.equal(json.rounds[0].baseline.gatewayChargeUsd,first.arms.baseline.gateway_reported_cost_usd);
+  assert.equal(json.rounds[0].gate_keeper.gatewayChargeUsd,first.arms.gate_keeper.gateway_reported_cost_usd);
+  for(const round of json.rounds.slice(1)){
+    assert.equal(round.baseline.status,"NOT_RUN");
+    assert.equal(round.gate_keeper.status,"NOT_RUN");
+    assert.equal(round.baseline.detected,null);
+    assert.equal(round.gate_keeper.detected,null);
+    assert.equal(round.baseline.gatewayChargeUsd,null);
+    assert.equal(round.gate_keeper.gatewayChargeUsd,null);
+  }
+  assert.equal(json.nativeTrueForgeAgentCompared,false);
+  assert.match(component,/DeepSeek four-round study progress/);
+  assert.match(component,/Not run/);
+  assert.match(component,/different fixture difficulty/i);
+  assert.doesNotMatch(component,/sessions\.create|createTurn|fetch\(/);
+});
