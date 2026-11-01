@@ -86,6 +86,7 @@ export function validatePublicProof(v){
  // For a PASS claim, every loop stage and both actual independent trials
  // must be present. A detached verifier still MUST authenticate the report.
  if(v.result==="PASS"){
+  if(v.environment.adjudicator_calibration!=="calibrated")fail("PASS requires an explicitly calibrated adjudicator");
   if(Object.values(v.loop).some(s=>s!=="PASS"))fail("cannot claim PASS with incomplete loop");
   if(v.arms.baseline.trials<1||v.arms.gate_keeper.trials<1)fail("cannot claim PASS without both arms");
   if(MEASURES.some(m=>v.arms.baseline[m]===null||v.arms.gate_keeper[m]===null))
