@@ -132,6 +132,12 @@ test("offline e2e (synthetic fake): orchestration completes, summary validates, 
   const all = r.lines.join("\n");
   assert.ok(!all.includes("SECRET_HOLDOUT"), "holdout content must never reach stdout");
   const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
+  // The candidate session IDs, private file paths and holdout-only results
+  // belong exclusively in the independent verifier's evidence storage.
+  assert.ok(data.sessions.every(s=>!("id" in s)&&!("task_id" in s)),"private session and holdout IDs must not leak");
+  assert.equal(data.evidence_items,undefined,"private evidence inventory paths must not be public");
+  assert.ok(data.private_evidence_item_count>0);
+  assert.ok(Object.values(data.arms).every(a=>!("holdout" in a)),"holdout-only grades stay private");
   const money = data.drill.cycles.filter((c) => c.fixture === "money");
   assert.ok(money.length === 2 && money.every((c) => c.outcome === "CANDIDATE" && c.attempts[0].verdict === "PASS" && c.attempts[0].patch_format === "edits" && c.origin_unchanged === true), JSON.stringify(money));
   const naive = data.drill.cycles.filter((c) => c.fixture === "uploads");
