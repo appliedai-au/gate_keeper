@@ -506,3 +506,29 @@ test("learning: rules are asked for in at most 40 words; length check allows a f
   assert.equal(atCap.length, MAX_RULE_CHARS);
   assert.equal(ruleRejection(atCap, []), null);
 });
+
+test("drill fixture set: standard by default, hard and all selectable, unknown set refused", async () => {
+  const { drillFixtureSet, REPAIR_FIXTURES, REPAIR_FIXTURES_HARD } = await import("../scripts/proof/live/run.mjs");
+  assert.deepEqual(drillFixtureSet({}), REPAIR_FIXTURES);
+  assert.deepEqual(drillFixtureSet({ GK_PROOF_DRILL_SET: "hard" }), REPAIR_FIXTURES_HARD);
+  assert.equal(drillFixtureSet({ GK_PROOF_DRILL_SET: "all" }).length, REPAIR_FIXTURES.length + REPAIR_FIXTURES_HARD.length);
+  assert.throws(() => drillFixtureSet({ GK_PROOF_DRILL_SET: "bogus" }), /DRILL_SET_INVALID/);
+});
+
+test("hard repair fixtures: shipped code fails at least one V-model level and every fixture is well formed", async () => {
+  const { REPAIR_FIXTURES_HARD } = await import("../scripts/proof/live/run.mjs");
+  const { loadVmodel } = await import("../scripts/proof/live/drill.mjs");
+  const { spawnSync } = await import("node:child_process");
+  const { join } = await import("node:path");
+  // A nested node --test inherits NODE_TEST_CONTEXT and would report to the parent instead of exiting non-zero.
+  const { NODE_TEST_CONTEXT, ...childEnv } = process.env;
+  for (const id of REPAIR_FIXTURES_HARD) {
+    const dir = join(import.meta.dirname, "..", "proof", "fixtures", id);
+    const v = loadVmodel(dir);
+    assert.equal(v.id, id);
+    assert.deepEqual(v.allowed_paths, [v.file]);
+    const failed = v.levels.filter((l) => spawnSync(l.cmd[0], l.cmd.slice(1), { cwd: dir, encoding: "utf8", env: childEnv }).status !== 0).map((l) => l.level);
+    assert.ok(failed.length > 0, `${id}: shipped code should fail at least one level`);
+    assert.ok(!failed.includes("static"), `${id}: shipped code should parse`);
+  }
+});

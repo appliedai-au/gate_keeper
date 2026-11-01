@@ -23,6 +23,15 @@ import { runLearning, LEARN_PHASE_SHARE } from "./learn.mjs";
 export { ADJUDICATOR, decodeHoldout, taskPrompt };
 
 export const REPAIR_FIXTURES = ["money", "uploads", "pagination", "escape", "redirect", "retry"];
+/** Harder repair set: subtle specs where the obvious minimal fix fails the threat model or architecture tests. */
+export const REPAIR_FIXTURES_HARD = ["csv", "semver", "merge", "ratelimit", "daykey"];
+export function drillFixtureSet(env) {
+  const set = env.GK_PROOF_DRILL_SET || "standard";
+  if (set === "standard") return REPAIR_FIXTURES;
+  if (set === "hard") return REPAIR_FIXTURES_HARD;
+  if (set === "all") return [...REPAIR_FIXTURES, ...REPAIR_FIXTURES_HARD];
+  throw new Error("DRILL_SET_INVALID");
+}
 const BASELINE_REPAIR = "You are a software engineer. Fix the reported problem with a minimal change that satisfies the requirements and threat model.";
 /** Gate adjudication counts only when every blocking index 0..n-1 is judged exactly once (last JSON block). */
 export function parseGateJudgements(text, n) {
@@ -131,6 +140,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   const budget = new BudgetController({ capUsd, phaseShare, model, now });
   const compArms = mode === "compare" ? comparisonArms(env) : null;
   const drillArms = mode === "compare" ? [...new Set((env.GK_PROOF_DRILL_ARMS || "baseline,gate_keeper").split(",").map((a) => a.trim()).filter(Boolean))] : [];
+  if (mode === "compare") drillFixtureSet(env); // fail before any spend on an unknown drill set
   if (mode === "compare" && (!drillArms.length || drillArms.some((a) => !validArmId(a)) || !drillArms.includes("gate_keeper"))) throw new Error("DRILL_ARMS_INVALID");
   const modelFor = (arm) => armModel(arm, model);
   // Every model a role or arm will use must be registered in TrueForge before any spend.
@@ -330,12 +340,14 @@ export function emitChunked(log, key, value) {
 // ---------- autonomous repair-loop drill ----------
 async function runDrill({ model, adjudicatorModel, drillArms, repairerFor, budget, callTurn, newSession, ev, emit, env }) {
   const work = mkdtempSync(join(tmpdir(), "gk-drill-"));
-  const fixtures = Object.fromEntries([...REPAIR_FIXTURES, "archive"].map((id) => [id, join(ROOT, "proof", "fixtures", id)]));
+  const drillSet = drillFixtureSet(env);
+  const fixtures = Object.fromEntries([...new Set([...drillSet, "money", "archive"])].map((id) => [id, join(ROOT, "proof", "fixtures", id)]));
   const params = { temperature: 0, maxTokens: 2500 };
   const cycles = [], lessons = [], events = [];
   let reAdjSession = null;
   // Lesson capture and the repeat-after-improvement cycles run on the default gate_keeper arm (validated in main).
   events.push({ check: "drill_arms", arms: drillArms });
+  events.push({ check: "drill_fixture_set", set: env.GK_PROOF_DRILL_SET || "standard", fixtures: drillSet });
   const stage = Object.fromEntries(REQUIRED_STAGES.map((s) => [s, "NOT_RUN"]));
   const mark = (s, v) => { if (stage[s] !== "FAIL") stage[s] = v === "PASS" && stage[s] === "BLOCKED" ? "BLOCKED" : v; };
 
@@ -463,7 +475,7 @@ async function runDrill({ model, adjudicatorModel, drillArms, repairerFor, budge
     events.push({ check: "harness_negative_control", patch_applied: ncPatch.applied, verdict: ncVal.verdict, levels: ncVal.levels, discard: ncDiscard, origin: ncOrigin });
     mark("rollback_failure_drill", ncVal.verdict === "FAIL" && ncDiscard.discarded && ncOrigin.unchanged ? "PASS" : "FAIL");
 
-    for (const fixtureId of REPAIR_FIXTURES) for (const arm of shuffle(drillArms)) cycles.push(await cycle(arm, fixtureId, { label: `${arm}-${fixtureId}` }));
+    for (const fixtureId of drillSet) for (const arm of shuffle(drillArms)) cycles.push(await cycle(arm, fixtureId, { label: `${arm}-${fixtureId}` }));
 
     // Capture tenant-private lessons from Gate Keeper's own runs.
     const lessonSession = await newSession({ model: { name: model, params: { temperature: 0, maxTokens: 400 } }, instructions: LESSON_WRITER, config: RUNTIME_CONFIG }, { phase: "drill", role: "lesson" });

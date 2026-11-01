@@ -1,0 +1,11 @@
+{
+  "id": "daykey", "tenant": "tenant-lima", "file": "src/daykey.js", "allowed_paths": ["src/daykey.js"], "max_changed_lines": 40,
+  "context": "Groups sales events (UTC epoch milliseconds) into Melbourne calendar days for the daily sales report.",
+  "levels": [
+    {"level": "acceptance", "verifies": "requirements", "doc": "REQUIREMENTS.md", "cmd": ["node", "--test", "test/acceptance.test.mjs"]},
+    {"level": "adversarial", "verifies": "threat model", "doc": "THREATS.md", "cmd": ["node", "--test", "test/adversarial.test.mjs"]},
+    {"level": "integration", "verifies": "architecture", "doc": "ARCHITECTURE.md", "cmd": ["node", "--test", "test/integration.test.mjs"]},
+    {"level": "unit", "verifies": "implementation", "cmd": ["node", "--test", "test/unit.test.mjs"]},
+    {"level": "static", "verifies": "implementation", "cmd": ["node", "--check", "src/daykey.js"]}
+  ]
+}
