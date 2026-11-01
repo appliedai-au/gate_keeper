@@ -184,7 +184,12 @@ test("new rounds cannot be recorded without independently correlated traces; dup
   assert.equal(progress(s).observedGatewayTurns,2,"original study stays immutable");
   assert.equal(staged.learning.baseline[0].arm,"baseline");
   assert.equal(staged.learning.gate_keeper[0].arm,"gate_keeper");
-  assert.throws(()=>recordObservedPair(staged,2,bundle,evidence,feedback),/PREVIOUS_ROUND_INCOMPLETE_OR_DUPLICATE/);
+  assert.throws(()=>recordObservedPair(staged,2,bundle,evidence,feedback),/LEARNING_TURN_REUSED/);
+  const alternateFeedback={
+    baseline:{...feedback.baseline,learningTurnId:"learning-"+sha256("attempt-two-baseline")},
+    gate_keeper:{...feedback.gate_keeper,learningTurnId:"learning-"+sha256("attempt-two-gate_keeper")},
+  };
+  assert.throws(()=>prepareRound(staged,2,alternateFeedback),/PREVIOUS_ROUND_INCOMPLETE_OR_DUPLICATE/);
 });
 
 test("adversarial replay: shared self-reflection turn is never accepted for two reviewers",()=>{
