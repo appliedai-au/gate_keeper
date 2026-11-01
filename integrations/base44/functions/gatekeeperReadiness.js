@@ -87,7 +87,15 @@ Deno.serve(async (request) => {
       reviewEnabled: false, status: "runtime_unavailable", checkedAt,
     }, 503);
 
-    const agents = await get("/api/v1/agents", authorization, true);
+    let agents;
+    try {
+      agents = await get("/api/v1/agents", authorization, true);
+    } catch {
+      return reply({
+        runtimeReachable: true, agentRegistered: false, modelDeclared: false,
+        reviewEnabled: false, status: "agent_metadata_unavailable", checkedAt,
+      }, 503);
+    }
     // TrueForge returns { data: [...] } through its SDK; handle bare-list
     // and common collection wrappers conservatively, never assume success.
     const candidates = Array.isArray(agents) ? agents :
