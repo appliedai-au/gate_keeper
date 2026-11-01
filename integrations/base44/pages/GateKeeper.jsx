@@ -209,7 +209,7 @@ export default function GateKeeper() {
         <main id="gk-main-content" className="gk-content">
           {page === "Overview" && <AdversarialLab onReview={() => navigate("Review")} onControls={() => navigate("Settings")} />}
           {page === "Review" && <Review onControls={() => navigate("Settings")} />}
-          {(page === "Runs" || page === "Evidence") && <GateKeeperBenchmark section={page} />}
+          {(page === "Runs" || page === "Evidence") && <GateKeeperBenchmark key={page} section={page} />}
           {page === "Settings" && <Settings />}
           <footer className="gk-footer"><span>GATE / KEEPER</span><span>REVIEW WITH EVIDENCE. SHIP WITH INTENT.</span><span>SAMPLE UI · NOT LIVE AI OUTPUT</span></footer>
         </main>
