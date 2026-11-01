@@ -73,7 +73,7 @@
     },
     {
       "round": 4,
-      "fixtureId": "04-ts-fetch",
+      "fixtureId": "05-ts-task-pagination",
       "baseline": {
         "status": "NOT_RUN",
         "detected": null,
@@ -98,6 +98,7 @@
     "The only two observed review calls were a direct TrueFoundry Playground prompt comparison, not a native TrueForge agent experiment.",
     "No individual agent learning has been observed; round 1 is not proof of self-improvement.",
     "Different public fixtures per round limit causal conclusions about improvement.",
-    "Actual sponsor-credit deduction is not independently itemised."
+    "Actual sponsor-credit deduction is not independently itemised.",
+    "The original proposed fourth fixture is marked holdout=true; it is intentionally excluded and replaced by a separate public task."
   ]
 }
