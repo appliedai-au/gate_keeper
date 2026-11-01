@@ -187,6 +187,33 @@ test("new rounds cannot be recorded without independently correlated traces; dup
   assert.throws(()=>recordObservedPair(staged,2,bundle,evidence,feedback),/PREVIOUS_ROUND_INCOMPLETE_OR_DUPLICATE/);
 });
 
+test("adversarial replay: shared self-reflection turn is never accepted for two reviewers",()=>{
+  const s=state(),{feedback}=nextRound(s,2);
+  const reused={...feedback,gate_keeper:{...feedback.gate_keeper,
+    learningTurnId:feedback.baseline.learningTurnId}};
+  assert.throws(()=>prepareRound(s,2,reused),/LEARNING_TURN_REUSED/);
+  const replayReview={...feedback,baseline:{...feedback.baseline,
+    learningTurnId:"learning-" + s.rounds[0].arms.baseline.traceIdSuffix}};
+  assert.throws(()=>prepareRound(s,2,replayReview),/LEARNING_REVIEW_TRACE_COLLISION/);
+});
+
+test("adversarial replay: gateway trace references and response digests cannot be re-used across rounds",()=>{
+  const s=state(),one=nextRound(s,2);
+  const withSecond=recordObservedPair(s,2,one.bundle,mockEvidence(one.bundle,2),one.feedback);
+  const next=nextRound(withSecond,3);
+  const replayTrace=mockEvidence(next.bundle,3);
+  replayTrace.baseline.gatewayTraceRef=withSecond.rounds[1].arms.baseline.traceIdSuffix;
+  assert.throws(()=>recordObservedPair(withSecond,3,next.bundle,replayTrace,next.feedback),
+    /NEW_GATEWAY_TRACE_NOT_CORRELATED:baseline/);
+  const replayDigest=mockEvidence(next.bundle,3);
+  replayDigest.gate_keeper.rawOutputSha256=withSecond.rounds[1].arms.baseline.rawOutputSha256;
+  assert.throws(()=>recordObservedPair(withSecond,3,next.bundle,replayDigest,next.feedback),
+    /NEW_GATEWAY_TRACE_NOT_CORRELATED:gate_keeper/);
+  const reusedFeedback={...next.feedback,baseline:{...next.feedback.baseline,
+    learningTurnId:withSecond.learning.gate_keeper[0].learningTurnId}};
+  assert.throws(()=>prepareRound(withSecond,3,reusedFeedback),/LEARNING_TURN_REUSED/);
+});
+
 test("staged four-round mock never becomes certified learning or native TrueForge evidence",()=>{
   let s=state();
   for(let n=2;n<=4;n++){
