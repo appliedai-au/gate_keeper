@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {
-  validateGatewayUrl,buildProviderManifest,assessGatewayReadiness,inspectGatewayReadOnly,
+  validateGatewayUrl,validateTrueForgeHost,buildProviderManifest,assessGatewayReadiness,inspectGatewayReadOnly,
 } from "../scripts/truefoundry/gateway.mjs";
 
 const gateway="https://stranger-builds.truefoundry.cloud/api/llm";
@@ -116,4 +116,25 @@ test("profile cannot silently replace Claude Fable with another model",()=>{
  assert.equal(profile.release.allowSilentFallback,false);
  assert.equal(profile.release.allowPaidInferenceInSetup,false);
  assert.equal(profile.release.productionChangeApproved,false);
+});
+
+test("TrueForge metadata preflight refuses arbitrary hosts before sending a token",()=>{
+ const approved=["trueforge.example.com"];
+ assert.equal(validateTrueForgeHost("http://trueforge.railway.internal:8080"),"http://trueforge.railway.internal:8080");
+ assert.equal(validateTrueForgeHost("https://trueforge.example.com",{
+  approvedHosts:approved,tokenPresent:true,
+ }),"https://trueforge.example.com");
+ for(const value of [
+  "https://evil.example.com", "http://evil.railway.internal:8080",
+  "http://trueforge.railway.internal:8888","https://trueforge.example.com@evil.example.com",
+  "https://trueforge.example.com/?token=123",
+  "https://trueforge.example.com/private", "file:///etc/passwd",
+  "https://trueforge.example.com#frag",
+ ]){
+   assert.throws(()=>validateTrueForgeHost(value,{approvedHosts:approved,tokenPresent:true}),
+       /TRUEFOUNDRY_GATEWAY_REJECTED/,value);
+ }
+ assert.throws(()=>validateTrueForgeHost("https://trueforge.example.com",{
+  approvedHosts:approved,tokenPresent:false,
+ }),/TRUEFOUNDRY_GATEWAY_REJECTED/);
 });
