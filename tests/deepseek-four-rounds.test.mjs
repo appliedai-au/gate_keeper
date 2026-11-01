@@ -206,6 +206,14 @@ test("the command line only exposes status, never an execution or model-call com
   const data=JSON.parse(out);
   assert.equal(data.observedGatewayTurns,2);
   assert.equal(data.missingGatewayTurns,6);
+  const requests=JSON.parse(execFileSync(process.execPath,[script.pathname,"--reflection-round-1"],{encoding:"utf8"}));
+  assert.deepEqual(Object.keys(requests),ARMS);
+  assert.equal(requests.baseline.model,MODEL);
+  assert.equal(requests.gate_keeper.model,MODEL);
+  assert.equal(requests.baseline.systemSha256,requests.gate_keeper.systemSha256);
+  assert.notEqual(requests.baseline.userSha256,requests.gate_keeper.userSha256);
+  assert.equal(requests.baseline.learningOnly,true);
+
   assert.throws(()=>execFileSync(process.execPath,[script.pathname,"--prepare-round-2"],{encoding:"utf8",stdio:"pipe"}),/Command failed/);
   assert.throws(()=>execFileSync(process.execPath,[script.pathname,"--run"],{encoding:"utf8",stdio:"pipe"}),/Command failed/);
 });
