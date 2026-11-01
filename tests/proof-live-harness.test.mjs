@@ -127,6 +127,8 @@ test("offline e2e (synthetic fake): orchestration completes, summary validates, 
   assert.equal(validatePublicProof(summary).valid, true);
   assert.equal(summary.result, "INCONCLUSIVE");
   assert.equal(summary.arms.baseline.trials, 2);
+  assert.equal(summary.arms.baseline.actual_cost_usd,null,"TrueForge turn estimates are NOT independently invoiced actual costs");
+  assert.equal(summary.arms.gate_keeper.actual_cost_usd,null);
   assert.equal(summary.loop.independent_qualification, "BLOCKED");
   assert.equal(summary.loop.rollback_failure_drill, "PASS");
   const all = r.lines.join("\n");
