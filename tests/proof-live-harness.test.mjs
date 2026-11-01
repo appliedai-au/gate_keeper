@@ -489,3 +489,11 @@ test("provider-remove: deletes exactly the named provider (no model calls), conf
 test("provider-remove fails closed when the provider is still listed after delete", () => {
   assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct" }, fake: { deleteNoop: true } }), /PROVIDER_REMOVE_NOT_CONFIRMED/);
 });
+
+test("learning: rules are asked for in at most 40 words; length check allows a full sentence but rejects merged essays", async () => {
+  const { ruleRejection, LEARN_SELECT, MAX_RULE_WORDS } = await import("../scripts/proof/live/learn.mjs");
+  assert.match(LEARN_SELECT, new RegExp(`at most ${MAX_RULE_WORDS} words`));
+  const sentence = "Only report an unvalidated input as a defect when it reaches a sensitive sink and no earlier guard, schema or type check constrains it, and say which input reaches it.";
+  assert.equal(ruleRejection(sentence, []), null);
+  assert.equal(ruleRejection(Array(80).fill("word").join(" "), []), "LENGTH");
+});
