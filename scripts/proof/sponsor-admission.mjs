@@ -56,7 +56,7 @@ export function verifySponsorAdmission({
   now = Date.now(),
 } = {}) {
   smokePlan({ model });
-  if (!validHash(pinnedKeySha256) || !exact(publicKeyPem) ||
+  if (!validHash(pinnedKeySha256) || typeof publicKeyPem !== "string" || publicKeyPem.length === 0 ||
       digest(publicKeyPem) !== pinnedKeySha256) fail("TRUSTED_ISSUER_KEY_NOT_PINNED");
   if (!evidence || typeof evidence !== "object" ||
       !evidence.statement || typeof evidence.signature !== "string" ||
@@ -92,7 +92,7 @@ export function verifySponsorAdmission({
       p.scope !== "per-virtual-account" || p.mode !== "Enforce" ||
       p.period !== "Lifetime" || p.currency !== "USD" ||
       !Number.isFinite(p.limitUsd) || p.limitUsd <= 0 || p.limitUsd > MAX_CAP_USD ||
-      p.remainingUsd <= 0 || p.remainingUsd > p.limitUsd)
+      !Number.isFinite(p.remainingUsd) || p.remainingUsd <= 0 || p.remainingUsd > p.limitUsd)
     fail("GATEWAY_BUDGET_NOT_ENFORCED");
   if (s.maxTurns !== 2 || s.maxOutputTokensPerTurn !== 500 ||
       s.noAutomaticRetry !== true || s.allowTools !== false ||
