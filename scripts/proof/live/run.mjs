@@ -291,7 +291,11 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
       try {
         const { session, turns } = await exportSessionTrace(s.id);
         ev.put(`private/sessions/${s.id}.json`, { meta: s, session, turns }, "trueforge_session_trace");
-      } catch (e) { limitations.push(`Session ${s.id} export failed: ${String(e?.message || e).slice(0, 120)}`); }
+      } catch {
+        // Public log messages must not disclose session IDs, SDK errors or
+        // private export object names. Missing evidence blocks qualification.
+        limitations.push("PRIVATE_SESSION_TRACE_EXPORT_FAILED");
+      }
     }
     ev.put("private/spend-ledger.json", { snapshot: budget.snapshot(), ledger: budget.ledger }, "spend_ledger");
     const upload = await uploadEvidence();
@@ -310,9 +314,9 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     limitations.push("Holdouts were written by the evaluator (Claude), not by an independent party");
     const hashes = instructionHashes();
     const publicData = { mode: "learn", run_id: runId, source_commit: sourceCommit, preflight, candidate_model: model, adjudicator_model: adjudicatorModel, adjudicator_calibration: adjudicatorCalibration, learning_model: learningModel, learning: learning.public, budget: budget.snapshot(),
-      sessions: sessions.map((s) => ({ id: s.id, phase: s.phase, arm: s.arm, trial: s.trial, role: s.role })), blockers, limitations,
+      sessions: sessions.map((s) => ({ phase: s.phase, arm: s.arm, trial: s.trial, role: s.role })), blockers, limitations,
       hashes: { ...hashes, ...learning.hashes, evidence_manifest_sha256: manifest.sha256 },
-      evidence_items: manifest.body.items.map(({ kind, path, sha256: h, bytes }) => ({ kind, path, sha256: h, bytes })), upload, elapsed_ms: now() - t0 };
+      private_evidence_item_count: manifest.body.items.length, upload, elapsed_ms: now() - t0 };
     emitChunked(log, "GK_PROOF_PUBLIC_DATA", publicData);
     emit("GK_PROOF_DONE", { run_id: runId, mode, spent_usd: budget.snapshot().spent_usd, evidence_manifest_sha256: manifest.sha256 });
     return { publicData };
@@ -341,10 +345,19 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
       public: aggregateArm(arm, scored, judgements, blindKey, { holdoutOnly: false }),
       holdout: holdout.tasks.length ? aggregateArm(arm, scored, judgements, blindKey, { holdoutOnly: true }) : null,
       deterministic_score_mean: (() => { const xs = scored.filter((r) => r.arm === arm).map((r) => r.deterministic.score); return xs.length ? Math.round((100 * xs.reduce((s, x) => s + x, 0)) / xs.length * 100) / 100 : null; })(),
-      malformed_findings: scored.filter((r) => r.arm === arm).reduce((s, r) => s + (r.findings || []).filter((f) => !validFinding(f)).length, 0),
     };
   }
-  emit("GK_PROOF_COMPARISON", { complete_trials: completeTrials, arms, budget: budget.snapshot() });
+  // Do not publish holdout-only aggregates, session references or internal
+  // private evidence item paths in human-readable logs. The full record stays
+  // within the isolated evidence store for the independent verifier.
+  // Public + all would reveal hidden holdout counts by subtraction, even
+  // without an explicit 'holdout' property. Publish ONLY the public-task
+  // aggregate. The full all/holdout outcomes are stored privately.
+  ev.put("private/comparison-aggregates.json", arms, "private_comparison_metrics");
+  const publicArms = Object.fromEntries(Object.entries(arms).map(([name, a]) => [
+    name, { public: a.public },
+  ]));
+  emit("GK_PROOF_COMPARISON", { complete_trials: completeTrials, arms: publicArms, budget: budget.snapshot() });
 
   // ---------- 3. autonomous loop drill on disposable fixtures ----------
   const drill = await runDrill({ tf, model, adjudicatorModel, drillArms, repairerFor, budget, callTurn, newSession, ev, emit, env });
@@ -357,12 +370,17 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   blockers.push("No independent budget gateway lease: spend was capped by the evaluator process (outside the agents), not a signed gateway");
   limitations.push(adjudicatorModel === model ? "Adjudicator is a separate, blinded TrueForge session on the same model as the candidates, not a human or a different model family"
     : `Adjudicator is a separate, blinded session on a different model (${adjudicatorModel}) from the same provider family, not a human`);
-  limitations.push("actual_cost_usd is TrueForge's per-turn cost estimate (turn metrics), not a provider billing statement");
+  limitations.push("actual_cost_usd remains null until independently verified provider billing is available; TrueForge turn estimates are not invoices");
+  limitations.push("Published comparison scores cover public tasks only; holdout-only and combined scores remain in private evidence");
+  if (compArms.some((a) => arms[a].all.unjudged_findings || arms[a].all.unparseable_replies))
+    blockers.push("Some review outputs or adjudications were incomplete; qualification requires complete independently judged findings");
   limitations.push("Node permission sandbox confines candidate file reads but not network sockets; network access by candidate code is blocked only by the patch denylist");
   limitations.push("Re-review gate precision is judged by a same-model blinded adjudicator session");
   if (!preflight.sandbox_enabled) limitations.push("TrueForge sandbox provider not enabled; candidate patches were validated in a disposable clone inside the one-shot runner container");
   const pick = (a) => a ? ({ trials: a.trials, defect_recall: a.defect_recall, precision: a.precision, explanation_correctness: a.explanation_correctness,
-    severity_accuracy: a.severity_accuracy, median_latency_ms: a.median_latency_ms, total_tokens: a.total_tokens, actual_cost_usd: a.trueforge_estimated_cost_usd }) : null;
+    severity_accuracy: a.severity_accuracy, median_latency_ms: a.median_latency_ms, total_tokens: a.total_tokens,
+    // TrueForge estimates are not invoice-verified gateway costs.
+    actual_cost_usd: null }) : null;
   const hashes = instructionHashes();
   const summary = {
     schema: "gate-keeper-public-proof-v1", run_id: runId, submitted_at: new Date(now()).toISOString(),
@@ -370,22 +388,23 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     source: { repository: "appliedai-au/gate_keeper", gate_keeper_commit: sourceCommit, baseline_instructions_sha256: hashes.baseline_instructions_sha256,
       gate_keeper_instructions_sha256: hashes.gate_keeper_instructions_sha256, scorer_sha256: hashes.scorer_sha256 },
     environment: { trueforge_version: TRUEFORGE_RUNTIME, model_id: model, adjudicator_model_id: adjudicatorModel, adjudicator_calibration: adjudicatorCalibration, arm_models: Object.fromEntries(compArms.map((a) => [a, modelFor(a)])), drill_arm_repair_models: Object.fromEntries(drillArms.map((a) => [a, repairerFor(a)])), provider: model.split("/")[0], sandbox_provider: preflight.sandbox_enabled ? "trueforge-configured" : "none (disposable runner clone)" },
-    benchmark: { id: `public evals/tasks (${publicTasks.length}) + owner-private holdout (${holdout.tasks.length})`, sha256: sha256(publicBenchmarkSha(publicTasks) + ":" + (holdout.sha256 || "none")), holdout_private: true },
+    benchmark: { id: `public evals/tasks (${publicTasks.length}) + owner-private holdout (${holdout.tasks.length})`, sha256: sha256(publicBenchmarkSha(publicTasks) + ":" + (holdout.sha256 || "none")), holdout_private: true,
+      published_metric_scope: "public_tasks_only" },
     fairness: { same_model: true, same_provider: true, same_inputs: true, same_scoring: true, same_limits: true },
-    arms: { baseline: pick(arms.baseline.all) || emptyArm(), gate_keeper: pick(arms.gate_keeper.all) || emptyArm() },
+    arms: { baseline: pick(arms.baseline.public) || emptyArm(), gate_keeper: pick(arms.gate_keeper.public) || emptyArm() },
     loop: drill.stages,
     evidence: [{ kind: "private_evidence_manifest", private_reference: upload.reference || "runner-local (upload failed)", sha256: manifest.sha256 }],
     blockers, limitations,
   };
-  for (const arm of compArms) if (!(arm in summary.arms)) summary.arms[arm] = pick(arms[arm].all) || emptyArm();
+  for (const arm of compArms) if (!(arm in summary.arms)) summary.arms[arm] = pick(arms[arm].public) || emptyArm();
   const variants = compArms.filter((a) => a.includes("@"));
   if (variants.length) limitations.push(`Model-comparison arms (${variants.join(", ")}) use the same method on a different model; fairness flags apply to the primary baseline/gate_keeper pair on ${model}`);
   for (const arm of compArms) if (!completeTrials.length) summary.arms[arm] = emptyArm();
   if (!completeTrials.length) summary.fairness = { same_model: null, same_provider: null, same_inputs: null, same_scoring: null, same_limits: null };
   validatePublicProof(summary);
-  const publicData = { preflight, complete_trials: completeTrials, arms, drill: drill.public, budget: budget.snapshot(), sessions: sessions.map((s) => ({ id: s.id, phase: s.phase, arm: s.arm, trial: s.trial })),
+  const publicData = { preflight, complete_trials: completeTrials, arms: publicArms, drill: drill.public, budget: budget.snapshot(), sessions: sessions.map((s) => ({ phase: s.phase, arm: s.arm, trial: s.trial })),
     hashes: { ...hashes, public_benchmark_sha256: publicBenchmarkSha(publicTasks), private_holdout_sha256: holdout.sha256, evidence_manifest_sha256: manifest.sha256 },
-    evidence_items: manifest.body.items.map(({ kind, path, sha256: h, bytes }) => ({ kind, path, sha256: h, bytes })), upload, elapsed_ms: now() - t0 };
+    private_evidence_item_count: manifest.body.items.length, upload, elapsed_ms: now() - t0 };
   emitChunked(log, "GK_PROOF_PUBLIC_SUMMARY", summary);
   emitChunked(log, "GK_PROOF_PUBLIC_DATA", publicData);
   emit("GK_PROOF_DONE", { run_id: runId, spent_usd: budget.snapshot().spent_usd, evidence_manifest_sha256: manifest.sha256 });

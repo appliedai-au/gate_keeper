@@ -4,19 +4,28 @@
 import { randomBytes, randomInt } from "node:crypto";
 import { CATEGORIES, SEVERITIES, severityFor } from "./config.mjs";
 
-/** Last ```json block (or bare JSON), same rule as evals/score.ts, keeping severity. */
+/** Last ```json block (or bare JSON). The frozen historical location
+ * scorer is not edited, but NEW benchmark adjudication rejects malformed
+ * findings rather than silently filtering invalid or invented fields. */
 export function parseFindingsWithSeverity(reply) {
   const blocks = [...String(reply || "").matchAll(/```json\s*\n([\s\S]*?)```/g)].map((m) => m[1]);
   const candidate = blocks.length ? blocks[blocks.length - 1] : reply;
   try {
     const obj = JSON.parse(String(candidate).trim());
-    if (!obj || !Array.isArray(obj.findings)) return null;
-    return obj.findings.filter((f) => f && typeof f === "object").map((f) => ({
-      line: Number(f.line),
-      category: String(f.category ?? "").toLowerCase().trim(),
-      severity: String(f.severity ?? "").toLowerCase().trim(),
-      comment: typeof f.comment === "string" ? f.comment.slice(0, 1200) : "",
-    }));
+    if (!obj || !Array.isArray(obj.findings) || obj.findings.length > 100) return null;
+    const findings = [];
+    for (const f of obj.findings) {
+      if (!f || typeof f !== "object" || Array.isArray(f) ||
+          !Number.isSafeInteger(f.line) || f.line < 1 ||
+          typeof f.category !== "string" || typeof f.severity !== "string" ||
+          typeof f.comment !== "string" || !f.comment.trim() ||
+          f.comment.length > 1200) return null;
+      const item = { line: f.line, category: f.category.toLowerCase().trim(),
+        severity: f.severity.toLowerCase().trim(), comment: f.comment };
+      if (!validFinding(item)) return null;
+      findings.push(item);
+    }
+    return findings;
   } catch { return null; }
 }
 
@@ -142,9 +151,15 @@ export function aggregateArm(arm, results, judgements, key, { holdoutOnly = null
   const trials = new Set(rows.map((r) => r.trial)).size;
   return {
     trials, turns: rows.length,
-    defect_recall: ratio(matchedFirst, expected),
-    precision: ratio(tp, tp + fp),
-    explanation_correctness: ratio(explOk, matchedFirst),
+    // If adjudicator decisions are missing, numerators are incomplete and
+    // false-positive denominators are unknowable. Never publish optimistic
+    // recall or precision as complete quality metrics.
+    defect_recall: unjudged ? null : ratio(matchedFirst, expected),
+    precision: unjudged ? null : ratio(tp, tp + fp),
+    explanation_correctness: unjudged ? null : ratio(explOk, matchedFirst),
+    explanation_validated_precision: unjudged ? null : ratio(explOk, tp + fp),
+    unsupported_explanations: matchedFirst - explOk,
+    adjudication_complete: unjudged === 0 && parseFail === 0,
     severity_accuracy: ratio(sevOk, matchedFirst),
     median_latency_ms: median(latencies),
     total_tokens: tokensKnown && rows.length ? tokens : null,

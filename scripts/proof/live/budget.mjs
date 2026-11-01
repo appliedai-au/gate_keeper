@@ -77,7 +77,10 @@ export class BudgetController {
       cap_usd: this.capUsd, model: this.model, list_price_per_mtok: this.price,
       spent_usd: round(this.spent), reserved_usd: round(this.reserved),
       phase_caps_usd: mapRound(this.phaseCaps), phase_spent_usd: mapRound(this.phaseSpent),
-      calls: this.ledger.length, refusals: this.refusals,
+      // The private ledger keeps full labels for forensic reconciliation.
+      // Public snapshots must not expose hidden fixture IDs in refusals.
+      calls: this.ledger.length,
+      refusals: this.refusals.map(({at, phase, requested_usd}) => ({at, phase, requested_usd})),
       cost_sources: countBy(this.ledger.filter((e) => e.state === "settled"), "cost_source"),
     };
   }
