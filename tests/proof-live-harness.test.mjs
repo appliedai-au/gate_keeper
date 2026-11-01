@@ -314,8 +314,9 @@ test("offline e2e (synthetic fake): population learning - tenants' errors become
 });
 
 test("offline e2e (synthetic fake): non-consenting tenants stay private and cannot carry a shared rule", () => {
-  const r = e2e({ env: { GK_PROOF_MODE: "learn", GK_LEARN_NON_CONSENTING: "tenant-a", GK_OWNER_ALLOWS_CORE_CANDIDATES: "1" }, fake: { learnedHelps: true } });
+  const r = e2e({ env: { GK_PROOF_MODE: "learn", GK_LEARN_NON_CONSENTING: "tenant-a", GK_OWNER_ALLOWS_CORE_CANDIDATES: "1", GK_LEARN_PROVE_BASELINE: "0" }, fake: { learnedHelps: true } });
   const L = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA").learning;
+  assert.deepEqual(Object.keys(L.new_tenant).sort(), ["gate_keeper", "gate_keeper_learned"]);
   assert.equal(L.tenant_lessons["tenant-a"].consenting, false);
   assert.ok(L.tenant_lessons["tenant-a"].lessons > 0, "lessons are still captured privately for the tenant");
   assert.equal(L.rules[0].independent_tenants, 2, "only consenting tenants count as support");

@@ -19,7 +19,7 @@ import { RUNTIME_CONFIG, armInstructions, learnedRulesSection, sha256 } from "./
 import { aggregateArm, answerKey } from "./metrics.mjs";
 import { adjudicateTasks, decodeHoldout, numbered, reviewErrors, reviewTasks } from "./review.mjs";
 
-export const LEARN_PHASE_SHARE = { dev: 0.25, learn: 0.08, qualify: 0.25, prove: 0.42 };
+export const LEARN_PHASE_SHARE = { dev: 0.24, learn: 0.14, qualify: 0.24, prove: 0.38 };
 export const MAX_RULES = 6;
 export const POPULATION_MIN_TENANTS = 2;
 export const TENANT_SIZE = 2;
@@ -224,7 +224,8 @@ export async function runLearning({ env, model, publicTasks, budget, callTurn, n
   // E. New-tenant proof, only for qualified shared rules: three arms, identical inputs, blinded adjudication.
   let proved = null;
   if (qualified) {
-    const arms = ["baseline", "gate_keeper", "gate_keeper_learned"];
+    // The criterion compares the same adversarial reviewer with and without shared rules; plain TrueForge is optional context.
+    const arms = env.GK_LEARN_PROVE_BASELINE === "0" ? ["gate_keeper", "gate_keeper_learned"] : ["baseline", "gate_keeper", "gate_keeper_learned"];
     const p = await reviewTasks({ tasks: newTenantTasks, arms, instructionsFor: learnedFor, phase: "prove", tag: "prove/", ...common });
     if (!p.completeTrials.length) stages.new_tenant_proof = "INCOMPLETE";
     else {
