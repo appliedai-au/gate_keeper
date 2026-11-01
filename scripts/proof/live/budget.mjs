@@ -24,23 +24,24 @@ export class BudgetController {
     this.now = now;
     this.seq = 0;
   }
-  estimate(inputChars, maxOutputTokens) {
-    if (!this.price) return UNKNOWN_MODEL_TURN_RESERVE_USD;
+  estimate(inputChars, maxOutputTokens, price = this.price) {
+    if (!price) return UNKNOWN_MODEL_TURN_RESERVE_USD;
     const inTok = Math.ceil(inputChars / 3) + 200; // conservative chars->tokens
-    return (inTok * this.price[0] + maxOutputTokens * this.price[1]) / 1e6;
+    return (inTok * price[0] + maxOutputTokens * price[1]) / 1e6;
   }
-  /** Reserve before a call. Returns a reservation or null when refused. */
-  reserve(phase, label, inputChars, maxOutputTokens) {
+  /** Reserve before a call (priced for the call's own model when given). Returns a reservation or null when refused. */
+  reserve(phase, label, inputChars, maxOutputTokens, model = null) {
     if (!(phase in this.phaseCaps)) throw new Error("BUDGET_UNKNOWN_PHASE");
-    const amount = this.estimate(inputChars, maxOutputTokens);
+    const price = model ? priceFor(model) : this.price;
+    const amount = this.estimate(inputChars, maxOutputTokens, price);
     const phaseUsed = this.phaseSpent[phase] + this.pendingFor(phase);
     if (this.spent + this.reserved + amount > this.capUsd || phaseUsed + amount > this.phaseCaps[phase]) {
       this.refusals.push({ at: new Date(this.now()).toISOString(), phase, label, requested_usd: round(amount) });
       return null;
     }
-    const r = { id: ++this.seq, phase, label, amount, open: true };
+    const r = { id: ++this.seq, phase, label, amount, price, model: model || this.model, open: true };
     this.reserved += amount;
-    this.ledger.push({ ...r, at: new Date(this.now()).toISOString(), state: "reserved" });
+    this.ledger.push({ id: r.id, phase, label, amount, model: r.model, at: new Date(this.now()).toISOString(), state: "reserved" });
     return r;
   }
   pendingFor(phase) {
@@ -52,13 +53,14 @@ export class BudgetController {
     r.open = false;
     let cost = null, source = "reservation";
     if (metrics && Number.isFinite(metrics.totalCostInUsd)) { cost = metrics.totalCostInUsd; source = "trueforge_turn_metric"; }
-    else if (metrics && this.price && Number.isFinite(metrics.totalInputTokens) && Number.isFinite(metrics.totalOutputTokens)) {
+    else if (metrics && r.price && Number.isFinite(metrics.totalInputTokens) && Number.isFinite(metrics.totalOutputTokens)) {
       // Cache tokens (when reported) are priced at the provider's cache rates: writes 1.25x and
       // reads 0.1x the input price. Input tokens are assumed to EXCLUDE cache tokens (Anthropic
       // usage semantics); if TrueForge folds them in, this over-counts, which is safe for a cap.
       const cw = Number.isFinite(metrics.totalCacheWriteTokens) ? metrics.totalCacheWriteTokens : 0;
       const cr = Number.isFinite(metrics.totalCacheReadTokens) ? metrics.totalCacheReadTokens : 0;
-      cost = (metrics.totalInputTokens * this.price[0] + cw * 1.25 * this.price[0] + cr * 0.1 * this.price[0] + metrics.totalOutputTokens * this.price[1]) / 1e6;
+      const pr = r.price;
+      cost = (metrics.totalInputTokens * pr[0] + cw * 1.25 * pr[0] + cr * 0.1 * pr[0] + metrics.totalOutputTokens * pr[1]) / 1e6;
       source = cw || cr ? "tokens_x_list_price_with_cache" : "tokens_x_list_price";
     }
     if (cost === null) cost = r.amount;

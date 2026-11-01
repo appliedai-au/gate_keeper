@@ -108,7 +108,7 @@ export function lostIssues(before, after, tenants, field) {
 }
 const countsOnly = (x) => x && { matched: x.matched, false_positives: x.false_positives, expected: x.expected, security_matched: x.securityIds.size };
 
-export async function runLearning({ env, model, publicTasks, budget, callTurn, newSession, ev, emit, limitations }) {
+export async function runLearning({ env, model, adjudicatorModel = model, learningModel = model, publicTasks, budget, callTurn, newSession, ev, emit, limitations }) {
   const dev = decodeHoldout(env.GK_DEV_HOLDOUT_B64);
   const unseen = decodeHoldout(env.GK_PRIVATE_HOLDOUT_B64);
   if (!unseen.tasks.length) throw new Error("UNSEEN_HOLDOUT_REQUIRED");
@@ -124,7 +124,7 @@ export async function runLearning({ env, model, publicTasks, budget, callTurn, n
   ev.put("private/learn/dev-tasks.json", dev.tasks, "private_dev_set");
   ev.put("private/learn/unseen-tasks.json", unseen.tasks, "private_holdout");
 
-  const common = { model, callTurn, newSession, limitations };
+  const common = { model, adjudicatorModel, callTurn, newSession, limitations };
   const stages = { dev_review: "NOT_RUN", tenant_lesson_capture: "NOT_RUN", population_ingestion: "NOT_RUN", qualification: "NOT_RUN", new_tenant_proof: "NOT_RUN" };
   const pub = { stages, criteria: {
     population_ingestion: `rule supported by >= ${POPULATION_MIN_TENANTS} consenting tenants and passes the anonymisation filter`,
@@ -156,7 +156,7 @@ export async function runLearning({ env, model, publicTasks, budget, callTurn, n
     falseAlarms += err.falseAlarms.length; misses += err.misses.length;
     if (!err.falseAlarms.length && !err.misses.length) continue;
     const tenant = r.task.tenant;
-    captureSession[tenant] ||= await newSession({ model: { name: model, params: { temperature: 0, maxTokens: 900 } }, instructions: LEARN_CAPTURE, config: RUNTIME_CONFIG }, { phase: "learn", role: "capture", tenant });
+    captureSession[tenant] ||= await newSession({ model: { name: learningModel, params: { temperature: 0, maxTokens: 900 } }, instructions: LEARN_CAPTURE, config: RUNTIME_CONFIG }, { phase: "learn", role: "capture", tenant });
     const prompt = [`Context: ${r.task.context}`, "```" + r.task.language, numbered(r.task.code), "```", "",
       "False alarms (judged not real):", "```json", JSON.stringify(err.falseAlarms.map(({ line, category, comment }) => ({ line, category, comment })), null, 1), "```", "",
       "Missed answer-key defects:", "```json", JSON.stringify(err.misses.map(({ line, categories, why }) => ({ line, categories, why })), null, 1), "```"].join("\n");
@@ -182,7 +182,7 @@ export async function runLearning({ env, model, publicTasks, budget, callTurn, n
   const tenantToLabel = new Map([...labelToTenant].map(([l, t]) => [t, l]));
   const pool = [...contributors].flatMap((t) => lessonsByTenant[t].map(({ error, rule, applies_when }) => ({ tenant: tenantToLabel.get(t), error, rule, applies_when })));
   if (contributors.size < POPULATION_MIN_TENANTS) { stages.population_ingestion = "FAIL"; pub.rules = []; return done(); }
-  const selectSession = await newSession({ model: { name: model, params: { temperature: 0, maxTokens: 1500 } }, instructions: LEARN_SELECT, config: RUNTIME_CONFIG }, { phase: "learn", role: "population-select" });
+  const selectSession = await newSession({ model: { name: learningModel, params: { temperature: 0, maxTokens: 1500 } }, instructions: LEARN_SELECT, config: RUNTIME_CONFIG }, { phase: "learn", role: "population-select" });
   const selOut = await callTurn("learn", "population-select", selectSession, "Contributed lessons:\n```json\n" + JSON.stringify(pool, null, 1) + "\n```", LEARN_SELECT.length, 1500);
   if (selOut.refused) { stages.population_ingestion = "INCOMPLETE"; return done(); }
   ev.put("private/learn/population-selection.json", { reply: selOut.text, turn_id: selOut.turnId, labels: Object.fromEntries(labelToTenant) }, "population_selection");

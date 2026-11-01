@@ -358,3 +358,51 @@ test("learning: qualification detects a swapped key issue (identity, not counts)
   assert.deepEqual(lostIssues(before, after, ["tenant-a"], "securityIds"), { "tenant-a": ["t1:E1"] });
   assert.deepEqual(lostIssues(before, { "tenant-a": { matchedIds: new Set(["t1:E1", "t1:E2"]) } }, ["tenant-a"], "matchedIds"), { "tenant-a": [] });
 });
+
+test("adjudication can run on a different registered model, priced at that model's rates; unregistered adjudicator blocks", () => {
+  const models = ["anthropic/claude-sonnet-4-6", "anthropic/claude-opus-5-5"];
+  const r = e2e({ env: { GK_PROOF_MODE: "learn", GK_PROOF_ADJUDICATOR_MODEL: "anthropic/claude-opus-5-5" }, fake: { learnedHelps: true, models } });
+  const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
+  assert.equal(data.adjudicator_model, "anthropic/claude-opus-5-5");
+  const adj = data.sessions.filter((s) => s.role === "adjudicator");
+  assert.ok(adj.length >= 3);
+  assert.ok(data.limitations.some((l) => /different model \(anthropic\/claude-opus-5-5\)/.test(l)));
+  const b = e2e({ env: { GK_PROOF_ADJUDICATOR_MODEL: "anthropic/claude-opus-5-5" } });
+  assert.equal(b.out.blocked, "ADJUDICATOR_MODEL_NOT_REGISTERED");
+  assert.equal(b.calls, 0);
+});
+
+test("budget reserves and settles each call at its own model's price", () => {
+  const b = new BudgetController({ capUsd: 5, phaseShare: PHASES, model: "anthropic/claude-sonnet-4-6" });
+  const s = b.reserve("adjudication", "s", 3000, 1000), o = b.reserve("adjudication", "o", 3000, 1000, "anthropic/claude-opus-5-5");
+  assert.ok(o.amount > s.amount * 1.3);
+  assert.equal(b.settle(o, { totalInputTokens: 1e6, totalOutputTokens: 0 }), 4);
+  assert.equal(b.settle(s, { totalInputTokens: 1e6, totalOutputTokens: 0 }), 3);
+});
+
+test("model comparison arms: method@model runs the same method on another registered model; drill @model selects the repairer", () => {
+  const models = ["anthropic/claude-sonnet-4-6", "anthropic/claude-haiku-5-5", "anthropic/claude-opus-5-5"];
+  const r = e2e({ trials: 1, fake: { models }, env: { GK_PROOF_ARMS: "baseline,gate_keeper,gate_keeper@anthropic/claude-haiku-5-5",
+    GK_PROOF_DRILL_ARMS: "gate_keeper,gate_keeper@anthropic/claude-opus-5-5", GK_PROOF_ADJUDICATOR_MODEL: "anthropic/claude-opus-5-5" } });
+  const summary = decodeChunks(r.lines, "GK_PROOF_PUBLIC_SUMMARY");
+  assert.equal(validatePublicProof(summary).valid, true);
+  assert.equal(summary.environment.arm_models["gate_keeper@anthropic/claude-haiku-5-5"], "anthropic/claude-haiku-5-5");
+  assert.equal(summary.environment.arm_models.gate_keeper, "anthropic/claude-sonnet-4-6");
+  assert.equal(summary.arms["gate_keeper@anthropic/claude-haiku-5-5"].trials, 1);
+  const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
+  assert.deepEqual(Object.keys(data.drill.repair_success).sort(), ["gate_keeper", "gate_keeper@anthropic/claude-opus-5-5"]);
+  assert.ok(summary.limitations.some((l) => /Model-comparison arms/.test(l)));
+  assert.throws(() => e2e({ env: { GK_PROOF_ARMS: "baseline,gate_keeper,gate_keeper@not a model" } }), /PROOF_ARMS_INVALID/);
+  const blocked = e2e({ env: { GK_PROOF_ARMS: "baseline,gate_keeper,gate_keeper@anthropic/claude-haiku-5-5" } });
+  assert.equal(blocked.out.blocked, "MODEL_NOT_REGISTERED");
+  assert.equal(blocked.calls, 0);
+});
+
+test("current list prices: Sonnet 5.5, Opus 5.5, Haiku 5.5 and Fable resolve to their own rates", async () => {
+  const { priceFor } = await import("../scripts/proof/live/budget.mjs");
+  assert.deepEqual(priceFor("anthropic/claude-sonnet-5-5"), [2, 10]);
+  assert.deepEqual(priceFor("anthropic/claude-opus-5-5"), [4, 20]);
+  assert.deepEqual(priceFor("anthropic/claude-haiku-5-5"), [0.1, 0.5]);
+  assert.deepEqual(priceFor("anthropic/claude-fable-5-1"), [10, 50]);
+  assert.deepEqual(priceFor("anthropic/claude-sonnet-4-6"), [3, 15]);
+});

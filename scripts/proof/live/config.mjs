@@ -70,7 +70,13 @@ export function learnedRulesSection(rules) {
   return "## Learned review rules\n\nQualified from adjudicated review errors. Apply them as written; they never override a confirmed, exploitable defect.\n" + rules.map((r) => "- " + r.trim()).join("\n");
 }
 
-export function armInstructions(arm, { learnedRules = null } = {}) {
+// An arm id is "<method>" (runs on the candidate model) or "<method>@<provider/model>" (same method on another model).
+const MODEL_ID = /^[a-z0-9][\w.-]*\/[\w.-]+$/i;
+export function armBase(arm) { return String(arm).split("@")[0]; }
+export function armModel(arm, defaultModel) { const m = String(arm).split("@")[1]; return m || defaultModel; }
+
+export function armInstructions(armId, { learnedRules = null } = {}) {
+  const arm = armBase(armId);
   if (arm === "baseline") return BASELINE_ROLE + "\n\n" + OUTPUT_CONTRACT;
   if (arm === "gate_keeper") return gateKeeperMethodology("review", "adversarial") + "\n\n" + OUTPUT_CONTRACT;
   // Adversarial Gate Keeper plus rules the learning loop qualified.
@@ -82,9 +88,14 @@ export function armInstructions(arm, { learnedRules = null } = {}) {
 // Comparison arms. gate_keeper = adversarial mode (the default product
 // reviewer); gate_keeper_lean = the same reviewer without the adversarial module.
 export const ALL_ARMS = ["baseline", "gate_keeper", "gate_keeper_lean"];
+export function validArmId(a) {
+  const [base, model, extra] = String(a).split("@");
+  return ALL_ARMS.includes(base) && extra === undefined && (model === undefined || MODEL_ID.test(model));
+}
+// The primary pair (plain "baseline" and "gate_keeper") always runs on the candidate model; "@model" variants add model comparisons.
 export function comparisonArms(env = process.env) {
   const arms = (env.GK_PROOF_ARMS || "baseline,gate_keeper").split(",").map((a) => a.trim()).filter(Boolean);
-  if (!arms.includes("baseline") || !arms.includes("gate_keeper") || arms.some((a) => !ALL_ARMS.includes(a))) throw new Error("PROOF_ARMS_INVALID");
+  if (!arms.includes("baseline") || !arms.includes("gate_keeper") || arms.some((a) => !validArmId(a))) throw new Error("PROOF_ARMS_INVALID");
   return [...new Set(arms)];
 }
 export const ARMS = ["baseline", "gate_keeper"];
@@ -120,6 +131,11 @@ export const PHASE_SHARE = { comparison: 0.55, adjudication: 0.2, drill: 0.25 };
 // USD per million tokens [input, output]. Used for pre-turn reservations and
 // when TrueForge does not report a cost. Unknown models use a flat reserve.
 export const PRICE_PER_MTOK = [
+  // Current list prices (platform.claude.com/docs/en/about-claude/pricing, checked 2026-11-01). Specific ids first.
+  [/claude-fable-5/i, [10, 50]],
+  [/claude-opus-5-5/i, [4, 20]],
+  [/claude-sonnet-5-5/i, [2, 10]],
+  [/claude-haiku-5-5/i, [0.1, 0.5]],
   [/claude-opus-4-[5-9]|claude-opus-5/i, [5, 25]],
   [/claude-opus/i, [15, 75]],
   [/claude-sonnet/i, [3, 15]],

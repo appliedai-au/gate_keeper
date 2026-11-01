@@ -37,12 +37,12 @@ export function decodeHoldout(b64) {
  * instructionsFor(arm) gives each arm's full system instructions.
  * Returns all results and the trials that completed without a budget/deadline stop.
  */
-export async function reviewTasks({ tasks, arms, instructionsFor, trials = 1, phase, model, callTurn, newSession, limitations, tag = "" }) {
+export async function reviewTasks({ tasks, arms, instructionsFor, modelFor = () => model, trials = 1, phase, model, callTurn, newSession, limitations, tag = "" }) {
   const results = [], completeTrials = [];
   for (let trial = 1; trial <= trials; trial++) {
     const sessionByArm = {};
     for (const arm of arms) sessionByArm[arm] = await newSession(
-      { model: { name: model, params: REVIEW_PARAMS }, instructions: instructionsFor(arm), config: RUNTIME_CONFIG }, { phase, arm, trial });
+      { model: { name: modelFor(arm), params: REVIEW_PARAMS }, instructions: instructionsFor(arm), config: RUNTIME_CONFIG }, { phase, arm, trial });
     let complete = true;
     for (const task of shuffle(tasks)) {
       for (const arm of shuffle(arms)) {
@@ -61,7 +61,7 @@ export async function reviewTasks({ tasks, arms, instructionsFor, trials = 1, ph
 }
 
 /** Blind every finding per task and have a separate adjudicator session grade it against the key. */
-export async function adjudicateTasks({ tasks, scored, phase, model, callTurn, newSession, ev, evPrefix = "private/adjudication" }) {
+export async function adjudicateTasks({ tasks, scored, phase, model, adjudicatorModel = model, callTurn, newSession, ev, evPrefix = "private/adjudication" }) {
   const judgements = {}, blindKey = {};
   let session = null;
   for (const task of tasks) {
@@ -69,7 +69,7 @@ export async function adjudicateTasks({ tasks, scored, phase, model, callTurn, n
     const { items, key } = blindTask(task.id, replies);
     Object.assign(blindKey, key);
     if (!items.length) continue;
-    session ||= await newSession({ model: { name: model, params: { temperature: 0, maxTokens: 3000 } }, instructions: ADJUDICATOR, config: RUNTIME_CONFIG }, { phase, role: "adjudicator" });
+    session ||= await newSession({ model: { name: adjudicatorModel, params: { temperature: 0, maxTokens: 3000 } }, instructions: ADJUDICATOR, config: RUNTIME_CONFIG }, { phase, role: "adjudicator" });
     const ak = answerKey(task);
     for (let i = 0; i < items.length; i += 30) {
       const chunk = items.slice(i, i + 30);

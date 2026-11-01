@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assessLessonForCore, budgetAdmission, executionAdmission, nextExecutionState } from "../../execution/policy.mjs";
 import { validatePublicProof, REQUIRED_STAGES } from "../validate-public-proof.mjs";
-import { ALL_ARMS, comparisonArms, DEFAULT_CAP_USD, OUTPUT_CONTRACT, REPAIR_OUTPUT_CONTRACT, PHASE_SHARE, REVIEW_PARAMS, ROOT, RUNTIME_CONFIG, TRUEFORGE_RUNTIME,
+import { ALL_ARMS, armBase, armModel, comparisonArms, validArmId, DEFAULT_CAP_USD, OUTPUT_CONTRACT, REPAIR_OUTPUT_CONTRACT, PHASE_SHARE, REVIEW_PARAMS, ROOT, RUNTIME_CONFIG, TRUEFORGE_RUNTIME,
   armInstructions, gateKeeperMethodology, instructionHashes, sha256 } from "./config.mjs";
 import { BudgetController } from "./budget.mjs";
 import { aggregateArm, parseFindingsWithSeverity, shuffle, validFinding } from "./metrics.mjs";
@@ -93,17 +93,33 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   }
   const budget = new BudgetController({ capUsd, phaseShare, model, now });
   const compArms = mode === "compare" ? comparisonArms(env) : null;
+  const drillArms = mode === "compare" ? [...new Set((env.GK_PROOF_DRILL_ARMS || "baseline,gate_keeper").split(",").map((a) => a.trim()).filter(Boolean))] : [];
+  if (mode === "compare" && (!drillArms.length || drillArms.some((a) => !validArmId(a)) || !drillArms.includes("gate_keeper"))) throw new Error("DRILL_ARMS_INVALID");
+  const modelFor = (arm) => armModel(arm, model);
+  // Every model a role or arm will use must be registered in TrueForge before any spend.
+  const learningModel = env.GK_PROOF_LEARNING_MODEL || model;
+  const missing = [...new Set([learningModel, ...(compArms || []), ...drillArms].map((a) => a.includes("/") && !a.includes("@") ? a : modelFor(a)))].filter((m) => !modelNames.includes(m));
+  if (missing.length) { emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_REGISTERED", models: missing }); return { blocked: "MODEL_NOT_REGISTERED", preflight }; }
+
+  // The adjudicator may be a different (stronger) registered model than the candidates.
+  const adjudicatorModel = env.GK_PROOF_ADJUDICATOR_MODEL || model;
+  if (!modelNames.includes(adjudicatorModel)) {
+    emit("GK_PROOF_BLOCKED", { reason: "ADJUDICATOR_MODEL_NOT_REGISTERED", model: adjudicatorModel });
+    return { blocked: "ADJUDICATOR_MODEL_NOT_REGISTERED", preflight };
+  }
+  const sessionModel = new Map();
 
   // ---------- model call wrapper: reserve -> create turn -> poll -> settle ----------
   async function newSession(spec, meta) {
     const metadata = Object.fromEntries(Object.entries({ purpose: "gk-proof", run_id: runId, ...meta }).map(([k, v]) => [k, String(v)]));
     const { data } = await tf.sessions.create({ agent: { spec }, metadata });
-    sessions.push({ id: data.id, ...meta });
+    sessions.push({ id: data.id, model: spec.model?.name, ...meta });
+    sessionModel.set(data.id, spec.model?.name || model);
     return data.id;
   }
   async function callTurn(phase, label, sessionId, content, instructionsChars, maxTokens) {
     if (timeLeft() < 90000) return { refused: "DEADLINE" };
-    const r = budget.reserve(phase, label, instructionsChars + content.length, maxTokens);
+    const r = budget.reserve(phase, label, instructionsChars + content.length, maxTokens, sessionModel.get(sessionId));
     if (!r) return { refused: "BUDGET" };
     const started = now();
     let turn;
@@ -162,13 +178,13 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
 
   // ---------- learning run: errors -> lessons -> selection -> qualification -> unseen proof ----------
   if (mode === "learn") {
-    const learning = await runLearning({ env, model, publicTasks: loadPublicTasks(), budget, callTurn, newSession, ev, emit, limitations });
+    const learning = await runLearning({ env, model, adjudicatorModel, learningModel, publicTasks: loadPublicTasks(), budget, callTurn, newSession, ev, emit, limitations });
     const { upload, manifest } = await exportEvidence();
     blockers.push("No independent verifier/signing identity: promoted rules cannot be signed, so core promotion stays held");
-    limitations.push("Adjudicator is a separate, blinded TrueForge session on the same model as the candidates, not a human or a different model family");
+    limitations.push(adjudicatorModel === model ? "Adjudicator is a separate, blinded TrueForge session on the same model as the candidates" : `Adjudicator is a separate, blinded session on a different model (${adjudicatorModel}) from the same provider family, not a human`);
     limitations.push("Holdouts were written by the evaluator (Claude), not by an independent party");
     const hashes = instructionHashes();
-    const publicData = { mode: "learn", run_id: runId, source_commit: sourceCommit, preflight, learning: learning.public, budget: budget.snapshot(),
+    const publicData = { mode: "learn", run_id: runId, source_commit: sourceCommit, preflight, candidate_model: model, adjudicator_model: adjudicatorModel, learning_model: learningModel, learning: learning.public, budget: budget.snapshot(),
       sessions: sessions.map((s) => ({ id: s.id, phase: s.phase, arm: s.arm, trial: s.trial, role: s.role })), blockers, limitations,
       hashes: { ...hashes, ...learning.hashes, evidence_manifest_sha256: manifest.sha256 },
       evidence_items: manifest.body.items.map(({ kind, path, sha256: h, bytes }) => ({ kind, path, sha256: h, bytes })), upload, elapsed_ms: now() - t0 };
@@ -184,13 +200,13 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   if (!holdout.tasks.length) blockers.push("No owner-private holdout supplied to the runner (GK_PRIVATE_HOLDOUT_B64)");
   const tasks = [...publicTasks, ...holdout.tasks];
   ev.put("private/holdout-tasks.json", holdout.tasks, "private_holdout");
-  const { results, completeTrials } = await reviewTasks({ tasks, arms: compArms, instructionsFor: (arm) => armInstructions(arm), trials: trialsWanted,
+  const { results, completeTrials } = await reviewTasks({ tasks, arms: compArms, instructionsFor: (arm) => armInstructions(arm), modelFor, trials: trialsWanted,
     phase: "comparison", model, callTurn, newSession, limitations });
   const scored = results.filter((r) => completeTrials.includes(r.trial));
   ev.put("private/comparison-replies.json", results.map(({ task, ...r }) => ({ ...r, task_id: task.id, holdout: !!task.holdout })), "candidate_replies");
 
   // ---------- 2. blinded independent adjudication ----------
-  const { judgements, blindKey } = await adjudicateTasks({ tasks, scored, phase: "adjudication", model, callTurn, newSession, ev });
+  const { judgements, blindKey } = await adjudicateTasks({ tasks, scored, phase: "adjudication", model, adjudicatorModel, callTurn, newSession, ev });
   ev.put("private/blinding-key.json", blindKey, "unblinding_key");
 
   const arms = {};
@@ -206,7 +222,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   emit("GK_PROOF_COMPARISON", { complete_trials: completeTrials, arms, budget: budget.snapshot() });
 
   // ---------- 3. autonomous loop drill on disposable fixtures ----------
-  const drill = await runDrill({ tf, model, budget, callTurn, newSession, ev, emit, env });
+  const drill = await runDrill({ tf, model, adjudicatorModel, drillArms, modelFor, budget, callTurn, newSession, ev, emit, env });
 
   // ---------- 4. evidence: sessions, ledger, upload ----------
   const { upload, manifest } = await exportEvidence();
@@ -214,7 +230,8 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   // ---------- 5. public summary (aggregates and hashes only) ----------
   blockers.push("No independent verifier/signing identity: qualification cannot be signed, so no PASS is claimable");
   blockers.push("No independent budget gateway lease: spend was capped by the evaluator process (outside the agents), not a signed gateway");
-  limitations.push("Adjudicator is a separate, blinded TrueForge session on the same model as the candidates, not a human or a different model family");
+  limitations.push(adjudicatorModel === model ? "Adjudicator is a separate, blinded TrueForge session on the same model as the candidates, not a human or a different model family"
+    : `Adjudicator is a separate, blinded session on a different model (${adjudicatorModel}) from the same provider family, not a human`);
   limitations.push("actual_cost_usd is TrueForge's per-turn cost estimate (turn metrics), not a provider billing statement");
   limitations.push("Node permission sandbox confines candidate file reads but not network sockets; network access by candidate code is blocked only by the patch denylist");
   limitations.push("Re-review gate precision is judged by a same-model blinded adjudicator session");
@@ -227,7 +244,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     result: "INCONCLUSIVE",
     source: { repository: "appliedai-au/gate_keeper", gate_keeper_commit: sourceCommit, baseline_instructions_sha256: hashes.baseline_instructions_sha256,
       gate_keeper_instructions_sha256: hashes.gate_keeper_instructions_sha256, scorer_sha256: hashes.scorer_sha256 },
-    environment: { trueforge_version: TRUEFORGE_RUNTIME, model_id: model, provider: model.split("/")[0], sandbox_provider: preflight.sandbox_enabled ? "trueforge-configured" : "none (disposable runner clone)" },
+    environment: { trueforge_version: TRUEFORGE_RUNTIME, model_id: model, adjudicator_model_id: adjudicatorModel, arm_models: Object.fromEntries(compArms.map((a) => [a, modelFor(a)])), drill_arm_models: Object.fromEntries(drillArms.map((a) => [a, modelFor(a)])), provider: model.split("/")[0], sandbox_provider: preflight.sandbox_enabled ? "trueforge-configured" : "none (disposable runner clone)" },
     benchmark: { id: `public evals/tasks (${publicTasks.length}) + owner-private holdout (${holdout.tasks.length})`, sha256: sha256(publicBenchmarkSha(publicTasks) + ":" + (holdout.sha256 || "none")), holdout_private: true },
     fairness: { same_model: true, same_provider: true, same_inputs: true, same_scoring: true, same_limits: true },
     arms: { baseline: pick(arms.baseline.all) || emptyArm(), gate_keeper: pick(arms.gate_keeper.all) || emptyArm() },
@@ -235,7 +252,9 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     evidence: [{ kind: "private_evidence_manifest", private_reference: upload.reference || "runner-local (upload failed)", sha256: manifest.sha256 }],
     blockers, limitations,
   };
-  if (compArms.includes("gate_keeper_lean")) summary.arms.gate_keeper_lean = pick(arms.gate_keeper_lean.all) || emptyArm();
+  for (const arm of compArms) if (!(arm in summary.arms)) summary.arms[arm] = pick(arms[arm].all) || emptyArm();
+  const variants = compArms.filter((a) => a.includes("@"));
+  if (variants.length) limitations.push(`Model-comparison arms (${variants.join(", ")}) use the same method on a different model; fairness flags apply to the primary baseline/gate_keeper pair on ${model}`);
   for (const arm of compArms) if (!completeTrials.length) summary.arms[arm] = emptyArm();
   if (!completeTrials.length) summary.fairness = { same_model: null, same_provider: null, same_inputs: null, same_scoring: null, same_limits: null };
   validatePublicProof(summary);
@@ -256,15 +275,13 @@ export function emitChunked(log, key, value) {
 }
 
 // ---------- autonomous repair-loop drill ----------
-async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) {
+async function runDrill({ model, adjudicatorModel, drillArms, modelFor, budget, callTurn, newSession, ev, emit, env }) {
   const work = mkdtempSync(join(tmpdir(), "gk-drill-"));
   const fixtures = Object.fromEntries([...REPAIR_FIXTURES, "archive"].map((id) => [id, join(ROOT, "proof", "fixtures", id)]));
   const params = { temperature: 0, maxTokens: 2500 };
   const cycles = [], lessons = [], events = [];
   let reAdjSession = null;
-  const drillArms = [...new Set((env.GK_PROOF_DRILL_ARMS || "baseline,gate_keeper").split(",").map((a) => a.trim()).filter(Boolean))];
-  // Lesson capture and the repeat-after-improvement cycles run on the default gate_keeper arm.
-  if (!drillArms.length || drillArms.some((a) => !ALL_ARMS.includes(a)) || !drillArms.includes("gate_keeper")) throw new Error("DRILL_ARMS_INVALID");
+  // Lesson capture and the repeat-after-improvement cycles run on the default gate_keeper arm (validated in main).
   events.push({ check: "drill_arms", arms: drillArms });
   const stage = Object.fromEntries(REQUIRED_STAGES.map((s) => [s, "NOT_RUN"]));
   const mark = (s, v) => { if (stage[s] !== "FAIL") stage[s] = v === "PASS" && stage[s] === "BLOCKED" ? "BLOCKED" : v; };
@@ -300,8 +317,9 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
     if (!findings.length) { state = nextExecutionState(state, "deny"); rec.states.push(state); rec.outcome = "REVIEWED_NO_FINDING"; return rec; }
     mark("adversarial_review", "PASS");
     state = nextExecutionState(state, "finding"); rec.states.push(state);
-    const repairInstr = (arm.startsWith("gate_keeper") ? gateKeeperMethodology("repair", arm === "gate_keeper_lean" ? "lean" : "adversarial") : BASELINE_REPAIR) + "\n\n" + REPAIR_OUTPUT_CONTRACT + lessonText;
-    const repairSession = await newSession({ model: { name: model, params }, instructions: repairInstr, config: RUNTIME_CONFIG }, { phase: "drill", arm, fixture: fixtureId, role: "repair" });
+    const repairInstr = (armBase(arm).startsWith("gate_keeper") ? gateKeeperMethodology("repair", armBase(arm) === "gate_keeper_lean" ? "lean" : "adversarial") : BASELINE_REPAIR) + "\n\n" + REPAIR_OUTPUT_CONTRACT + lessonText;
+    // In the drill, "@model" selects the REPAIR model only; review and re-review stay on the candidate model so the gate is identical across arms.
+    const repairSession = await newSession({ model: { name: modelFor(arm), params }, instructions: repairInstr, config: RUNTIME_CONFIG }, { phase: "drill", arm, fixture: fixtureId, role: "repair" });
     let feedback = "";
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) { state = "repairing"; rec.states.push("repairing(bounded retry " + attempt + ")"); }
@@ -347,7 +365,7 @@ async function runDrill({ model, budget, callTurn, newSession, ev, emit, env }) 
       mark("post_repair_review", "PASS");
       if (blocking.length) {
         // Measure the gate's precision: adjudicate each blocking finding independently (evaluation only; the gate still discards).
-        reAdjSession ||= await newSession({ model: { name: model, params: { temperature: 0, maxTokens: 1500 } }, instructions: RE_REVIEW_ADJUDICATOR, config: RUNTIME_CONFIG }, { phase: "adjudication", role: "re-review-gate" });
+        reAdjSession ||= await newSession({ model: { name: adjudicatorModel, params: { temperature: 0, maxTokens: 1500 } }, instructions: RE_REVIEW_ADJUDICATOR, config: RUNTIME_CONFIG }, { phase: "adjudication", role: "re-review-gate" });
         const adjPrompt = ["Repaired file (passed all V-model tests):", "```javascript", repaired, "```", "", "Requirements:", brief.requirements, "", "Threat model:", brief.threats, "", "Blocking findings:", "```json",
           JSON.stringify(blocking.map((f, index) => ({ index, line: f.line, category: f.category, severity: f.severity, comment: f.comment })), null, 1), "```"].join("\n");
         let gateJudgement = null, adjReplies = [];
