@@ -98,7 +98,9 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   const modelFor = (arm) => armModel(arm, model);
   // Every model a role or arm will use must be registered in TrueForge before any spend.
   const learningModel = env.GK_PROOF_LEARNING_MODEL || model;
-  const missing = [...new Set([learningModel, ...(compArms || []), ...drillArms].map((a) => a.includes("/") && !a.includes("@") ? a : modelFor(a)))].filter((m) => !modelNames.includes(m));
+  // Role models are checked as given; only arm ids are mapped through modelFor.
+  const roleModels = mode === "learn" ? [learningModel] : [];
+  const missing = [...new Set([...roleModels, ...[...(compArms || []), ...drillArms].map(modelFor)])].filter((m) => !modelNames.includes(m));
   if (missing.length) { emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_REGISTERED", models: missing }); return { blocked: "MODEL_NOT_REGISTERED", preflight }; }
 
   // The adjudicator may be a different (stronger) registered model than the candidates.

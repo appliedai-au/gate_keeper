@@ -406,3 +406,9 @@ test("current list prices: Sonnet 5.5, Opus 5.5, Haiku 5.5 and Fable resolve to 
   assert.deepEqual(priceFor("anthropic/claude-fable-5-1"), [10, 50]);
   assert.deepEqual(priceFor("anthropic/claude-sonnet-4-6"), [3, 15]);
 });
+
+test("a learning model that is not a registered id (e.g. missing provider prefix) blocks before any spend", () => {
+  const r = e2e({ env: { GK_PROOF_MODE: "learn", GK_PROOF_LEARNING_MODEL: "claude-opus-5-5" } });
+  assert.equal(r.out.blocked, "MODEL_NOT_REGISTERED");
+  assert.equal(r.calls, 0);
+});
