@@ -112,7 +112,7 @@ test("the paired round-2 payloads share the exact code, model and settings but N
     assert.ok(!p.userPrompt.includes("expected"));
     assert.ok(!p.userPrompt.includes("why"));
     assert.ok(!p.userPrompt.includes("python-deploy"));
-    assert.ok(!p.userPrompt.includes("04-ts-fetch"));
+    assert.ok(!p.userPrompt.includes("05-ts-task-pagination"));
   }
 });
 
@@ -132,7 +132,7 @@ test("after Round 1 each agent gets its OWN historical critique in a symmetric s
   assert.equal(plain.noTools,true);
   assert.equal(keeper.noAutoRetry,true);
   assert.ok(!plain.userPrompt.includes("03-python-deploy"));
-  assert.ok(!keeper.userPrompt.includes("04-ts-fetch"));
+  assert.ok(!keeper.userPrompt.includes("05-ts-task-pagination"));
   assert.throws(()=>prepareSelfReflection(s,4,"baseline"),/SELF_REFLECTION_SCOPE_INVALID/);
 });
 
