@@ -360,14 +360,14 @@ test("learning: qualification detects a swapped key issue (identity, not counts)
 });
 
 test("adjudication can run on a different registered model, priced at that model's rates; unregistered adjudicator blocks", () => {
-  const models = ["anthropic/claude-sonnet-4-6", "anthropic/claude-opus-5-5"];
+  const models = ["anthropic/claude-sonnet-5-5", "anthropic/claude-opus-5-5"];
   const r = e2e({ env: { GK_PROOF_MODE: "learn", GK_PROOF_ADJUDICATOR_MODEL: "anthropic/claude-opus-5-5" }, fake: { learnedHelps: true, models } });
   const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
   assert.equal(data.adjudicator_model, "anthropic/claude-opus-5-5");
   const adj = data.sessions.filter((s) => s.role === "adjudicator");
   assert.ok(adj.length >= 3);
   assert.ok(data.limitations.some((l) => /different model \(anthropic\/claude-opus-5-5\)/.test(l)));
-  const b = e2e({ env: { GK_PROOF_ADJUDICATOR_MODEL: "anthropic/claude-opus-5-5" } });
+  const b = e2e({ env: { GK_PROOF_ADJUDICATOR_MODEL: "anthropic/claude-opus-5-5" }, fake: { models: ["anthropic/claude-sonnet-5-5"] } });
   assert.equal(b.out.blocked, "ADJUDICATOR_MODEL_NOT_REGISTERED");
   assert.equal(b.calls, 0);
 });
@@ -381,13 +381,13 @@ test("budget reserves and settles each call at its own model's price", () => {
 });
 
 test("model comparison arms: method@model runs the same method on another registered model; drill @model selects the repairer", () => {
-  const models = ["anthropic/claude-sonnet-4-6", "anthropic/claude-haiku-5-5", "anthropic/claude-opus-5-5"];
+  const models = ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1", "anthropic/claude-haiku-5-5", "anthropic/claude-opus-5-5"];
   const r = e2e({ trials: 1, fake: { models }, env: { GK_PROOF_ARMS: "baseline,gate_keeper,gate_keeper@anthropic/claude-haiku-5-5",
     GK_PROOF_DRILL_ARMS: "gate_keeper,gate_keeper@anthropic/claude-opus-5-5", GK_PROOF_ADJUDICATOR_MODEL: "anthropic/claude-opus-5-5" } });
   const summary = decodeChunks(r.lines, "GK_PROOF_PUBLIC_SUMMARY");
   assert.equal(validatePublicProof(summary).valid, true);
   assert.equal(summary.environment.arm_models["gate_keeper@anthropic/claude-haiku-5-5"], "anthropic/claude-haiku-5-5");
-  assert.equal(summary.environment.arm_models.gate_keeper, "anthropic/claude-sonnet-4-6");
+  assert.equal(summary.environment.arm_models.gate_keeper, "anthropic/claude-sonnet-5-5");
   assert.equal(summary.arms["gate_keeper@anthropic/claude-haiku-5-5"].trials, 1);
   const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
   assert.deepEqual(Object.keys(data.drill.repair_success).sort(), ["gate_keeper", "gate_keeper@anthropic/claude-opus-5-5"]);
@@ -411,4 +411,21 @@ test("a learning model that is not a registered id (e.g. missing provider prefix
   const r = e2e({ env: { GK_PROOF_MODE: "learn", GK_PROOF_LEARNING_MODEL: "claude-opus-5-5" } });
   assert.equal(r.out.blocked, "MODEL_NOT_REGISTERED");
   assert.equal(r.calls, 0);
+});
+
+test("locked baseline: per-role models in agent/models.json are the harness defaults; the baseline record names its source run", () => {
+  const roles = JSON.parse(readFileSync(join(ROOT, "agent", "models.json"), "utf8")).roles;
+  assert.equal(roles.reviewer.model, "anthropic/claude-sonnet-5-5");
+  assert.equal(roles.adjudicator.model, "anthropic/claude-fable-5-1");
+  assert.notEqual(roles.adjudicator.model, roles.reviewer.model, "the grader must never be the model under test");
+  assert.equal(JSON.parse(readFileSync(join(ROOT, "agent", "agent.json"), "utf8")).model.name, roles.reviewer.model);
+  const r = e2e({ env: { GK_PROOF_MODE: "learn" }, fake: { learnedHelps: true } });
+  const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
+  assert.equal(data.candidate_model, roles.reviewer.model);
+  assert.equal(data.adjudicator_model, roles.adjudicator.model);
+  assert.equal(data.learning_model, roles.learning.model);
+  const baseline = JSON.parse(readFileSync(join(ROOT, "proof", "baseline.json"), "utf8"));
+  assert.equal(baseline.source_run, "gk-live-20261101-g");
+  assert.ok(existsSync(join(ROOT, baseline.report)));
+  assert.equal(baseline.metrics.gate_keeper_sonnet_5_5.matched_issues, baseline.metrics.gate_keeper_sonnet_5_5.expected_issues);
 });

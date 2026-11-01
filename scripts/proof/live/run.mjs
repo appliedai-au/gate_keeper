@@ -74,7 +74,9 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   const { data: models } = await tf.models.list();
   const modelNames = models.map((m) => m.name);
   const agentJson = JSON.parse(readFileSync(join(ROOT, "agent", "agent.json"), "utf8"));
-  const model = env.GK_PROOF_MODEL || agentJson.model.name;
+  // Per-role defaults come from agent/models.json (the locked baseline); env overrides are for experiments.
+  const roleConfig = JSON.parse(readFileSync(join(ROOT, "agent", "models.json"), "utf8")).roles;
+  const model = env.GK_PROOF_MODEL || roleConfig.reviewer?.model || agentJson.model.name;
   const preflight = { health, base_url_private: privateUrl, trueforge_runtime: TRUEFORGE_RUNTIME, models: modelNames, selected_model: model,
     sandbox_enabled: !!caps?.sandbox?.enabled, skills_enabled: !!caps?.skill?.enabled, source_commit: sourceCommit };
   emit("GK_PROOF_PREFLIGHT", preflight);
@@ -97,14 +99,14 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   if (mode === "compare" && (!drillArms.length || drillArms.some((a) => !validArmId(a)) || !drillArms.includes("gate_keeper"))) throw new Error("DRILL_ARMS_INVALID");
   const modelFor = (arm) => armModel(arm, model);
   // Every model a role or arm will use must be registered in TrueForge before any spend.
-  const learningModel = env.GK_PROOF_LEARNING_MODEL || model;
+  const learningModel = env.GK_PROOF_LEARNING_MODEL || roleConfig.learning?.model || model;
   // Role models are checked as given; only arm ids are mapped through modelFor.
   const roleModels = mode === "learn" ? [learningModel] : [];
   const missing = [...new Set([...roleModels, ...[...(compArms || []), ...drillArms].map(modelFor)])].filter((m) => !modelNames.includes(m));
   if (missing.length) { emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_REGISTERED", models: missing }); return { blocked: "MODEL_NOT_REGISTERED", preflight }; }
 
   // The adjudicator may be a different (stronger) registered model than the candidates.
-  const adjudicatorModel = env.GK_PROOF_ADJUDICATOR_MODEL || model;
+  const adjudicatorModel = env.GK_PROOF_ADJUDICATOR_MODEL || roleConfig.adjudicator?.model || model;
   if (!modelNames.includes(adjudicatorModel)) {
     emit("GK_PROOF_BLOCKED", { reason: "ADJUDICATOR_MODEL_NOT_REGISTERED", model: adjudicatorModel });
     return { blocked: "ADJUDICATOR_MODEL_NOT_REGISTERED", preflight };

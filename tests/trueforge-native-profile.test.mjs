@@ -37,7 +37,7 @@ test("native profile uses TrueForge sandbox and subagents, never a bespoke coord
 test("native profile reuses the reviewer model and declares no live write authority",()=>{
   const current=nativeProfileReadiness();
   const spec=buildNativeTrueForgeSpec(accepted).manifest;
-  assert.equal(spec.model.name,"anthropic/claude-sonnet-4-6");
+  assert.equal(spec.model.name,"anthropic/claude-sonnet-5-5");
   assert.equal(current.liveWrites,false);
   assert.equal(current.newServicesRequired,0);
   assert.equal(current.status,"HELD");

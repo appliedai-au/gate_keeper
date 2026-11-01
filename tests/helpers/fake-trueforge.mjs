@@ -30,7 +30,7 @@ const PAGINATE_FIX = `export function paginate(items, page, size) {
   return { items: items.slice(start, start + size), page, totalPages };
 }
 export function pageSummary(items, page, size) { const p = paginate(items, page, size); return \`Page \${p.page} of \${p.totalPages}: \${p.items.join(", ")}\`; }`;
-export function fakeTrueForge({ models = ["anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false, failPollAt = 0, learnedHelps = false } = {}) {
+export function fakeTrueForge({ models = ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1", "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false, failPollAt = 0, learnedHelps = false } = {}) {
   const sessions = new Map(); const turns = new Map(); let n = 0;
   const reply = (instructions, content) => {
     if (/independent adjudicator for a code-review benchmark/.test(instructions)) {
