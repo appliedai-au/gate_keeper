@@ -1,3 +1,27 @@
+# Contributing to Gate Keeper
+
+Gate Keeper is publicly viewable but is not offered under a blanket
+open-source licence. Read [LICENSE](LICENSE) and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before reusing material.
+
+Bug reports and discussions are welcome. Do not submit code, documentation
+patches or other copyrightable contributions until the maintainer and relevant
+rights holders have agreed on the applicable contribution terms. No copyright
+assignment or additional relicensing permission is inferred from this file.
+Do not include third-party material without its provenance and required notices.
+
+For upstream TrueForge contributions, follow that project's own licence and
+contribution requirements; they do not license Gate Keeper-specific additions.
+
+---
+
+## Retained upstream starter guidance
+
+The following imported guidance is retained for provenance under the
+[starter MIT licence](third_party_licenses/trueforge-starter-MIT.txt).
+References to "this starter" describe the upstream starter, not a new
+contribution or reuse grant for Gate Keeper additions under the custom terms.
+
 # Contributing
 
 ## To this starter
