@@ -25,6 +25,10 @@ test("catalogue covers the twenty active chat models and excludes embeddings fro
 
 test("published benchmark references locked run and never upgrades its qualified status", () => {
   assert.equal(display.runId, truth.run_id);
+  const expectedSource="https://github.com/appliedai-au/gate_keeper/blob/9d9e08a6d28687c2d55099f65718deec37245454/proof/submissions/"+display.runId+"/";
+  assert.equal(display.reportUrl,expectedSource+"report.md");
+  assert.equal(display.summaryUrl,expectedSource+"summary.json");
+
   assert.equal(display.result, truth.result);
   assert.equal(display.result,"INCONCLUSIVE");
   assert.equal(display.sourceCommit,truth.source.gate_keeper_commit);
