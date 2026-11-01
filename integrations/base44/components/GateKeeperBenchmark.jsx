@@ -24,7 +24,7 @@ export default function GateKeeperBenchmark({ section = "Runs" }) {
         <p>See recorded model experiments and their evidence. The newest comparison ran in the TrueFoundry Playground; the older study used a separate TrueForge test harness. Neither runs from this website.</p>
       </div>
       <div role="region" aria-label="Newest live Playground method comparison" style={{ ...card, borderColor: "#9cb48c" }}>
-        <div style={{ ...mono, fontWeight: 800, color: "#536846", letterSpacing: ".08em" }}>NEW TEST / ${smoke.runId.toUpperCase()} / ${smoke.result}</div>
+        <div style={{ ...mono, fontWeight: 800, color: "#536846", letterSpacing: ".08em" }}>NEW TEST / {smoke.runId.toUpperCase()} / {smoke.result}</div>
         <h2 style={{ fontSize: 21, margin: "10px 0 8px", color: "#142636" }}>Live cheapest-model comparison</h2>
         <p style={{ fontSize: 13, lineHeight: 1.6 }}>
           Two real inference calls on <code>{smoke.model}</code> using identical Python code and temperature 0.
