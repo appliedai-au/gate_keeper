@@ -291,7 +291,11 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
       try {
         const { session, turns } = await exportSessionTrace(s.id);
         ev.put(`private/sessions/${s.id}.json`, { meta: s, session, turns }, "trueforge_session_trace");
-      } catch (e) { limitations.push(`Session ${s.id} export failed: ${String(e?.message || e).slice(0, 120)}`); }
+      } catch {
+        // Public log messages must not disclose session IDs, SDK errors or
+        // private export object names. Missing evidence blocks qualification.
+        limitations.push("PRIVATE_SESSION_TRACE_EXPORT_FAILED");
+      }
     }
     ev.put("private/spend-ledger.json", { snapshot: budget.snapshot(), ledger: budget.ledger }, "spend_ledger");
     const upload = await uploadEvidence();
@@ -310,9 +314,9 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     limitations.push("Holdouts were written by the evaluator (Claude), not by an independent party");
     const hashes = instructionHashes();
     const publicData = { mode: "learn", run_id: runId, source_commit: sourceCommit, preflight, candidate_model: model, adjudicator_model: adjudicatorModel, adjudicator_calibration: adjudicatorCalibration, learning_model: learningModel, learning: learning.public, budget: budget.snapshot(),
-      sessions: sessions.map((s) => ({ id: s.id, phase: s.phase, arm: s.arm, trial: s.trial, role: s.role })), blockers, limitations,
+      sessions: sessions.map((s) => ({ phase: s.phase, arm: s.arm, trial: s.trial, role: s.role })), blockers, limitations,
       hashes: { ...hashes, ...learning.hashes, evidence_manifest_sha256: manifest.sha256 },
-      evidence_items: manifest.body.items.map(({ kind, path, sha256: h, bytes }) => ({ kind, path, sha256: h, bytes })), upload, elapsed_ms: now() - t0 };
+      private_evidence_item_count: manifest.body.items.length, upload, elapsed_ms: now() - t0 };
     emitChunked(log, "GK_PROOF_PUBLIC_DATA", publicData);
     emit("GK_PROOF_DONE", { run_id: runId, mode, spent_usd: budget.snapshot().spent_usd, evidence_manifest_sha256: manifest.sha256 });
     return { publicData };
@@ -344,7 +348,15 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
       malformed_findings: scored.filter((r) => r.arm === arm).reduce((s, r) => s + (r.findings || []).filter((f) => !validFinding(f)).length, 0),
     };
   }
-  emit("GK_PROOF_COMPARISON", { complete_trials: completeTrials, arms, budget: budget.snapshot() });
+  // Do not publish holdout-only aggregates, session references or internal
+  // private evidence item paths in human-readable logs. The full record stays
+  // within the isolated evidence store for the independent verifier.
+  const publicArms = Object.fromEntries(Object.entries(arms).map(([name, a]) => [
+    name, { all: a.all, public: a.public,
+      deterministic_score_mean: a.deterministic_score_mean,
+      malformed_findings: a.malformed_findings },
+  ]));
+  emit("GK_PROOF_COMPARISON", { complete_trials: completeTrials, arms: publicArms, budget: budget.snapshot() });
 
   // ---------- 3. autonomous loop drill on disposable fixtures ----------
   const drill = await runDrill({ tf, model, adjudicatorModel, drillArms, repairerFor, budget, callTurn, newSession, ev, emit, env });
@@ -383,9 +395,9 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   for (const arm of compArms) if (!completeTrials.length) summary.arms[arm] = emptyArm();
   if (!completeTrials.length) summary.fairness = { same_model: null, same_provider: null, same_inputs: null, same_scoring: null, same_limits: null };
   validatePublicProof(summary);
-  const publicData = { preflight, complete_trials: completeTrials, arms, drill: drill.public, budget: budget.snapshot(), sessions: sessions.map((s) => ({ id: s.id, phase: s.phase, arm: s.arm, trial: s.trial })),
+  const publicData = { preflight, complete_trials: completeTrials, arms: publicArms, drill: drill.public, budget: budget.snapshot(), sessions: sessions.map((s) => ({ phase: s.phase, arm: s.arm, trial: s.trial, task_id: s.task_id })),
     hashes: { ...hashes, public_benchmark_sha256: publicBenchmarkSha(publicTasks), private_holdout_sha256: holdout.sha256, evidence_manifest_sha256: manifest.sha256 },
-    evidence_items: manifest.body.items.map(({ kind, path, sha256: h, bytes }) => ({ kind, path, sha256: h, bytes })), upload, elapsed_ms: now() - t0 };
+    private_evidence_item_count: manifest.body.items.length, upload, elapsed_ms: now() - t0 };
   emitChunked(log, "GK_PROOF_PUBLIC_SUMMARY", summary);
   emitChunked(log, "GK_PROOF_PUBLIC_DATA", publicData);
   emit("GK_PROOF_DONE", { run_id: runId, spent_usd: budget.snapshot().spent_usd, evidence_manifest_sha256: manifest.sha256 });
