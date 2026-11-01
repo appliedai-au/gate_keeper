@@ -94,6 +94,8 @@ export function assessGatewayReadiness({providers=[],models=[]}={}) {
      blockers.push(`ROLE_MODEL_UNREGISTERED:${role}`);
    }else mapped[role]={status:"AVAILABLE_NOT_QUALIFIED",model:expected};
  }
+ // An owner-chosen replacement grader stays held until it is calibrated against the grader it replaces.
+ if(profile.adjudicatorCalibration)blockers.push("ADJUDICATOR_CALIBRATION_PENDING");
  if(profile.release?.active!==false||profile.release?.productionChangeApproved!==false||
     profile.release?.allowSilentFallback!==false||profile.release?.allowPaidInferenceInSetup!==false)
    blockers.push("UNSAFE_RELEASE_DEFAULTS");

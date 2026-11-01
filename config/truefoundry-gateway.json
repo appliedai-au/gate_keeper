@@ -12,10 +12,10 @@
   "activeRoleMappings": {
     "reviewer": "truefoundry/claude-sonnet-5-5",
     "repair": "truefoundry/claude-sonnet-5-5",
-    "learning": "truefoundry/claude-opus-5-5"
+    "learning": "truefoundry/claude-opus-5-5",
+    "adjudicator": "truefoundry/claude-opus-5-5"
   },
   "blockedUntilQualified": {
-    "adjudicator": "Existing Claude Fable 5.1 is not in the supplied TrueFoundry model catalogue; do not silently substitute it.",
     "triage": "Model not selected or qualified."
   },
   "release": {
@@ -28,5 +28,6 @@
     "allowSilentFallback": false,
     "allowPaidInferenceInSetup": false,
     "productionChangeApproved": false
-  }
+  },
+  "adjudicatorCalibration": "Owner chose Opus 5.5 as grader on 2026-11-01 because Fable 5.1 is not in the gateway catalogue. It must be calibrated against the Fable 5.1 judgements of run gk-live-20261101-g before any re-baseline is accepted."
 }

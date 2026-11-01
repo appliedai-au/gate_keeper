@@ -13,7 +13,7 @@ import { validatePublicProof } from "../scripts/proof/validate-public-proof.mjs"
 const PHASES = { comparison: 0.55, adjudication: 0.2, drill: 0.25 };
 
 test("budget refuses a call that would breach the total or phase cap and settles from turn metrics", () => {
-  const b = new BudgetController({ capUsd: 1, phaseShare: PHASES, model: "anthropic/claude-sonnet-4-6" });
+  const b = new BudgetController({ capUsd: 1, phaseShare: PHASES, model: "truefoundry/claude-sonnet-4-6" });
   const r = b.reserve("comparison", "x", 3000, 1500);
   assert.ok(r && r.amount > 0);
   assert.equal(b.settle(r, { totalCostInUsd: 0.02 }), 0.02);
@@ -276,7 +276,7 @@ test("drill arms must include the default gate_keeper arm", () => {
 });
 
 test("budget prices reported cache tokens at cache rates and aggregation reports them", () => {
-  const b = new BudgetController({ capUsd: 1, phaseShare: PHASES, model: "anthropic/claude-sonnet-4-6" });
+  const b = new BudgetController({ capUsd: 1, phaseShare: PHASES, model: "truefoundry/claude-sonnet-4-6" });
   const r = b.reserve("comparison", "c", 100, 100);
   const cost = b.settle(r, { totalInputTokens: 1000, totalOutputTokens: 100, totalCacheReadTokens: 2000, totalCacheWriteTokens: 0 });
   assert.equal(Math.round(cost * 1e6), Math.round((1000 * 3 + 2000 * 0.1 * 3 + 100 * 15)));
@@ -360,51 +360,51 @@ test("learning: qualification detects a swapped key issue (identity, not counts)
 });
 
 test("adjudication can run on a different registered model, priced at that model's rates; unregistered adjudicator blocks", () => {
-  const models = ["anthropic/claude-sonnet-5-5", "anthropic/claude-opus-5-5"];
-  const r = e2e({ env: { GK_PROOF_MODE: "learn", GK_PROOF_ADJUDICATOR_MODEL: "anthropic/claude-opus-5-5" }, fake: { learnedHelps: true, models } });
+  const models = ["truefoundry/claude-sonnet-5-5", "truefoundry/claude-opus-5-5"];
+  const r = e2e({ env: { GK_PROOF_MODE: "learn", GK_PROOF_ADJUDICATOR_MODEL: "truefoundry/claude-opus-5-5" }, fake: { learnedHelps: true, models } });
   const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
-  assert.equal(data.adjudicator_model, "anthropic/claude-opus-5-5");
+  assert.equal(data.adjudicator_model, "truefoundry/claude-opus-5-5");
   const adj = data.sessions.filter((s) => s.role === "adjudicator");
   assert.ok(adj.length >= 3);
-  assert.ok(data.limitations.some((l) => /different model \(anthropic\/claude-opus-5-5\)/.test(l)));
-  const b = e2e({ env: { GK_PROOF_ADJUDICATOR_MODEL: "anthropic/claude-opus-5-5" }, fake: { models: ["anthropic/claude-sonnet-5-5"] } });
+  assert.ok(data.limitations.some((l) => /different model \(truefoundry\/claude-opus-5-5\)/.test(l)));
+  const b = e2e({ env: { GK_PROOF_ADJUDICATOR_MODEL: "truefoundry/claude-opus-5-5" }, fake: { models: ["truefoundry/claude-sonnet-5-5"] } });
   assert.equal(b.out.blocked, "ADJUDICATOR_MODEL_NOT_REGISTERED");
   assert.equal(b.calls, 0);
 });
 
 test("budget reserves and settles each call at its own model's price", () => {
-  const b = new BudgetController({ capUsd: 5, phaseShare: PHASES, model: "anthropic/claude-sonnet-4-6" });
-  const s = b.reserve("adjudication", "s", 3000, 1000), o = b.reserve("adjudication", "o", 3000, 1000, "anthropic/claude-opus-5-5");
+  const b = new BudgetController({ capUsd: 5, phaseShare: PHASES, model: "truefoundry/claude-sonnet-4-6" });
+  const s = b.reserve("adjudication", "s", 3000, 1000), o = b.reserve("adjudication", "o", 3000, 1000, "truefoundry/claude-opus-5-5");
   assert.ok(o.amount > s.amount * 1.3);
   assert.equal(b.settle(o, { totalInputTokens: 1e6, totalOutputTokens: 0 }), 4);
   assert.equal(b.settle(s, { totalInputTokens: 1e6, totalOutputTokens: 0 }), 3);
 });
 
 test("model comparison arms: method@model runs the same method on another registered model; drill @model selects the repairer", () => {
-  const models = ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1", "anthropic/claude-haiku-5-5", "anthropic/claude-opus-5-5"];
-  const r = e2e({ trials: 1, fake: { models }, env: { GK_PROOF_ARMS: "baseline,gate_keeper,gate_keeper@anthropic/claude-haiku-5-5",
-    GK_PROOF_DRILL_ARMS: "gate_keeper,gate_keeper@anthropic/claude-opus-5-5", GK_PROOF_ADJUDICATOR_MODEL: "anthropic/claude-opus-5-5" } });
+  const models = ["truefoundry/claude-sonnet-5-5", "truefoundry/claude-fable-5-1", "truefoundry/claude-haiku-5-5", "truefoundry/claude-opus-5-5"];
+  const r = e2e({ trials: 1, fake: { models }, env: { GK_PROOF_ARMS: "baseline,gate_keeper,gate_keeper@truefoundry/claude-haiku-5-5",
+    GK_PROOF_DRILL_ARMS: "gate_keeper,gate_keeper@truefoundry/claude-opus-5-5", GK_PROOF_ADJUDICATOR_MODEL: "truefoundry/claude-opus-5-5" } });
   const summary = decodeChunks(r.lines, "GK_PROOF_PUBLIC_SUMMARY");
   assert.equal(validatePublicProof(summary).valid, true);
-  assert.equal(summary.environment.arm_models["gate_keeper@anthropic/claude-haiku-5-5"], "anthropic/claude-haiku-5-5");
-  assert.equal(summary.environment.arm_models.gate_keeper, "anthropic/claude-sonnet-5-5");
-  assert.equal(summary.arms["gate_keeper@anthropic/claude-haiku-5-5"].trials, 1);
+  assert.equal(summary.environment.arm_models["gate_keeper@truefoundry/claude-haiku-5-5"], "truefoundry/claude-haiku-5-5");
+  assert.equal(summary.environment.arm_models.gate_keeper, "truefoundry/claude-sonnet-5-5");
+  assert.equal(summary.arms["gate_keeper@truefoundry/claude-haiku-5-5"].trials, 1);
   const data = decodeChunks(r.lines, "GK_PROOF_PUBLIC_DATA");
-  assert.deepEqual(Object.keys(data.drill.repair_success).sort(), ["gate_keeper", "gate_keeper@anthropic/claude-opus-5-5"]);
+  assert.deepEqual(Object.keys(data.drill.repair_success).sort(), ["gate_keeper", "gate_keeper@truefoundry/claude-opus-5-5"]);
   assert.ok(summary.limitations.some((l) => /Model-comparison arms/.test(l)));
   assert.throws(() => e2e({ env: { GK_PROOF_ARMS: "baseline,gate_keeper,gate_keeper@not a model" } }), /PROOF_ARMS_INVALID/);
-  const blocked = e2e({ env: { GK_PROOF_ARMS: "baseline,gate_keeper,gate_keeper@anthropic/claude-haiku-5-5" } });
+  const blocked = e2e({ env: { GK_PROOF_ARMS: "baseline,gate_keeper,gate_keeper@truefoundry/claude-haiku-5-5" } });
   assert.equal(blocked.out.blocked, "MODEL_NOT_REGISTERED");
   assert.equal(blocked.calls, 0);
 });
 
 test("current list prices: Sonnet 5.5, Opus 5.5, Haiku 5.5 and Fable resolve to their own rates", async () => {
   const { priceFor } = await import("../scripts/proof/live/budget.mjs");
-  assert.deepEqual(priceFor("anthropic/claude-sonnet-5-5"), [2, 10]);
-  assert.deepEqual(priceFor("anthropic/claude-opus-5-5"), [4, 20]);
-  assert.deepEqual(priceFor("anthropic/claude-haiku-5-5"), [0.1, 0.5]);
-  assert.deepEqual(priceFor("anthropic/claude-fable-5-1"), [10, 50]);
-  assert.deepEqual(priceFor("anthropic/claude-sonnet-4-6"), [3, 15]);
+  assert.deepEqual(priceFor("truefoundry/claude-sonnet-5-5"), [2, 10]);
+  assert.deepEqual(priceFor("truefoundry/claude-opus-5-5"), [4, 20]);
+  assert.deepEqual(priceFor("truefoundry/claude-haiku-5-5"), [0.1, 0.5]);
+  assert.deepEqual(priceFor("truefoundry/claude-fable-5-1"), [10, 50]);
+  assert.deepEqual(priceFor("truefoundry/claude-sonnet-4-6"), [3, 15]);
 });
 
 test("a learning model that is not a registered id (e.g. missing provider prefix) blocks before any spend", () => {
@@ -415,8 +415,10 @@ test("a learning model that is not a registered id (e.g. missing provider prefix
 
 test("locked baseline: per-role models in agent/models.json are the harness defaults; the baseline record names its source run", () => {
   const roles = JSON.parse(readFileSync(join(ROOT, "agent", "models.json"), "utf8")).roles;
-  assert.equal(roles.reviewer.model, "anthropic/claude-sonnet-5-5");
-  assert.equal(roles.adjudicator.model, "anthropic/claude-fable-5-1");
+  assert.equal(roles.reviewer.model, "truefoundry/claude-sonnet-5-5");
+  assert.equal(roles.adjudicator.model, "truefoundry/claude-opus-5-5"); // Fable 5.1 is not on the gateway
+  assert.equal(roles.adjudicator.status, "pending_calibration");
+  for (const r of Object.values(roles)) if (r.model) assert.match(r.model, /^truefoundry\//, "every role runs through TrueFoundry");
   assert.notEqual(roles.adjudicator.model, roles.reviewer.model, "the grader must never be the model under test");
   assert.equal(JSON.parse(readFileSync(join(ROOT, "agent", "agent.json"), "utf8")).model.name, roles.reviewer.model);
   const r = e2e({ env: { GK_PROOF_MODE: "learn" }, fake: { learnedHelps: true } });
@@ -431,11 +433,11 @@ test("locked baseline: per-role models in agent/models.json are the harness defa
 });
 
 test("the repair role model is read: bare drill arms repair with it, @model drill arms with their own; it is registration-checked", () => {
-  const models = ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1", "anthropic/claude-opus-5-5", "anthropic/claude-haiku-5-5"];
-  const r = e2e({ trials: 1, fake: { models }, env: { GK_PROOF_REPAIR_MODEL: "anthropic/claude-opus-5-5", GK_PROOF_DRILL_ARMS: "gate_keeper,gate_keeper@anthropic/claude-haiku-5-5" } });
+  const models = ["truefoundry/claude-sonnet-5-5", "truefoundry/claude-fable-5-1", "truefoundry/claude-opus-5-5", "truefoundry/claude-haiku-5-5"];
+  const r = e2e({ trials: 1, fake: { models }, env: { GK_PROOF_REPAIR_MODEL: "truefoundry/claude-opus-5-5", GK_PROOF_DRILL_ARMS: "gate_keeper,gate_keeper@truefoundry/claude-haiku-5-5" } });
   const summary = decodeChunks(r.lines, "GK_PROOF_PUBLIC_SUMMARY");
-  assert.deepEqual(summary.environment.drill_arm_repair_models, { gate_keeper: "anthropic/claude-opus-5-5", "gate_keeper@anthropic/claude-haiku-5-5": "anthropic/claude-haiku-5-5" });
-  const blocked = e2e({ env: { GK_PROOF_REPAIR_MODEL: "anthropic/claude-haiku-5-5" }, fake: { models: ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1"] } });
+  assert.deepEqual(summary.environment.drill_arm_repair_models, { gate_keeper: "truefoundry/claude-opus-5-5", "gate_keeper@truefoundry/claude-haiku-5-5": "truefoundry/claude-haiku-5-5" });
+  const blocked = e2e({ env: { GK_PROOF_REPAIR_MODEL: "truefoundry/claude-haiku-5-5" }, fake: { models: ["truefoundry/claude-sonnet-5-5", "truefoundry/claude-fable-5-1"] } });
   assert.equal(blocked.out.blocked, "MODEL_NOT_REGISTERED");
   assert.equal(blocked.calls, 0);
 });
@@ -462,8 +464,8 @@ test("inventory mode: read-only, no model calls, provider route reported without
   assert.equal(r.calls, 0);
   const line = r.lines.find((l) => l.startsWith("GK_PROOF_INVENTORY="));
   const inv = JSON.parse(line.split("=").slice(1).join("="));
-  assert.deepEqual(inv.providers, [{ name: "tf-gateway", type: "truefoundry", endpoint_host: "gateway.example.test", models: 2, auth_configured: true }]);
-  assert.equal(inv.models[0].provider, "tf-gateway");
+  assert.deepEqual(inv.providers, [{ name: "truefoundry", type: "truefoundry", endpoint_host: "gateway.example.test", models: 2, auth_configured: true }]);
+  assert.equal(inv.models[0].provider, "truefoundry");
   assert.ok(!/SECRET_/.test(r.lines.join("\n")), "no credential or URL parameter may reach stdout");
 });
 
@@ -580,9 +582,9 @@ test("provider listing reads TrueForge's manifest shape: type, endpoint host and
   const { sanitizeProviders, truefoundryRoute } = await import("../scripts/proof/live/run.mjs");
   const list = [{ name: "gw", manifest: { type: "truefoundry", baseUrl: "https://gw.example.test/api?k=SECRET", auth: { apiKey: "SECRET" }, models: [{}, {}, {}] } }];
   assert.deepEqual(sanitizeProviders(list), [{ name: "gw", type: "truefoundry", endpoint_host: "gw.example.test", models: 3, auth_configured: true }]);
-  const models = [{ name: "gw/claude-sonnet-5-5", provider: { name: "gw" } }, { name: "anthropic/claude-sonnet-5-5", provider: { name: "anthropic" } }];
+  const models = [{ name: "gw/claude-sonnet-5-5", provider: { name: "gw" } }, { name: "truefoundry/claude-sonnet-5-5", provider: { name: "anthropic" } }];
   assert.deepEqual(truefoundryRoute(models, list, ["gw/claude-sonnet-5-5"]).offending, []);
-  assert.deepEqual(truefoundryRoute(models, list, ["anthropic/claude-sonnet-5-5", "gw/missing"]).offending, [{ model: "anthropic/claude-sonnet-5-5", provider: "anthropic" }, { model: "gw/missing", provider: null }]);
+  assert.deepEqual(truefoundryRoute(models, list, ["truefoundry/claude-sonnet-5-5", "gw/missing"]).offending, [{ model: "truefoundry/claude-sonnet-5-5", provider: "anthropic" }, { model: "gw/missing", provider: null }]);
 });
 
 test("provider-remove: GK_PROOF_ALLOW_LOCAL alone never lets an agent be deleted without an uploaded copy", () => {

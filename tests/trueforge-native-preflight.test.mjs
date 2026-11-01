@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {assessHostPreflight,queryHostReadOnly} from "../scripts/trueforge/native-preflight.mjs";
 
-const model="anthropic/claude-sonnet-5-5";
+const model="truefoundry/claude-sonnet-5-5";
 const eligible={models:[{name:model}],capabilities:{skill:{enabled:true}}};
 test("host preflight treats a healthy model and skill catalog as incomplete qualification",()=>{
  const result=assessHostPreflight(eligible);

@@ -57,8 +57,8 @@ test("provider must exactly match endpoint, type and upstream model identity",()
  const good=assessGatewayReadiness({providers:[provider],models});
  assert.equal(good.configuredProviderSeen,true);
  assert.deepEqual(good.mappedRoles.reviewer,{status:"AVAILABLE_NOT_QUALIFIED",model:"truefoundry/claude-sonnet-5-5"});
- assert.equal(good.mappedRoles.adjudicator.status,"BLOCKED_UNQUALIFIED");
- assert.ok(good.blockers.includes("ROLE_UNQUALIFIED:adjudicator"));
+ assert.deepEqual(good.mappedRoles.adjudicator,{status:"AVAILABLE_NOT_QUALIFIED",model:"truefoundry/claude-opus-5-5"});
+ assert.ok(good.blockers.includes("ADJUDICATOR_CALIBRATION_PENDING"));
  assert.equal(good.productionReady,false);
  assert.equal(good.status,"HELD");
  const badOrigin=assessGatewayReadiness({
@@ -106,12 +106,16 @@ test("preflight strictly reads provider and model catalogues: no model usage or 
  "PRODUCTION_CUTOVER_NOT_AUTHORISED",
  ]);
 });
-test("profile cannot silently replace Claude Fable with another model",()=>{
+test("the grader is replaced only by a recorded owner decision that stays held until calibrated against Fable",()=>{
  const profile=JSON.parse(readFileSync(new URL("../config/truefoundry-gateway.json",import.meta.url),"utf8"));
  const roles=JSON.parse(readFileSync(new URL("../agent/models.json",import.meta.url),"utf8")).roles;
- assert.match(roles.adjudicator.model,/claude-fable-5-1/);
- assert.equal(profile.activeRoleMappings.adjudicator,undefined);
- assert.match(profile.blockedUntilQualified.adjudicator,/not in the supplied TrueFoundry model catalogue/);
+ assert.equal(roles.adjudicator.model,"truefoundry/claude-opus-5-5");
+ assert.equal(profile.activeRoleMappings.adjudicator,roles.adjudicator.model,"profile and role file agree; no silent substitution");
+ assert.notEqual(roles.adjudicator.model,roles.reviewer.model,"the grader is never the model under test");
+ assert.equal(roles.adjudicator.status,"pending_calibration");
+ assert.match(roles.adjudicator.calibration,/Fable 5\.1/);
+ assert.match(profile.adjudicatorCalibration,/calibrated against the Fable 5\.1 judgements/);
+ assert.ok(assessGatewayReadiness().blockers.includes("ADJUDICATOR_CALIBRATION_PENDING"));
  assert.equal(profile.release.active,false);
  assert.equal(profile.release.allowSilentFallback,false);
  assert.equal(profile.release.allowPaidInferenceInSetup,false);
