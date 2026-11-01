@@ -147,4 +147,18 @@ For troubleshooting:
 
 Gate Keeper originated from the [TrueForge](https://github.com/truefoundry/trueforge) *Stranger Builds* self-improving agent challenge. The challenge inspired its evaluation and improvement design, but the current implementation intentionally holds self-promotion until independent evidence exists.
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidance. Licensed under the [MIT License](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance.
+
+**Licensing:** Gate Keeper is public but is not offered under a blanket
+open-source licence. Original Gate Keeper additions use the custom
+[Gate Keeper Solo Developer and Commercial Service Licence](LICENSE):
+sole-developer internal use is permitted; commercial resale or supplying
+Gate Keeper functionality as a hosted, managed or other service requires a
+separate commercial licence. The free grant does not extend to teams.
+Selling unrelated software developed using Gate Keeper internally is not,
+by itself, resale of Gate Keeper.
+
+Imported starter material and other third-party components retain their
+licences; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Earlier MIT grants and applicable platform viewing/forking rights are not
+revoked. See the full licence for scope and exceptions.

@@ -1,21 +1,74 @@
-MIT License
+Gate Keeper Solo Developer and Commercial Service Licence
 
-Copyright (c) 2026 NERDCONF and the Stranger Builds participants
+1. Scope
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+These terms apply to original Gate Keeper additions only to the extent their
+respective copyright holders have authority to license them. All rights not
+expressly granted are reserved, subject to the exceptions below.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+2. Sole-developer internal use
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+An individual acting as the sole developer may, without a commercial licence
+fee, copy, run and modify the covered material for that individual's own
+internal development and use.
+
+This permission does not extend to use by a team or to supplying Gate Keeper
+functionality to other people as a product or service. Uses outside this
+permission require a separate licence from the relevant copyright holder,
+unless another applicable licence, agreement or law already permits them.
+
+Using Gate Keeper internally to develop unrelated software does not, by
+itself, make the sale or provision of that unrelated software a resale of
+Gate Keeper. These terms do not impose a licence on such unrelated software.
+
+3. Commercial resale and services
+
+A separate commercial licence is required to sell, resell, sublicense or
+otherwise commercially distribute covered Gate Keeper additions, or to
+provide their functionality to others as a hosted, managed or other service.
+The sole-developer permission does not authorise these activities.
+
+These terms do not grant a general right to redistribute the covered material
+or publish modifications, except for rights preserved in section 5.
+A commercial licence must be agreed separately; no price, royalty, support
+obligation or service-level commitment is established by this notice.
+
+4. Notices
+
+Keep this notice and all applicable third-party copyright, licence and
+attribution notices with copies or substantial portions of the material.
+
+5. Third-party material, prior grants and public access
+
+The imported TrueForge starter and retained portions of it in modified files
+remain under MIT. Other third-party components retain their own licences.
+See THIRD_PARTY_NOTICES.md and
+third_party_licenses/trueforge-starter-MIT.txt.
+These terms do not replace or restrict any third-party licence grant.
+
+Earlier Gate Keeper versions and copies were distributed under MIT. These
+terms apply prospectively to revisions distributed with this notice and do
+not revoke or narrow rights already granted under MIT or any other valid
+licence. They do not make previously published material confidential.
+
+The repository remains public. Rights supplied by the hosting platform's
+applicable terms, including viewing and forking rights, remain unaffected.
+Event-organiser and judge rights already granted under applicable competition
+terms also remain unaffected. Public visibility alone is not an additional
+general reuse licence.
+
+No ownership of third-party work or other contributors' rights is claimed.
+A file's location or modification is not, by itself, evidence of exclusive
+ownership.
+
+6. No warranty
+
+To the extent permitted by applicable law, the covered material is supplied
+as is, without warranties of any kind. No support, fitness for a particular
+purpose or assurance of security is promised by these terms.
+
+7. Requests for permission
+
+Contact the repository maintainer through
+https://github.com/appliedai-au/gate_keeper for commercial licensing or other
+permission requests.
