@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   MODEL, TASK_IDS, PARAMETERS, ARMS, CHANNEL,
-  initialStudy, progress, fixtureForRound, prepareRound, recordObservedPair,
+  initialStudy, progress, fixtureForRound, prepareRound, recordObservedPair, prepareSelfReflection,
 } from "../scripts/proof/four-rounds.mjs";
 
 const sha256 = (s) => createHash("sha256").update(s).digest("hex");
@@ -114,6 +114,43 @@ test("the paired round-2 payloads share the exact code, model and settings but N
     assert.ok(!p.userPrompt.includes("python-deploy"));
     assert.ok(!p.userPrompt.includes("04-ts-fetch"));
   }
+});
+
+test("after Round 1 each agent gets its OWN historical critique in a symmetric self-reflection turn",()=>{
+  const s=state();
+  const plain=prepareSelfReflection(s,1,"baseline");
+  const keeper=prepareSelfReflection(s,1,"gate_keeper");
+  assert.equal(plain.model,keeper.model);
+  assert.deepEqual(plain.parameters,keeper.parameters);
+  assert.equal(plain.systemPrompt,keeper.systemPrompt);
+  assert.equal(plain.systemSha256,keeper.systemSha256);
+  assert.ok(plain.userPrompt.includes("one error-handling defect was missed"));
+  assert.ok(keeper.userPrompt.includes("zero step in Python range was incorrect"));
+  assert.ok(!plain.userPrompt.includes("zero step in Python range was incorrect"));
+  assert.ok(!keeper.userPrompt.includes("one error-handling defect was missed"));
+  assert.ok(plain.provenance.includes("sanitised historical"));
+  assert.equal(plain.noTools,true);
+  assert.equal(keeper.noAutoRetry,true);
+  assert.ok(!plain.userPrompt.includes("03-python-deploy"));
+  assert.ok(!keeper.userPrompt.includes("04-ts-fetch"));
+  assert.throws(()=>prepareSelfReflection(s,4,"baseline"),/SELF_REFLECTION_SCOPE_INVALID/);
+});
+
+test("later self-reflection refuses uncorrelated private review transcripts",()=>{
+  const original=state(),{bundle,feedback}=nextRound(original,2);
+  const staged=recordObservedPair(original,2,bundle,mockEvidence(bundle,2),feedback);
+  assert.throws(()=>prepareSelfReflection(staged,2,"baseline"),/PRIVATE_PRIOR_REPLY_AND_ADJUDICATION_REQUIRED/);
+  assert.throws(()=>prepareSelfReflection(staged,2,"baseline",{
+    ownReviewText:"wrong raw transcript",ownPriorAdjudication:"missed one category",
+  }),/PRIVATE_PRIOR_REPLY_AND_ADJUDICATION_REQUIRED/);
+  const ownReviewText="synthetic test transcript 2-baseline";
+  const r=prepareSelfReflection(staged,2,"baseline",{
+    ownReviewText,ownPriorAdjudication:"missed a prior category",
+  });
+  assert.ok(r.userPrompt.includes(ownReviewText));
+  assert.ok(r.userPrompt.includes("missed a prior category"));
+  assert.ok(!r.userPrompt.includes("synthetic test transcript 2-gate_keeper"));
+  assert.equal(r.parameters.maxOutputTokens,180);
 });
 
 test("lesson budget is bounded, single-reviewer, self-reflection-only",()=>{
