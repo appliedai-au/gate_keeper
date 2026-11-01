@@ -19,7 +19,8 @@ import { RUNTIME_CONFIG, armInstructions, learnedRulesSection, sha256 } from "./
 import { aggregateArm, answerKey } from "./metrics.mjs";
 import { adjudicateTasks, decodeHoldout, numbered, reviewErrors, reviewTasks } from "./review.mjs";
 
-export const LEARN_PHASE_SHARE = { dev: 0.24, learn: 0.14, qualify: 0.24, prove: 0.38 };
+// Each review phase pays for its own reviews AND their adjudication (adjudication costs about as much as the reviews).
+export const LEARN_PHASE_SHARE = { dev: 0.27, learn: 0.10, qualify: 0.27, prove: 0.36 };
 export const MAX_RULES = 6;
 export const POPULATION_MIN_TENANTS = 2;
 export const TENANT_SIZE = 2;
@@ -111,7 +112,8 @@ export async function runLearning({ env, model, publicTasks, budget, callTurn, n
   const dev = decodeHoldout(env.GK_DEV_HOLDOUT_B64);
   const unseen = decodeHoldout(env.GK_PRIVATE_HOLDOUT_B64);
   if (!unseen.tasks.length) throw new Error("UNSEEN_HOLDOUT_REQUIRED");
-  const devTasks = assignTenants([...publicTasks, ...dev.tasks]);
+  // GK_LEARN_DEV_PUBLIC=0 uses only the private development tasks (smaller, cheaper run).
+  const devTasks = assignTenants([...(env.GK_LEARN_DEV_PUBLIC === "0" ? [] : publicTasks), ...dev.tasks]);
   const newTenantTasks = unseen.tasks.map((t) => ({ ...t, tenant: NEW_TENANT }));
   const devIds = new Set(devTasks.map((t) => t.id)), devCode = new Set(devTasks.map((t) => t.code.join("\n")));
   if (newTenantTasks.some((t) => devIds.has(t.id) || devCode.has(t.code.join("\n")))) throw new Error("HOLDOUT_OVERLAP");
@@ -130,7 +132,7 @@ export async function runLearning({ env, model, publicTasks, budget, callTurn, n
     new_tenant_proof: "new tenant false_positives(shared rules) < false_positives(current) AND matched_issues(shared rules) >= matched_issues(current)" },
     tenants: { contributing: tenants.length, non_consenting: nonConsenting.size, tasks_per_tenant: TENANT_SIZE, new_tenant_tasks: newTenantTasks.length,
       new_tenant_clean_tasks: newTenantTasks.filter((t) => !t.expected.length).length },
-    dev_set: { public_tasks: publicTasks.length, private_tasks: dev.tasks.length } };
+    dev_set: { public_tasks: env.GK_LEARN_DEV_PUBLIC === "0" ? 0 : publicTasks.length, private_tasks: dev.tasks.length } };
   const hashes = { dev_holdout_sha256: dev.sha256, unseen_holdout_sha256: unseen.sha256 };
   const done = () => ({ public: pub, hashes });
 
