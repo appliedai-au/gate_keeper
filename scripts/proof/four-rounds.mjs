@@ -316,6 +316,11 @@ if (process.argv[1] && resolve(process.argv[1]) === here) {
   const arg = process.argv[2] || "--status";
   try {
     if (arg === "--status") console.log(JSON.stringify(progress(), null, 2));
+    else if (arg === "--reflection-round-1") {
+      const study = initialStudy();
+      console.log(JSON.stringify(Object.fromEntries(ARMS.map((arm) =>
+        [arm, prepareSelfReflection(study, 1, arm)])), null, 2));
+    }
     else if (arg === "--prepare-round-2") {
       // This MUST hold until both same-model self-reflection calls have
       // actually produced independently checked, distinct feedback evidence.
