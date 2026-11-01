@@ -127,6 +127,7 @@ test("offline e2e (synthetic fake): orchestration completes, summary validates, 
   assert.equal(validatePublicProof(summary).valid, true);
   assert.equal(summary.result, "INCONCLUSIVE");
   assert.equal(summary.arms.baseline.trials, 2);
+  assert.equal(summary.benchmark.published_metric_scope,"public_tasks_only","private holdout metrics are not reported publicly");
   assert.equal(summary.arms.baseline.actual_cost_usd,null,"TrueForge turn estimates are NOT independently invoiced actual costs");
   assert.equal(summary.arms.gate_keeper.actual_cost_usd,null);
   assert.equal(summary.loop.independent_qualification, "BLOCKED");
@@ -139,7 +140,9 @@ test("offline e2e (synthetic fake): orchestration completes, summary validates, 
   assert.ok(data.sessions.every(s=>!("id" in s)&&!("task_id" in s)),"private session and holdout IDs must not leak");
   assert.equal(data.evidence_items,undefined,"private evidence inventory paths must not be public");
   assert.ok(data.private_evidence_item_count>0);
-  assert.ok(Object.values(data.arms).every(a=>!("holdout" in a)),"holdout-only grades stay private");
+  assert.ok(data.budget.refusals.every(r=>!("label" in r)),"hidden fixture IDs may not leak via budget refusals");
+  assert.ok(Object.values(data.arms).every(a=>!("holdout" in a)&&!("all" in a)&&a.public),
+    "combined and public aggregates cannot be published together to infer holdout-only grades");
   const money = data.drill.cycles.filter((c) => c.fixture === "money");
   assert.ok(money.length === 2 && money.every((c) => c.outcome === "CANDIDATE" && c.attempts[0].verdict === "PASS" && c.attempts[0].patch_format === "edits" && c.origin_unchanged === true), JSON.stringify(money));
   const naive = data.drill.cycles.filter((c) => c.fixture === "uploads");
