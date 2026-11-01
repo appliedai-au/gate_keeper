@@ -18,4 +18,7 @@ COPY proof/submissions ./proof/submissions
 COPY tests ./tests
 RUN node --test tests/proof-live-harness.test.mjs tests/proof-public-summary.test.mjs
 USER node
-CMD ["node", "--import", "tsx", "scripts/proof/live/run.mjs"]
+# A freshly created or reconnected proof service must be safe by default.
+# Only an explicitly scoped manual run may override this CMD after the
+# external sponsor/budget/evidence admission has been verified.
+CMD ["node", "-e", "console.log('GK_PROOF_STANDBY: explicit budget-qualified manual run required; zero model calls')"]
