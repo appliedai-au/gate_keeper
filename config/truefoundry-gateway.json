@@ -1,0 +1,32 @@
+{
+  "schema": "gate-keeper-truefoundry-gateway-v1",
+  "organisation": "stranger-builds",
+  "gatewayBaseUrl": "https://stranger-builds.truefoundry.cloud/api/llm",
+  "trueForgeProviderType": "truefoundry",
+  "trueForgeProviderName": "truefoundry",
+  "upstreamProviderAccount": "tfy-managed",
+  "modelsVisibleInOwnerAccount": [
+    "claude-sonnet-5-5",
+    "claude-opus-5-5"
+  ],
+  "activeRoleMappings": {
+    "reviewer": "truefoundry/claude-sonnet-5-5",
+    "repair": "truefoundry/claude-sonnet-5-5",
+    "learning": "truefoundry/claude-opus-5-5"
+  },
+  "blockedUntilQualified": {
+    "adjudicator": "Existing Claude Fable 5.1 is not in the supplied TrueFoundry model catalogue; do not silently substitute it.",
+    "triage": "Model not selected or qualified."
+  },
+  "release": {
+    "active": false,
+    "gatewayVirtualAccountRequired": true,
+    "independentSponsorCreditAndBillingAttestationRequired": true,
+    "gatewayEnforcedCumulativeBudgetRequired": true,
+    "roleModelQualificationRequired": true,
+    "signedIndependentVerdictRequired": true,
+    "allowSilentFallback": false,
+    "allowPaidInferenceInSetup": false,
+    "productionChangeApproved": false
+  }
+}
