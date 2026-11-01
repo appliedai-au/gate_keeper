@@ -89,7 +89,8 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     sandbox_enabled: !!caps?.sandbox?.enabled, skills_enabled: !!caps?.skill?.enabled, source_commit: sourceCommit };
   emit("GK_PROOF_PREFLIGHT", preflight);
   ev.put("preflight.json", preflight, "preflight");
-  if (!modelNames.includes(model)) {
+  // Inventory only reads provider routes, so it must still run when the reviewer model is the thing that is missing.
+  if (!modelNames.includes(model) && (env.GK_PROOF_MODE || "compare") !== "inventory") {
     emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_REGISTERED", model, available: modelNames });
     return { blocked: "MODEL_NOT_REGISTERED", preflight };
   }

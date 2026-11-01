@@ -466,3 +466,10 @@ test("inventory mode: read-only, no model calls, provider route reported without
   assert.equal(inv.models[0].provider, "anthropic-direct");
   assert.ok(!/SECRET_/.test(r.lines.join("\n")), "no credential or URL parameter may reach stdout");
 });
+
+test("inventory still reports provider routes when the reviewer model is not registered", () => {
+  const r = e2e({ env: { GK_PROOF_MODE: "inventory" }, fake: { models: ["openai/other"] } });
+  assert.equal(r.calls, 0);
+  assert.ok(r.lines.some((l) => l.startsWith("GK_PROOF_INVENTORY=")));
+  assert.ok(!r.lines.some((l) => l.startsWith("GK_PROOF_BLOCKED=")));
+});
