@@ -462,8 +462,8 @@ test("inventory mode: read-only, no model calls, provider route reported without
   assert.equal(r.calls, 0);
   const line = r.lines.find((l) => l.startsWith("GK_PROOF_INVENTORY="));
   const inv = JSON.parse(line.split("=").slice(1).join("="));
-  assert.deepEqual(inv.providers, [{ name: "anthropic-direct", type: "anthropic", endpoint_host: "api.anthropic.com", models: 2, auth_configured: true }]);
-  assert.equal(inv.models[0].provider, "anthropic-direct");
+  assert.deepEqual(inv.providers, [{ name: "tf-gateway", type: "truefoundry", endpoint_host: "gateway.example.test", models: 2, auth_configured: true }]);
+  assert.equal(inv.models[0].provider, "tf-gateway");
   assert.ok(!/SECRET_/.test(r.lines.join("\n")), "no credential or URL parameter may reach stdout");
 });
 
@@ -475,7 +475,7 @@ test("inventory still reports provider routes when the reviewer model is not reg
 });
 
 test("provider-remove: deletes exactly the named provider (no model calls), confirms it is gone, never prints secrets", () => {
-  const r = e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct" } });
+  const r = e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct" }, fake: { modelRoute: "anthropic" } });
   assert.equal(r.calls, 0);
   const line = r.lines.find((l) => l.startsWith("GK_PROOF_PROVIDER_REMOVED="));
   const res = JSON.parse(line.split("=").slice(1).join("="));
@@ -483,11 +483,11 @@ test("provider-remove: deletes exactly the named provider (no model calls), conf
   assert.equal(res.providers_before.length, 1);
   assert.deepEqual(res.providers_after, []);
   assert.ok(!/SECRET_/.test(r.lines.join("\n")));
-  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "not-there" } }), /PROVIDER_REMOVE_TARGET_NOT_FOUND/);
+  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "not-there" }, fake: { modelRoute: "anthropic" } }), /PROVIDER_REMOVE_TARGET_NOT_FOUND/);
 });
 
 test("provider-remove fails closed when the provider is still listed after delete", () => {
-  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct" }, fake: { deleteNoop: true } }), /PROVIDER_REMOVE_NOT_CONFIRMED/);
+  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct" }, fake: { deleteNoop: true, modelRoute: "anthropic" } }), /PROVIDER_REMOVE_NOT_CONFIRMED/);
 });
 
 test("learning: rules are asked for in at most 40 words; length check allows a full sentence but rejects merged essays", async () => {
@@ -540,4 +540,52 @@ test("offline e2e: hard drill set runs the hard fixtures and says plainly why th
   assert.deepEqual(fixturesRun, ["csv", "daykey", "merge", "ratelimit", "semver"]);
   assert.ok(data.drill.events.some((e) => e.check === "drill_fixture_set" && e.set === "hard"));
   assert.ok(data.drill.events.some((e) => /drill set hard has no tenant-beta fixture \(by design\)/.test(e.outcome || "")));
+});
+
+test("provider-remove: an agent still using the provider blocks removal unless the owner approves detaching it", () => {
+  const agents = [{ id: "ag1", name: "gate-keeper", manifest: { model: { name: "anthropic-direct/claude-sonnet-5-5" }, instructions: "SECRET_INSTRUCTIONS" }, sessionIds: [] },
+    { id: "ag2", name: "other", manifest: { model: { name: "gateway/some-model" } } }];
+  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct" }, fake: { agents, modelRoute: "anthropic" } }), /PROVIDER_IN_USE/);
+});
+
+test("provider-remove with GK_DETACH_AGENTS=1: exports the agent and its sessions privately, deletes only that agent, then the provider", () => {
+  const agents = [{ id: "ag1", name: "gate-keeper", manifest: { model: { name: "anthropic-direct/claude-sonnet-5-5" }, instructions: "SECRET_INSTRUCTIONS" }, sessionIds: ["s-old-1", "s-old-2"] },
+    { id: "ag2", name: "other", manifest: { model: { name: "gateway/some-model" } } }];
+  const r = e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct", GK_DETACH_AGENTS: "1", GK_PROOF_SELFTEST_FAKE: "1", GK_EVIDENCE_DIR: mkdtempSync(join(tmpdir(), "gk-detach-")) }, fake: { agents, modelRoute: "anthropic" } });
+  const out = r.lines.join("\n");
+  const exported = JSON.parse(r.lines.find((l) => l.startsWith("GK_PROOF_AGENTS_EXPORTED=")).split("=").slice(1).join("="));
+  assert.deepEqual(exported.agents.map((a) => [a.name, a.sessions_exported]), [["gate-keeper", 2]]);
+  const removed = JSON.parse(r.lines.find((l) => l.startsWith("GK_PROOF_PROVIDER_REMOVED=")).split("=").slice(1).join("="));
+  assert.deepEqual(removed.providers_after, []);
+  assert.deepEqual(removed.models_after, []);
+  assert.ok(!/SECRET_/.test(out), "instructions and provider secrets never reach the log");
+  assert.equal(r.calls, 0);
+});
+
+test("provider-remove with GK_DETACH_AGENTS=1 fails closed, deleting nothing, when the private export cannot be uploaded", () => {
+  const agents = [{ id: "ag1", name: "gate-keeper", manifest: { model: { name: "anthropic-direct/claude-sonnet-5-5" } }, sessionIds: ["s-old-1"] }];
+  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct", GK_DETACH_AGENTS: "1" }, fake: { agents, modelRoute: "anthropic" } }), /AGENT_EXPORT_NOT_UPLOADED/);
+});
+
+test("TrueFoundry only: a run is refused before any model call when a model it needs is not served through a TrueFoundry provider", () => {
+  const r = e2e({ trials: 1, fake: { modelRoute: "anthropic" } });
+  assert.equal(r.calls, 0);
+  const blocked = JSON.parse(r.lines.find((l) => l.startsWith("GK_PROOF_BLOCKED=")).split("=").slice(1).join("="));
+  assert.equal(blocked.reason, "MODEL_NOT_ON_TRUEFOUNDRY");
+  assert.ok(blocked.models.every((m) => m.provider === "anthropic-direct"));
+  assert.ok(!/SECRET_/.test(r.lines.join("\n")));
+});
+
+test("provider listing reads TrueForge's manifest shape: type, endpoint host and auth presence, never the auth or full URL", async () => {
+  const { sanitizeProviders, truefoundryRoute } = await import("../scripts/proof/live/run.mjs");
+  const list = [{ name: "gw", manifest: { type: "truefoundry", baseUrl: "https://gw.example.test/api?k=SECRET", auth: { apiKey: "SECRET" }, models: [{}, {}, {}] } }];
+  assert.deepEqual(sanitizeProviders(list), [{ name: "gw", type: "truefoundry", endpoint_host: "gw.example.test", models: 3, auth_configured: true }]);
+  const models = [{ name: "gw/claude-sonnet-5-5", provider: { name: "gw" } }, { name: "anthropic/claude-sonnet-5-5", provider: { name: "anthropic" } }];
+  assert.deepEqual(truefoundryRoute(models, list, ["gw/claude-sonnet-5-5"]).offending, []);
+  assert.deepEqual(truefoundryRoute(models, list, ["anthropic/claude-sonnet-5-5", "gw/missing"]).offending, [{ model: "anthropic/claude-sonnet-5-5", provider: "anthropic" }, { model: "gw/missing", provider: null }]);
+});
+
+test("provider-remove: GK_PROOF_ALLOW_LOCAL alone never lets an agent be deleted without an uploaded copy", () => {
+  const agents = [{ id: "ag1", name: "gate-keeper", manifest: { model: { name: "anthropic-direct/claude-sonnet-5-5" } }, sessionIds: ["s-old-1"] }];
+  assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct", GK_DETACH_AGENTS: "1", GK_PROOF_ALLOW_LOCAL: "1" }, fake: { agents, modelRoute: "anthropic" } }), /AGENT_EXPORT_NOT_UPLOADED/);
 });
