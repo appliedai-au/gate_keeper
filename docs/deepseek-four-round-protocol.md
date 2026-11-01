@@ -86,6 +86,9 @@ them are **exploratory**, not causal proof of the learning mechanism.
 
 - `node scripts/proof/four-rounds.mjs --status` prints **2/8 observed**,
   **6/8 missing**, 1/4 per method and US$0.00027930 observed charges.
+- `node scripts/proof/four-rounds.mjs --reflection-round-1` exports the
+  two distinct non-billable model self-reflection requests. These prompts are
+  not model replies and do NOT count toward any completed rounds.
 - `node scripts/proof/four-rounds.mjs --prepare-round-2` deliberately
   refuses until the two own-model self-reflection turns are separately
   recorded and adjudicated. It does not send a request.
