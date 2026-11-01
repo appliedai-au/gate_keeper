@@ -374,7 +374,9 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   limitations.push("Re-review gate precision is judged by a same-model blinded adjudicator session");
   if (!preflight.sandbox_enabled) limitations.push("TrueForge sandbox provider not enabled; candidate patches were validated in a disposable clone inside the one-shot runner container");
   const pick = (a) => a ? ({ trials: a.trials, defect_recall: a.defect_recall, precision: a.precision, explanation_correctness: a.explanation_correctness,
-    severity_accuracy: a.severity_accuracy, median_latency_ms: a.median_latency_ms, total_tokens: a.total_tokens, actual_cost_usd: a.trueforge_estimated_cost_usd }) : null;
+    severity_accuracy: a.severity_accuracy, median_latency_ms: a.median_latency_ms, total_tokens: a.total_tokens,
+    // TrueForge estimates are not invoice-verified gateway costs.
+    actual_cost_usd: null }) : null;
   const hashes = instructionHashes();
   const summary = {
     schema: "gate-keeper-public-proof-v1", run_id: runId, submitted_at: new Date(now()).toISOString(),
