@@ -6,8 +6,8 @@
   "experimentType": "TrueFoundry Playground methodology comparison — not TrueForge SDK/agent execution",
   "model": "tfy-managed/deepseek-v4-flash-0731",
   "sourceCommit": "b0b4b359ce482ddc3dc42c7332f8cbb232c05412",
-  "githubReportUrl": "https://github.com/appliedai-au/gate_keeper/blob/feat/gk-deepseek-playground-smoke-20261102/proof/submissions/gk-playground-deepseek-20261102-a/report.md",
-  "githubSummaryUrl": "https://github.com/appliedai-au/gate_keeper/blob/feat/gk-deepseek-playground-smoke-20261102/proof/submissions/gk-playground-deepseek-20261102-a/summary.json",
+  "githubReportUrl": "https://github.com/appliedai-au/gate_keeper/blob/af012932ad19c39d912a9be924de8ed0c2e10861/proof/submissions/gk-playground-deepseek-20261102-a/report.md",
+  "githubSummaryUrl": "https://github.com/appliedai-au/gate_keeper/blob/af012932ad19c39d912a9be924de8ed0c2e10861/proof/submissions/gk-playground-deepseek-20261102-a/summary.json",
   "arms": [
     {
       "method": "Plain TrueForge-style",
