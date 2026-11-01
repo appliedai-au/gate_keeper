@@ -29,7 +29,7 @@ Gate Keeper reviews proposed code changes, identifies substantive defects and re
        Reviewed promotion PR     <-- NEVER automatic
 ```
 
-The example agent in [`agent/`](agent/) is a **read-only code reviewer**. Its default manifest names `anthropic/claude-sonnet-5-5`. Models are chosen per role on measured merit and recorded in [`agent/models.json`](agent/models.json): reviewer and repair Sonnet 5.5, grader/gate Fable 5.1, learning Opus 5.5. The locked reference results are in [`proof/baseline.json`](proof/baseline.json) (run `gk-live-20261101-g`). A model name is a configuration value, **not proof that the model is enabled or billed** on a particular TrueForge instance.
+The example agent in [`agent/`](agent/) is a **read-only code reviewer**. Its default manifest names `anthropic/claude-sonnet-5-5`. Models are chosen per role on measured merit and recorded in [`agent/models.json`](agent/models.json): reviewer and repair Sonnet 5.5, grader/gate Fable 5.1, learning Opus 5.5. The locked reference results are in [`proof/baseline.json`](proof/baseline.json) (run `gk-live-20261101-g`). Models are reached only through TrueForge's model catalogue (optionally TrueFoundry AI Gateway); Gate Keeper holds no provider credentials. The Railway-hosted TrueForge used for the proof runs is temporary: the harness accepts any owner-approved https TrueForge host (`GK_TRUEFORGE_APPROVED_HOSTS` plus `TRUEFORGE_TOKEN`). A model name is a configuration value, **not proof that the model is enabled or billed** on a particular TrueForge instance.
 
 ### Ownership boundaries
 

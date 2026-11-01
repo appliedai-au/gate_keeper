@@ -159,7 +159,7 @@ test("offline e2e (synthetic fake): spend cap stops calls and unapproved autonom
 });
 
 test("orchestrator refuses public TrueForge URLs and unregistered models", () => {
-  assert.throws(() => e2e({ env: { TRUEFORGE_BASE_URL: "https://example.com" } }), /PRIVATE_TRUEFORGE_URL_REQUIRED/);
+  assert.throws(() => e2e({ env: { TRUEFORGE_BASE_URL: "https://example.com" } }), /TRUEFORGE_URL_NOT_APPROVED/);
   const r = e2e({ fake: { models: ["openai/other"] } });
   assert.equal(r.out.blocked, "MODEL_NOT_REGISTERED");
   assert.equal(r.calls, 0);
@@ -438,4 +438,21 @@ test("the repair role model is read: bare drill arms repair with it, @model dril
   const blocked = e2e({ env: { GK_PROOF_REPAIR_MODEL: "anthropic/claude-haiku-5-5" }, fake: { models: ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1"] } });
   assert.equal(blocked.out.blocked, "MODEL_NOT_REGISTERED");
   assert.equal(blocked.calls, 0);
+});
+
+test("TrueForge may be any approved https host reached with a token; unapproved hosts or a missing token are refused", () => {
+  const ok = e2e({ trials: 1, env: { TRUEFORGE_BASE_URL: "https://forge.example.org", GK_TRUEFORGE_APPROVED_HOSTS: "forge.example.org", TRUEFORGE_TOKEN: "t" } });
+  assert.equal(decodeChunks(ok.lines, "GK_PROOF_PUBLIC_DATA").preflight.base_url_kind, "approved-https");
+  assert.throws(() => e2e({ env: { TRUEFORGE_BASE_URL: "https://forge.example.org", GK_TRUEFORGE_APPROVED_HOSTS: "forge.example.org" } }), /TRUEFORGE_URL_NOT_APPROVED/);
+  assert.throws(() => e2e({ env: { TRUEFORGE_BASE_URL: "http://forge.example.org", GK_TRUEFORGE_APPROVED_HOSTS: "forge.example.org", TRUEFORGE_TOKEN: "t" } }), /TRUEFORGE_URL_NOT_APPROVED/);
+});
+
+test("gateway models resolve to their own list prices", async () => {
+  const { priceFor } = await import("../scripts/proof/live/budget.mjs");
+  assert.deepEqual(priceFor("openai/gpt-6.1-terra"), [1, 5]);
+  assert.deepEqual(priceFor("openai/gpt-6-luna"), [0.1, 0.5]);
+  assert.deepEqual(priceFor("google/gemini-3.8-flash"), [0.75, 3.75]);
+  assert.deepEqual(priceFor("google/gemini-3.5-flash-lite"), [0.3, 2.5]);
+  assert.deepEqual(priceFor("google/gemini-4-argon"), [2, 10]);
+  assert.deepEqual(priceFor("deepseek/deepseek-v4-pro"), [1.32, 3.96]);
 });

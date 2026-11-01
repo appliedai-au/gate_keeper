@@ -56,8 +56,16 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   const runId = env.GK_PROOF_RUN_ID;
   if (!runId || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{5,79}$/.test(runId)) throw new Error("RUN_ID_REQUIRED");
   const baseUrl = env.TRUEFORGE_BASE_URL || "";
+  // TrueForge is the harness wherever it is hosted. Accepted: the temporary private Railway service, or an
+  // https endpoint whose host the owner approved (GK_TRUEFORGE_APPROVED_HOSTS) reached with a TrueForge token.
   const privateUrl = /^http:\/\/[a-z0-9-]+\.railway\.internal:\d{2,5}\/?$/.test(baseUrl);
-  if (!privateUrl && env.GK_PROOF_ALLOW_LOCAL !== "1") throw new Error("PRIVATE_TRUEFORGE_URL_REQUIRED");
+  let approvedHttps = false;
+  try {
+    const u = new URL(baseUrl);
+    const hosts = String(env.GK_TRUEFORGE_APPROVED_HOSTS || "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+    approvedHttps = u.protocol === "https:" && hosts.includes(u.hostname.toLowerCase()) && !!env.TRUEFORGE_TOKEN;
+  } catch {}
+  if (!privateUrl && !approvedHttps && env.GK_PROOF_ALLOW_LOCAL !== "1") throw new Error("TRUEFORGE_URL_NOT_APPROVED");
   const deadline = t0 + 60000 * Number(env.GK_PROOF_DEADLINE_MIN || 50);
   const capUsd = Number(env.GK_PROOF_CAP_USD || DEFAULT_CAP_USD);
   const trialsWanted = Math.max(1, Math.min(5, Number(env.GK_PROOF_TRIALS || 3)));
@@ -77,7 +85,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   // Per-role defaults come from agent/models.json (the locked baseline); env overrides are for experiments.
   const roleConfig = JSON.parse(readFileSync(join(ROOT, "agent", "models.json"), "utf8")).roles;
   const model = env.GK_PROOF_MODEL || roleConfig.reviewer?.model || agentJson.model.name;
-  const preflight = { health, base_url_private: privateUrl, trueforge_runtime: TRUEFORGE_RUNTIME, models: modelNames, selected_model: model,
+  const preflight = { health, base_url_private: privateUrl, base_url_kind: privateUrl ? "railway-private (temporary)" : approvedHttps ? "approved-https" : "local-selftest", trueforge_runtime: TRUEFORGE_RUNTIME, models: modelNames, selected_model: model,
     sandbox_enabled: !!caps?.sandbox?.enabled, skills_enabled: !!caps?.skill?.enabled, source_commit: sourceCommit };
   emit("GK_PROOF_PREFLIGHT", preflight);
   ev.put("preflight.json", preflight, "preflight");

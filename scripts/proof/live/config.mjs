@@ -136,6 +136,18 @@ export const PRICE_PER_MTOK = [
   [/claude-opus-5-5/i, [4, 20]],
   [/claude-sonnet-5-5/i, [2, 10]],
   [/claude-haiku-5-5/i, [0.1, 0.5]],
+  // Other providers reachable through TrueForge's catalogue / TrueFoundry AI Gateway (official list prices, 2026-11-01).
+  [/gpt-6-astra/i, [10, 50]],
+  [/gpt-6\.1-sol/i, [2, 10]],
+  [/gpt-6\.1-terra/i, [1, 5]],
+  [/gpt-6-luna/i, [0.1, 0.5]],
+  [/gemini-4-argon/i, [2, 10]],
+  [/gemini-3\.1-pro/i, [2, 12]],
+  [/gemini-3\.[68]-flash(?!-lite)/i, [0.75, 3.75]], // doubles to 1.50/7.50 on 2027-01-01
+  [/gemini-3\.5-flash-lite/i, [0.3, 2.5]],
+  [/gemini-3\.1-flash-lite/i, [0.25, 1.5]],
+  [/deepseek-v4-pro/i, [1.32, 3.96]], // peak rate (conservative)
+  [/deepseek-flash|deepseek-v4\.1-flash/i, [0.3, 1.2]], // peak rate (conservative)
   [/claude-opus-4-[5-9]|claude-opus-5/i, [5, 25]],
   [/claude-opus/i, [15, 75]],
   [/claude-sonnet/i, [3, 15]],
