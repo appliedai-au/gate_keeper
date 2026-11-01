@@ -120,7 +120,7 @@ This heading is retained for the original *Stranger Builds* TrueForge challenge,
 | [`scripts/learning-trust.mjs`](scripts/learning-trust.mjs) | Signed lease/receipt verification |
 | [`scripts/learning-baseline.mjs`](scripts/learning-baseline.mjs) | Frozen evaluation evidence validation |
 | [`scripts/providers/`](scripts/providers/) | Fail-closed TrueForge model routing and status |
-| [`scripts/proof/live/`](scripts/proof/live/) | Live baseline-vs-Gate Keeper comparison and autonomous repair-loop drill |
+| [`scripts/proof/live/`](scripts/proof/live/) | Live baseline-vs-Gate Keeper comparison and autonomous repair-loop drill (`GK_PROOF_DRILL_SET=standard|hard|all` picks the repair fixtures; `hard` is five fixtures in `proof/fixtures/` where the obvious minimal fix fails the threat-model or architecture tests) |
 | [`tests/`](tests/) | Policy, boundary, security and integration tests |
 | [`Dockerfile.qualify`](Dockerfile.qualify) | Disposable, credential-free source qualification |
 | [`docs/providers.md`](docs/providers.md) | Provider setup, consent and limits |
