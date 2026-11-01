@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import catalogue from "../data/modelCatalogue.json";
 import proof from "../data/firstBenchmark.json";
+import smoke from "../data/cheapestSmoke.json";
 
 // Public, sanitised history; this component never calls a model or stores keys.
 // The catalogue is an observed snapshot, not an API authorisation or credit receipt.
@@ -20,7 +21,45 @@ export default function GateKeeperBenchmark({ section = "Runs" }) {
       <div className="gk-section-heading">
         <div className="gk-eyebrow"><span className="gk-eyebrow-square" />{section === "Runs" ? "RECORDED RUN / PUBLIC RESULTS" : "SOURCE-BOUND EVIDENCE / NOT INDEPENDENTLY QUALIFIED"}</div>
         <h1>{section === "Runs" ? "The benchmark, not the demo." : "Evidence, with its limits."}</h1>
-        <p>This is an actual previously recorded TrueForge comparison. The results are historical and are not produced by the current Base44 page.</p>
+        <p>See recorded model experiments and their evidence. The newest comparison ran in the TrueFoundry Playground; the older study used a separate TrueForge test harness. Neither runs from this website.</p>
+      </div>
+      <div role="region" aria-label="Newest live Playground method comparison" style={{ ...card, borderColor: "#9cb48c" }}>
+        <div style={{ ...mono, fontWeight: 800, color: "#536846", letterSpacing: ".08em" }}>NEW TEST / ${smoke.runId.toUpperCase()} / ${smoke.result}</div>
+        <h2 style={{ fontSize: 21, margin: "10px 0 8px", color: "#142636" }}>Live cheapest-model comparison</h2>
+        <p style={{ fontSize: 13, lineHeight: 1.6 }}>
+          Two real inference calls on <code>{smoke.model}</code> using identical Python code and temperature 0.
+          This is a <strong>one-fixture Playground methodology test</strong>, not a native TrueForge SDK run or independently qualified benchmark.
+        </p>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", minWidth: 580, borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr>{["Review method", "Known defects", "Latency", "Tokens (approx.)", "Gateway cost (USD)"].map((h) =>
+                <th key={h} scope="col" style={{ textAlign: "left", borderBottom: border, padding: "9px 8px" }}>{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {smoke.arms.map((arm) => <tr key={arm.method}>
+                <td style={{ borderBottom: border, padding: "11px 8px", fontWeight: 650 }}>{arm.method}</td>
+                <td style={{ borderBottom: border, padding: "11px 8px" }}>{arm.knownIssuesDetected}/{arm.expectedIssues}</td>
+                <td style={{ borderBottom: border, padding: "11px 8px" }}>{(arm.latencyMs / 1000).toFixed(2)}s</td>
+                <td style={{ borderBottom: border, padding: "11px 8px" }}>{arm.reportedTokensApprox.toLocaleString()}</td>
+                <td style={{ borderBottom: border, padding: "11px 8px", whiteSpace: "nowrap" }}>${arm.gatewayReportedChargeUsd.toFixed(8)}</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+        <p style={{ fontSize: 13, margin: "13px 0 8px", lineHeight: 1.6 }}>
+          <strong>Observed cost for both calls: ${smoke.totalGatewayChargeUsd.toFixed(8)} USD.</strong>
+          These charges are shown in TrueFoundry request traces; sponsor-credit deductions remain unverified.
+        </p>
+        <p style={{ fontSize: 12, color: "#744c19", lineHeight: 1.6 }}>
+          <strong>Accuracy caveat:</strong> Gate Keeper found the previously missed swallowed exception,
+          but wrongly claimed that a zero step causes an infinite loop. Python's range(step=0) raises ValueError.
+          The trial result is INCONCLUSIVE, not an independently certified win.
+        </p>
+        <p style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 13, marginBottom: 0 }}>
+          <a href={smoke.githubReportUrl} rel="noopener noreferrer" target="_blank">Open smoke-test report</a>
+          <a href={smoke.githubSummaryUrl} rel="noopener noreferrer" target="_blank">Inspect recorded results</a>
+        </p>
       </div>
       <div role="status" style={{ ...card, background: "#fff9e9", borderColor: "#ecdba5" }}>
         <div style={{ ...mono, fontWeight: 800, letterSpacing: ".08em" }}>RUN {proof.runId.toUpperCase()} / {proof.result}</div>
@@ -72,7 +111,7 @@ export default function GateKeeperBenchmark({ section = "Runs" }) {
         </select>
         <div aria-live="polite" style={{ fontSize: 12, paddingTop: 13, color: "#596772", lineHeight: 1.5 }}>
           {model
-            ? <>{model} selected for planning. {previous.length ? "There is a historical comparison for this model family above." : "No historical benchmark is recorded for this exact model."} A sponsored, budget-limited API call must be authorised separately.</>
+            ? <>{model} selected for planning. {previous.length ? "There is a historical comparison for this model family above." : model === "deepseek-v4-flash-0731" ? "A one-fixture Playground method smoke is recorded above; native TrueForge execution remains unverified." : "No historical benchmark is recorded for this exact model."} A sponsored, budget-limited API call must be authorised separately.</>
             : "No model selected. No paid requests will be sent from this page."}
         </div>
         <p style={{ fontSize: 12, color: "#596772", marginBottom: 0 }}>Catalogue observed {catalogue.observedOn}; registered TrueForge access, model-specific charges, free sponsor balance and usage eligibility remain to be verified. No fallback to personal billing.</p>
