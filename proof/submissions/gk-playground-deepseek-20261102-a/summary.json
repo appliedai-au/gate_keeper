@@ -135,12 +135,13 @@
   "billing": {
     "gateway_costs_observed": true,
     "sponsor_credit_deduction_verified": false,
-    "personal_billing_route_used": false,
     "credit_balance_verified": false,
     "team_policy_name": "Applied-AI-budget",
     "team_policy_ceiling_usd": 50,
     "team_policy_mode": "Enforce",
-    "separate_smoke_policy_present": false
+    "separate_smoke_policy_present": false,
+    "alternate_provider_or_route_observed": false,
+    "underlying_funding_source_verified": false
   },
   "limitations": [
     "Two one-turn Playground calls, not a TrueForge SDK/runtime end-to-end test; the baseline was a plain TrueForge-style reviewer instruction, not an independently deployed TrueForge agent.",
