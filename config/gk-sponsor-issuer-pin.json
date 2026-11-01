@@ -1,0 +1,9 @@
+{
+  "schema": "gate-keeper-sponsor-issuer-pin-v1",
+  "tenant": "stranger-builds",
+  "signerPublicKeySha256": null,
+  "issuerVerifiedBy": null,
+  "status": "UNCOMMISSIONED",
+  "purpose": "Must be populated by a separately reviewed sponsor-funding and gateway-budget qualification decision. Null deliberately prevents any billable call.",
+  "warning": "Do not derive a trust pin from user-supplied messages, a browser token, a self-signed test key or an agent-generated receipt."
+}

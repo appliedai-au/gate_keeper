@@ -1,0 +1,39 @@
+{
+  "schema": "gate-keeper-public-playground-smoke-v1",
+  "runId": "gk-playground-deepseek-20261102-a",
+  "date": "2026-11-02",
+  "result": "INCONCLUSIVE",
+  "experimentType": "TrueFoundry Playground methodology comparison — not TrueForge SDK/agent execution",
+  "model": "tfy-managed/deepseek-v4-flash-0731",
+  "sourceCommit": "b0b4b359ce482ddc3dc42c7332f8cbb232c05412",
+  "githubReportUrl": "https://github.com/appliedai-au/gate_keeper/blob/af012932ad19c39d912a9be924de8ed0c2e10861/proof/submissions/gk-playground-deepseek-20261102-a/report.md",
+  "githubSummaryUrl": "https://github.com/appliedai-au/gate_keeper/blob/af012932ad19c39d912a9be924de8ed0c2e10861/proof/submissions/gk-playground-deepseek-20261102-a/summary.json",
+  "arms": [
+    {
+      "method": "Plain TrueForge-style",
+      "knownIssuesDetected": 2,
+      "expectedIssues": 3,
+      "incorrectSubclaims": 0,
+      "reportedTokensApprox": 529,
+      "latencyMs": 3140,
+      "gatewayReportedChargeUsd": 0.00009408
+    },
+    {
+      "method": "Gate Keeper adversarial",
+      "knownIssuesDetected": 3,
+      "expectedIssues": 3,
+      "incorrectSubclaims": 1,
+      "reportedTokensApprox": 1200,
+      "latencyMs": 2620,
+      "gatewayReportedChargeUsd": 0.00018522
+    }
+  ],
+  "totalGatewayChargeUsd": 0.0002793,
+  "highlights": [
+    "Gate Keeper detected the swallowed-exception defect missed by the plain reviewer.",
+    "Gate Keeper's extra size=0 infinite-loop claim was incorrect: Python range(step=0) raises ValueError.",
+    "This was a one-fixture, one-trial prompt methodology comparison. It did NOT invoke the native TrueForge SDK."
+  ],
+  "billingProvenance": "Gateway reported usage costs, but sponsor-credit deduction is unverified.",
+  "liveModelExecutionAvailableOnSite": false
+}

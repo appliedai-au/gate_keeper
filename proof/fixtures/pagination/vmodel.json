@@ -1,0 +1,11 @@
+{
+  "id": "pagination", "tenant": "tenant-gamma", "file": "src/paginate.js", "allowed_paths": ["src/paginate.js"], "max_changed_lines": 30,
+  "context": "List endpoint helpers: return one 1-based page of items with the total page count, and a summary string.",
+  "levels": [
+    {"level": "acceptance", "verifies": "requirements", "doc": "REQUIREMENTS.md", "cmd": ["node", "--test", "test/acceptance.test.mjs"]},
+    {"level": "adversarial", "verifies": "threat model", "doc": "THREATS.md", "cmd": ["node", "--test", "test/adversarial.test.mjs"]},
+    {"level": "integration", "verifies": "architecture", "doc": "ARCHITECTURE.md", "cmd": ["node", "--test", "test/integration.test.mjs"]},
+    {"level": "unit", "verifies": "implementation", "cmd": ["node", "--test", "test/unit.test.mjs"]},
+    {"level": "static", "verifies": "implementation", "cmd": ["node", "--check", "src/paginate.js"]}
+  ]
+}

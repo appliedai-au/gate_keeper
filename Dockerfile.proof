@@ -1,0 +1,24 @@
+# One-shot Gate Keeper live-proof runner. Runs inside the Gate Keeper Railway
+# project only, reaches TrueForge over the private network, enforces its own
+# spend cap, writes private evidence to an owner bucket, prints hashes and the
+# sanitised summary, then exits. Restart policy must be NEVER.
+FROM node:24.19.0-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --no-audit --no-fund \
+    && npm install --no-save --package-lock=false --no-audit --no-fund @aws-sdk/client-s3@3.705.0
+COPY agent ./agent
+COPY evals ./evals
+COPY scripts ./scripts
+COPY proof/fixtures ./proof/fixtures
+# The locked baseline and the published reports it points to (public, sanitised).
+COPY proof/baseline.json ./proof/baseline.json
+COPY proof/submissions ./proof/submissions
+COPY tests ./tests
+RUN node --test tests/proof-live-harness.test.mjs tests/proof-public-summary.test.mjs
+USER node
+# A freshly created or reconnected proof service must be safe by default.
+# Only an explicitly scoped manual run may override this CMD after the
+# external sponsor/budget/evidence admission has been verified.
+CMD ["node", "-e", "console.log('GK_PROOF_STANDBY: explicit budget-qualified manual run required; zero model calls')"]

@@ -1,0 +1,11 @@
+{
+  "id": "semver", "tenant": "tenant-india", "file": "src/semver.js", "allowed_paths": ["src/semver.js"], "max_changed_lines": 60,
+  "context": "Orders package versions so the updater installs the newest release.",
+  "levels": [
+    {"level": "acceptance", "verifies": "requirements", "doc": "REQUIREMENTS.md", "cmd": ["node", "--test", "test/acceptance.test.mjs"]},
+    {"level": "adversarial", "verifies": "threat model", "doc": "THREATS.md", "cmd": ["node", "--test", "test/adversarial.test.mjs"]},
+    {"level": "integration", "verifies": "architecture", "doc": "ARCHITECTURE.md", "cmd": ["node", "--test", "test/integration.test.mjs"]},
+    {"level": "unit", "verifies": "implementation", "cmd": ["node", "--test", "test/unit.test.mjs"]},
+    {"level": "static", "verifies": "implementation", "cmd": ["node", "--check", "src/semver.js"]}
+  ]
+}

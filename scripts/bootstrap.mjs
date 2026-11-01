@@ -1,6 +1,7 @@
 // One-shot setup: execute only inside Gate Keeper's private Railway network.
 import { readFileSync } from 'node:fs';
 import { TrueForge } from '@truefoundry/trueforge-sdk';
+import { composeReviewerInstructions, resolveReviewMode } from './review-mode.mjs';
 
 const baseUrl = process.env.TRUEFORGE_BASE_URL;
 if (!baseUrl || !/^http:\/\/[a-z0-9-]+\.railway\.internal:\d{2,5}\/?$/.test(baseUrl)) {
@@ -22,7 +23,7 @@ for (let attempt = 0; attempt < 20; attempt++) {
 
 const tf = new TrueForge({baseUrl, timeoutInSeconds: 45});
 const agent = JSON.parse(readFileSync('agent/agent.json', 'utf8'));
-const instructions = readFileSync('agent/instructions.md', 'utf8').trim();
+const instructions = composeReviewerInstructions('agent', resolveReviewMode());
 const skill = readFileSync('agent/skills/review-checklist/SKILL.md', 'utf8');
 try {
   const { data: models } = await tf.models.list();
