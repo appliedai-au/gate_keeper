@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import catalogue from "../data/modelCatalogue.json";
 import proof from "../data/firstBenchmark.json";
 import smoke from "../data/cheapestSmoke.json";
+import study from "../data/deepseekFourRoundProgress.json";
 
 // Public, sanitised history; this component never calls a model or stores keys.
 // The catalogue is an observed snapshot, not an API authorisation or credit receipt.
@@ -22,6 +23,47 @@ export default function GateKeeperBenchmark({ section = "Runs" }) {
         <div className="gk-eyebrow"><span className="gk-eyebrow-square" />{section === "Runs" ? "RECORDED RUN / PUBLIC RESULTS" : "SOURCE-BOUND EVIDENCE / NOT INDEPENDENTLY QUALIFIED"}</div>
         <h1>{section === "Runs" ? "The benchmark, not the demo." : "Evidence, with its limits."}</h1>
         <p>See recorded model experiments and their evidence. The newest comparison ran in the TrueFoundry Playground; the older study used a separate TrueForge test harness. Neither runs from this website.</p>
+      </div>
+      <div role="region" aria-label="DeepSeek four-round study progress" style={{ ...card }}>
+        <div style={{ ...mono, fontWeight: 800, color: "#596772", letterSpacing: ".08em" }}>
+          FOUR-ROUND MODEL STUDY / {study.status}
+        </div>
+        <h2 style={{ fontSize: 20, margin: "10px 0 8px" }}>DeepSeek v4 Flash — four reviews per method</h2>
+        <p style={{ fontSize: 13, lineHeight: 1.6 }}>
+          {study.agents.map((arm) => arm.label + ": " + arm.observedRounds + "/" + arm.requiredRounds).join("  ·  ")}.
+          Six review calls still need gateway evidence. Separate own-model learning calls have not been observed.
+        </p>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", minWidth: 440, borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr>{["Round", "Public fixture", "Plain review", "Gate Keeper"].map((name) =>
+                <th key={name} scope="col" style={{ borderBottom: border, textAlign: "left", padding: "10px 7px" }}>{name}</th>)}</tr>
+            </thead>
+            <tbody>
+              {study.rounds.map((round) => <tr key={round.round}>
+                <td style={{ borderBottom: border, padding: "11px 7px" }}>{round.round}</td>
+                <td style={{ borderBottom: border, padding: "11px 7px" }}>{round.fixtureId}</td>
+                <td style={{ borderBottom: border, padding: "11px 7px" }}>
+                  {round.baseline.status === "OBSERVED" ?
+                    round.baseline.detected + "/" + round.baseline.expected + " known defects" : "Not run"}
+                </td>
+                <td style={{ borderBottom: border, padding: "11px 7px" }}>
+                  {round.gate_keeper.status === "OBSERVED" ?
+                    round.gate_keeper.detected + "/" + round.gate_keeper.expected + " known defects" : "Not run"}
+                </td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+        <p style={{ margin: "13px 0 0", fontSize: 12, lineHeight: 1.6, color: "#596772" }}>
+          Recorded review turns: {study.totalReviewTurnsObserved}/{study.totalReviewTurnsRequired}.
+          This is a Playground prompt comparison, not native TrueForge agent learning.
+          Different fixture difficulty prevents claiming improvement from round-to-round recall alone.
+          Missing rounds have no scores and are never displayed as failures.
+          <a href={study.existingProofUrl} rel="noopener noreferrer" target="_blank" style={{ marginLeft: 8 }}>
+            Inspect the completed first round
+          </a>
+        </p>
       </div>
       <div role="region" aria-label="Newest live Playground method comparison" style={{ ...card, borderColor: "#9cb48c" }}>
         <div style={{ ...mono, fontWeight: 800, color: "#536846", letterSpacing: ".08em" }}>NEW TEST / {smoke.runId.toUpperCase()} / {smoke.result}</div>
