@@ -146,7 +146,10 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
         detached.push({ name: a.name, id: a.id, model: a.manifest?.model?.name ?? null, sessions_exported: sessionsOfAgent.length });
       }
       const upload = await uploadEvidence();
-      if (!upload.uploaded && env.GK_PROOF_ALLOW_LOCAL !== "1") {
+      // Deletion needs a confirmed private upload. The only exception is the offline self-test against the fake,
+      // which must also name an explicit evidence directory; GK_PROOF_ALLOW_LOCAL never bypasses this.
+      const selftest = env.GK_PROOF_SELFTEST_FAKE === "1" && !!env.GK_EVIDENCE_DIR;
+      if (!upload.uploaded && !selftest) {
         emit("GK_PROOF_BLOCKED", { reason: "AGENT_EXPORT_NOT_UPLOADED", detail: upload.reason });
         throw new Error("AGENT_EXPORT_NOT_UPLOADED");
       }
@@ -209,6 +212,15 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   if (!modelNames.includes(adjudicatorModel)) {
     emit("GK_PROOF_BLOCKED", { reason: "ADJUDICATOR_MODEL_NOT_REGISTERED", model: adjudicatorModel });
     return { blocked: "ADJUDICATOR_MODEL_NOT_REGISTERED", preflight };
+  }
+  // Owner rule: the agent operates only through TrueFoundry (the AI Gateway: the owner's own account or the
+  // stranger-builds allowance). Every model this run will call must be served by a provider of type
+  // "truefoundry"; any other route (for example a direct Anthropic key) is refused before any spend.
+  const usedModels = [...new Set([model, adjudicatorModel, ...roleModels, ...[...(compArms || []), ...drillArms].map(modelFor), ...drillArms.map(repairerFor)])];
+  const route = truefoundryRoute(models, (await tf.settings.modelProviders.list()).data, usedModels);
+  if (route.offending.length && env.GK_PROOF_ALLOW_NON_TRUEFOUNDRY !== "1") {
+    emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_ON_TRUEFOUNDRY", models: route.offending });
+    return { blocked: "MODEL_NOT_ON_TRUEFOUNDRY", preflight };
   }
   const sessionModel = new Map();
 
@@ -363,13 +375,23 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
 }
 
 /** Provider summary safe to publish: name, type, endpoint host and model count. Never auth or full URLs. */
+/** Models in `used` whose serving provider is not a TrueFoundry (AI Gateway) provider. */
+export function truefoundryRoute(models, providerList, used) {
+  const providers = sanitizeProviders(providerList);
+  const tfNames = new Set(providers.filter((p) => p.type === "truefoundry").map((p) => p.name));
+  const providerOf = new Map((models || []).map((m) => [m.name, m.provider?.name ?? null]));
+  return { offending: used.filter((u) => !tfNames.has(providerOf.get(u))).map((u) => ({ model: u, provider: providerOf.get(u) ?? null })) };
+}
+
 export function sanitizeProviders(list) {
   const arr = Array.isArray(list) ? list : Array.isArray(list?.data) ? list.data : [];
   return arr.map((p) => {
+    // TrueForge returns { name, manifest: { type, baseUrl, models, auth } }; older shapes put the fields at the top level.
+    const m = p?.manifest ?? p;
     let host = null;
-    try { host = p?.baseUrl ? new URL(p.baseUrl).hostname : null; } catch { host = "unparseable"; }
-    return { name: String(p?.name ?? ""), type: String(p?.type ?? p?.provider?.type ?? "unknown"), endpoint_host: host,
-      models: Array.isArray(p?.models) ? p.models.length : null, auth_configured: !!p?.auth };
+    try { host = m?.baseUrl ? new URL(m.baseUrl).hostname : null; } catch { host = "unparseable"; }
+    return { name: String(p?.name ?? ""), type: String(m?.type ?? "unknown"), endpoint_host: host,
+      models: Array.isArray(m?.models) ? m.models.length : null, auth_configured: !!m?.auth };
   });
 }
 

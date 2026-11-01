@@ -30,7 +30,8 @@ const PAGINATE_FIX = `export function paginate(items, page, size) {
   return { items: items.slice(start, start + size), page, totalPages };
 }
 export function pageSummary(items, page, size) { const p = paginate(items, page, size); return \`Page \${p.page} of \${p.totalPages}: \${p.items.join(", ")}\`; }`;
-export function fakeTrueForge({ models = ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1", "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false, failPollAt = 0, learnedHelps = false, deleteNoop = false, agents: agentList = [] } = {}) {
+export function fakeTrueForge({ models = ["anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1", "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-4-6"], costPerTurn = 0.01, failCreate = false, failPollAt = 0, learnedHelps = false, deleteNoop = false, agents: agentList = [], modelRoute = "truefoundry" } = {}) {
+  const routeProvider = modelRoute === "truefoundry" ? "tf-gateway" : "anthropic-direct";
   let agentsStore = [...agentList]; const providerState = { removed: false }; const sessionAgents = new Map(agentList.flatMap((a) => (a.sessionIds || []).map((sid) => [sid, a.id])));
   const sessions = new Map(); const turns = new Map(); let n = 0;
   const reply = (instructions, content) => {
@@ -67,9 +68,11 @@ export function fakeTrueForge({ models = ["anthropic/claude-sonnet-5-5", "anthro
   return {
     calls: () => n,
     server: { getCapabilities: async () => ({ data: { sandbox: { enabled: false }, skill: { enabled: false } } }) },
-    models: { list: async () => ({ data: providerState.removed ? [] : models.map((name) => ({ name, provider: { name: "anthropic-direct" } })) }) },
+    models: { list: async () => ({ data: providerState.removed ? [] : models.map((name) => ({ name, provider: { name: routeProvider } })) }) },
     agents: { list: async () => [...agentsStore], delete: async (id) => { agentsStore = agentsStore.filter((a) => a.id !== id); return { data: {} }; } },
-    settings: { modelProviders: (() => { let providers = [{ name: "anthropic-direct", type: "anthropic", baseUrl: "https://api.anthropic.com/v1?k=SECRET_URL_PARAM", auth: { apiKey: "SECRET_API_KEY" }, models: [{}, {}] }];
+    settings: { modelProviders: (() => { let providers = modelRoute === "truefoundry"
+        ? [{ name: "tf-gateway", manifest: { type: "truefoundry", baseUrl: "https://gateway.example.test/api/llm?k=SECRET_URL_PARAM", auth: { apiKey: "SECRET_GATEWAY_KEY" }, models: [{}, {}] } }]
+        : [{ name: "anthropic-direct", manifest: { type: "anthropic", baseUrl: "https://api.anthropic.com/v1?k=SECRET_URL_PARAM", auth: { apiKey: "SECRET_API_KEY" }, models: [{}, {}] } }];
       return { list: async () => ({ data: providers }), delete: async (name) => { if (agentsStore.some((a) => String(a.manifest?.model?.name || '').startsWith(name + '/'))) throw new Error(`ConflictError: model provider "${name}" is used by an agent`); if (!deleteNoop) { providers = providers.filter((p) => p.name !== name); providerState.removed = !providers.length; } return { data: {} }; } }; })() },
     sessions: {
       create: async ({ agent, metadata = {} }) => { if (Object.values(metadata).some((v) => typeof v !== "string")) throw new Error("JsonError: metadata values must be strings"); const id = "s" + sessions.size; sessions.set(id, agent.spec); return { data: { id } }; },
