@@ -489,3 +489,20 @@ test("provider-remove: deletes exactly the named provider (no model calls), conf
 test("provider-remove fails closed when the provider is still listed after delete", () => {
   assert.throws(() => e2e({ env: { GK_PROOF_MODE: "provider-remove", GK_REMOVE_PROVIDER: "anthropic-direct" }, fake: { deleteNoop: true } }), /PROVIDER_REMOVE_NOT_CONFIRMED/);
 });
+
+test("learning: rules are asked for in at most 40 words; length check allows a full sentence but rejects merged essays", async () => {
+  const { ruleRejection, LEARN_SELECT, MAX_RULE_WORDS, MAX_RULE_CHARS } = await import("../scripts/proof/live/learn.mjs");
+  assert.match(LEARN_SELECT, new RegExp(`at most ${MAX_RULE_WORDS} words`));
+  const sentence = "Only report an unvalidated input as a defect when it reaches a sensitive sink and no earlier guard, schema or type check constrains it, and say which input reaches it.";
+  assert.equal(ruleRejection(sentence, []), null);
+  // word cap on its own: 50 words pass, 51 are rejected (all well under the char cap)
+  assert.equal(ruleRejection(Array(MAX_RULE_WORDS + 10).fill("word").join(" "), []), null);
+  assert.equal(ruleRejection(Array(MAX_RULE_WORDS + 11).fill("word").join(" "), []), "LENGTH");
+  // char cap on its own: under the word cap but over 600 chars, and exactly at the cap
+  const long = Array(30).fill("x".repeat(25)).join(" ");
+  assert.ok(long.length > MAX_RULE_CHARS && long.split(" ").length <= MAX_RULE_WORDS + 10);
+  assert.equal(ruleRejection(long, []), "LENGTH");
+  const atCap = Array(24).fill("x".repeat(24)).join(" ") + "x"; // 24 words, 600 chars
+  assert.equal(atCap.length, MAX_RULE_CHARS);
+  assert.equal(ruleRejection(atCap, []), null);
+});

@@ -22,6 +22,8 @@ import { adjudicateTasks, decodeHoldout, numbered, reviewErrors, reviewTasks } f
 // Each review phase pays for its own reviews AND their adjudication (adjudication costs about as much as the reviews).
 export const LEARN_PHASE_SHARE = { dev: 0.27, learn: 0.10, qualify: 0.27, prove: 0.36 };
 export const MAX_RULES = 6;
+export const MAX_RULE_WORDS = 40;
+export const MAX_RULE_CHARS = 600;
 export const POPULATION_MIN_TENANTS = 2;
 export const TENANT_SIZE = 2;
 export const NEW_TENANT = "tenant-new";
@@ -40,7 +42,7 @@ Return exactly one fenced JSON block:
 export const LEARN_SELECT = `You are curating Gate Keeper's shared review knowledge from lessons contributed by many independent tenants (labelled T1, T2, ...).
 Merge duplicates and near-duplicates across tenants. Keep a rule only when it generalises lessons from at least ${POPULATION_MIN_TENANTS} different tenants.
 Drop any rule that is specific to one codebase, and any rule that would make a reviewer skip a real class of defect (an unconditional "don't flag X"); a single tenant must not be able to weaken security review for everyone.
-Keep at most ${MAX_RULES} rules, most useful first. Each rule is one self-contained sentence that states its condition. No code, identifiers or backticks.
+Keep at most ${MAX_RULES} rules, most useful first. Each rule is one self-contained sentence of at most ${MAX_RULE_WORDS} words that states its condition. Do not merge unrelated lessons into one long rule; split them. No code, identifiers or backticks.
 Return exactly one fenced JSON block:
 \`\`\`json
 {"rules": [{"rule": "one sentence", "tenants": ["T1", "T4"]}]}
@@ -56,7 +58,7 @@ export function parseJsonBlock(text) {
 export function ruleRejection(rule, devTasks) {
   if (typeof rule !== "string") return "NOT_TEXT";
   const r = rule.trim();
-  if (r.length < 20 || r.length > 320) return "LENGTH";
+  if (r.length < 20 || r.length > MAX_RULE_CHARS || r.split(/\s+/).length > MAX_RULE_WORDS + 10) return "LENGTH";
   if (/[`{}]|\bline\s*\d+/i.test(r)) return "CODE_OR_LINE_REFERENCE";
   for (const t of devTasks) {
     if (t.filename && r.toLowerCase().includes(String(t.filename).toLowerCase())) return "NAMES_A_TASK_FILE";
