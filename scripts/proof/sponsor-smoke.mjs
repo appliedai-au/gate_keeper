@@ -296,6 +296,12 @@ export function publicSmokeSummary(result) {
   });
 }
 
+export function publicSmokeFailureCode(error) {
+  const raw = String(error?.message || "");
+  const checked = /^SPONSOR_SMOKE_BLOCKED: ([A-Z0-9_]+)$/.exec(raw);
+  return checked?.[1] || "UNVERIFIED_ERROR_NO_RETRY";
+}
+
 async function cli() {
   const command = process.argv[2] || "--plan";
   const model = process.env.GK_SPONSOR_SMOKE_MODEL || smokePlan().model;
@@ -345,9 +351,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try { await cli(); }
   catch (e) {
     // Sanitised refusal only; never print a token, receipt or upstream payload.
-    const raw = String(e?.message || "");
-    const checked = /^SPONSOR_SMOKE_BLOCKED: ([A-Z_]+)$/.exec(raw);
-    console.error("SPONSOR_SMOKE_HELD=" + (checked?.[1] || "UNVERIFIED_ERROR_NO_RETRY"));
+    console.error("SPONSOR_SMOKE_HELD=" + publicSmokeFailureCode(e));
     process.exitCode = 3;
   }
 }
