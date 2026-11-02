@@ -257,3 +257,35 @@ test("production Railway scope and duplicate run ID refuse before any review tur
   }), /DURABLE_ONCE_CLAIM_NOT_PROVED/);
   assert.equal(tf.calls.length, 0);
 });
+
+test("a hung remote turn is cancelled and the run becomes nonretryable", async () => {
+  const v = fixtureGrant(), tf = fakeTrueForge();
+  const cancelled = [], writes = new Map();
+  let attempt = 0;
+  tf.sessions.createTurn = async () => {
+    attempt++;
+    return { data: { id: "stuck-" + attempt, state: { status: "running" } } };
+  };
+  tf.sessions.getTurn = async (_sessionId, turnId) =>
+    ({ data: { id: turnId, state: { status: "running" } } });
+  tf.sessions.cancel = async (id) => { cancelled.push(id); };
+  await assert.rejects(runNativeFour({
+    tf, receipt: v.receipt, publicKeyPem: v.publicKeyPem,
+    pinnedKeySha256: v.pinnedKeySha256, sourceCommit, runId, env,
+    now: () => v.now, wait: async () => {},
+    claimOnce: async (x) => {
+      writes.set("STARTED", x);
+      return { created: true };
+    },
+    privateWrite: async (key, value) => {
+      assert.ok(!writes.has(key));
+      writes.set(key, value);
+    },
+  }), /NATIVE_TURN_FAILED_OR_PRIVATE_TRACE_UNAVAILABLE_NO_RETRY/);
+  assert.equal(cancelled.length, 1);
+  assert.equal(cancelled[0], "synthetic-session-1");
+  assert.equal(attempt, 1, "no paid call may automatically retry");
+  assert.ok(writes.has("private/failures/review-1-baseline.json"));
+  assert.equal(writes.get("private/failures/review-1-baseline.json").reason,
+    "CALL_OR_EVIDENCE_INCOMPLETE; NOT_SAFE_TO_RETRY");
+});
