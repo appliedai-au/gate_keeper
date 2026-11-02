@@ -64,6 +64,9 @@
 .cd-status-lamp{width:10px;height:10px;border-radius:50%;background:#8299a5;flex-shrink:0}
 .cd-status-lamp.kept{background:#d9ff86}
 .cd-status-lamp.reverted,.cd-status-lamp.held{background:#ff8f79}
+.cd-status-lamp.reviewed{background:#d9ff86}
+.cd-status-lamp.candidate,.cd-status-lamp.qualification_held,.cd-status-lamp.opted_out{background:#f5d082}
+.cd-status-lamp.reviewing,.cd-status-lamp.evidence,.cd-status-lamp.patching{background:#f5d082}
 .cd-status-lamp.polling,.cd-status-lamp.testing{background:#f5d082}
 .cd-approve,.cd-run,.cd-reset{border-radius:7px;padding:12px 15px;font-size:12px;font-weight:800}
 .cd-approve{background:#c4e9cc;border:1px solid #c4e9cc;color:#203522;margin-top:14px;width:100%}
