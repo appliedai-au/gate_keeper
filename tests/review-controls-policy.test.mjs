@@ -60,6 +60,7 @@ test("parser rejects extra fields, absent booleans, invalid levels and type coer
 
 test("tenant opt out only affects optional advisory review and requires backend identity", () => {
   assert.equal(resolveAdvisoryGate({ settings: defaults() }).reason, "TRUSTED_TENANT_IDENTITY_REQUIRED");
+  assert.deepEqual(resolveAdvisoryGate({ settings: defaults() }), { enabled: true, blocked: true, reason: "TRUSTED_TENANT_IDENTITY_REQUIRED" });
   assert.deepEqual(resolveAdvisoryGate({ trustedIdentity: identity(), settings: defaults() }),
     { enabled: true, reason: "ADVISORY_GATE_ENABLED" });
   assert.equal(resolveAdvisoryGate({ trustedIdentity: identity(),
@@ -78,9 +79,11 @@ test("admin advisory override is scoped, justified, short-lived and never widens
     { reason: "" }, { scope: "all_security_checks" },
     { expiresAtMs: now - 1 }, { expiresAtMs: now + 60 * 60_000 },
   ]) assert.equal(resolveAdvisoryGate({ trustedIdentity: identity(), now,
-      override: { ...override, ...diff } }).reason, "INVALID_ADMIN_OVERRIDE_HELD");
+      override: { ...override, ...diff } }).reason, "INVALID_ADMIN_OVERRIDE_REJECTED");
   assert.equal(resolveAdvisoryGate({ trustedIdentity: { ...identity(), adminVerifiedByBackend: false },
-    now, override }).reason, "INVALID_ADMIN_OVERRIDE_HELD");
+    now, override }).reason, "INVALID_ADMIN_OVERRIDE_REJECTED");
+  assert.equal(resolveAdvisoryGate({ trustedIdentity: { ...identity(), adminVerifiedByBackend: false },
+    now, override }).enabled, true, "forged override must never disable an existing gate");
   assert.equal(evaluateControlAdmission({ settings: defaults(), action: "review", trustedIdentity: identity() }).admitted,false);
 });
 
