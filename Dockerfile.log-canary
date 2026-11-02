@@ -1,0 +1,17 @@
+# Disposable, offline Gate Keeper log-canary diagnosis. No TrueForge backend,
+# provider key, database, S3 mount, paid model or production connection.
+FROM node:24.19.0-bookworm-slim
+RUN apt-get update && apt-get install --no-install-recommends -y git \
+  && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --no-audit --no-fund
+COPY scripts ./scripts
+COPY evals ./evals
+COPY tests ./tests
+COPY agent ./agent
+COPY config ./config
+COPY proof ./proof
+COPY integrations ./integrations
+COPY docs ./docs
+CMD ["node", "--test", "tests/proof-log-redaction-canary.test.mjs"]
