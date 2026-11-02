@@ -16,6 +16,8 @@ COPY tests ./tests
 COPY Dockerfile.proof ./Dockerfile.proof
 COPY Dockerfile.qualify ./Dockerfile.qualify
 COPY integrations ./integrations
+# Deployment-contract tests also read checked-in security and rollout docs.
+COPY docs ./docs
 COPY agent ./agent
 COPY config ./config
 COPY proof ./proof
