@@ -5,7 +5,7 @@ import {
   smokePlan, verifySponsorAdmission, requireIsolatedRailway,
   assertTrueForgeRoute,
 } from "../scripts/proof/sponsor-admission.mjs";
-import { runPairedSmoke, publicFixture, pollSingleTurn } from "../scripts/proof/sponsor-smoke.mjs";
+import { runPairedSmoke, publicFixture, pollSingleTurn, publicSmokeSummary } from "../scripts/proof/sponsor-smoke.mjs";
 
 const model="truefoundry/deepseek-v4-flash-0731";
 const sha="a".repeat(40);
@@ -169,6 +169,16 @@ test("no signature: zero metadata calls and zero sessions; valid synthetic recei
   assert.deepEqual(calls,["providers.list","models.list","claimRunOnce",
     "sessions.create","sessions.createTurn","sessions.create","sessions.createTurn"]);
   assert.equal(result.status,"INCONCLUSIVE");
+  const publicReport = publicSmokeSummary(result);
+  assert.equal(publicReport.status, "INCONCLUSIVE");
+  assert.equal(publicReport.privateEvidence.reference, "private-reference-withheld");
+  assert.equal(publicReport.privateEvidence.manifest_sha256, "a".repeat(64));
+  assert.equal(publicReport.actual_gateway_billing_usd, null);
+  assert.equal(publicReport.arms.length, 2);
+  const serialised = JSON.stringify(publicReport);
+  assert.ok(!serialised.includes("private://smoke/evidence"), "bucket path must be private");
+  assert.ok(!serialised.includes("session1") && !serialised.includes("turn1"),
+    "session and turn IDs must not be in a public report");
   assert.equal(result.arms.length,2);
   assert.ok(result.arms.every(a=>a.caught===3&&a.missed===0&&a.gateway_billed_usd===null));
   assert.equal(result.actual_gateway_billing_usd,null);
@@ -272,4 +282,13 @@ test("a no-op one-shot claim cannot authorize a paid turn",async()=>{
     evidenceStore:{put:()=>{},upload:async()=>({uploaded:true})},
   }),/ATOMIC_ONCE_CLAIM_UNVERIFIED/);
   assert.equal(sessions,0);
+});
+
+test("CLI public report refuses malformed evidence and never logs raw private upload references", () => {
+  assert.throws(() => publicSmokeSummary({ status: "PASS" }),
+    /PUBLIC_REPORT_INVALID/);
+  assert.throws(() => publicSmokeSummary({
+    status: "INCONCLUSIVE", arms: [],
+    privateEvidence: { manifest_sha256: "not-a-digest" },
+  }), /PUBLIC_REPORT_INVALID/);
 });
