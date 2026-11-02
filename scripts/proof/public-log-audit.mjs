@@ -3,7 +3,8 @@
 // Inspect Base64 payloads, not merely the human-visible raw lines: the earlier
 // sensitive-log incident was hidden inside encoded PUBLIC_DATA chunks.
 const CHUNK = /^GK_PROOF_(PUBLIC_SUMMARY|PUBLIC_DATA)_B64\[(\d+)\/(\d+)\]=([A-Za-z0-9+/=]+)$/;
-const JSON_LINE = /^GK_PROOF_(PREFLIGHT|COMPARISON|DRILL|DONE|BLOCKED|INVENTORY)=(\{.*\})$/;
+// Inspect every JSON event, not only the comparison-mode event names.
+const JSON_LINE = /^GK_PROOF_([A-Z][A-Z0-9_]*)=(\{.*\})$/;
 const ID_KEYS = new Set([
   "session_id", "sessionId", "turn_id", "turnId", "task_id",
   "private_evidence_paths", "evidence_items", "evidence_inventory",
@@ -51,6 +52,10 @@ export function auditProofPublicLogs(lines, { requireSummary = true } = {}) {
       if (direct) {
         try { payloads.push({ kind: direct[1], value: JSON.parse(direct[2]) }); }
         catch { failures.add("PUBLIC_JSON_UNPARSABLE"); }
+      } else if (/^GK_PROOF_[A-Z][A-Z0-9_]*=/.test(line)) {
+        // An unparseable new event must not silently bypass the redaction
+        // checks. Future event names also receive structural inspection.
+        failures.add("PUBLIC_EVENT_UNPARSEABLE");
       }
       if (/^GK_PROOF_(PUBLIC_SUMMARY|PUBLIC_DATA)_B64/.test(line) && !m)
         failures.add("PUBLIC_CHUNK_INVALID");
@@ -82,8 +87,11 @@ export function auditProofPublicLogs(lines, { requireSummary = true } = {}) {
       if (Array.isArray(v)) { for (const item of v) visit(item); return; }
       for (const [key, child] of Object.entries(v)) {
         if (ID_KEYS.has(key)) failures.add("PRIVATE_METADATA_FIELD");
-        if (key === "path" && typeof child === "string" &&
-            (child.includes("/private/") || child.startsWith("private/")))
+        if (typeof child === "string" && (
+            (key === "path" && (child.includes("/private/") || child.startsWith("private/"))) ||
+            child.startsWith("railway-bucket://") ||
+            child.startsWith("s3://") ||
+            child.includes("gate-keeper-proof/")))
           failures.add("PRIVATE_EVIDENCE_PATH");
         visit(child);
       }
