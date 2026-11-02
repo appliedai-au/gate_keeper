@@ -65,6 +65,15 @@ test("tenant opt out only affects optional advisory review and requires backend 
     { enabled: true, reason: "ADVISORY_GATE_ENABLED" });
   assert.equal(resolveAdvisoryGate({ trustedIdentity: identity(),
     settings: { ...defaults(), gateEnabled: false } }).reason, "TENANT_OPTED_OUT");
+  for (const bad of [
+    { ...identity(), verifiedByServer: false },
+    { ...identity(), verifiedByServer: "true" },
+  ]) {
+    const denied = resolveAdvisoryGate({ trustedIdentity: bad,
+      settings: { ...defaults(), gateEnabled: false } });
+    assert.deepEqual(denied, { enabled: true, blocked: true,
+      reason: "TRUSTED_TENANT_IDENTITY_REQUIRED" });
+  }
 });
 
 test("admin advisory override is scoped, justified, short-lived and never widens paid authority", () => {
