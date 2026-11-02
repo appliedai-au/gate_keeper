@@ -99,11 +99,18 @@
         "bug"
       ],
       "why": "External broker publication inside a DB transaction can deliver before commit or outlive rollback."
+    },
+    {
+      "line": 33,
+      "categories": [
+        "security"
+      ],
+      "why": "Refund update drops the authenticated tenant predicate, enabling cross-tenant payout mutation like the paid-state update."
     }
   ],
   "hardness": {
     "realistic_context": true,
-    "seeded_defects": 7,
+    "seeded_defects": 8,
     "contains_decoys": true,
     "public_exploratory": true
   }

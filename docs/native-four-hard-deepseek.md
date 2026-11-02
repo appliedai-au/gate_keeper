@@ -11,11 +11,11 @@ Two agent methods run through the actual **TrueForge SDK session/turn API**, at 
 | Round | Public scenario | Seeded defects per arm |
 | --- | --- | ---: |
 | 1 | Concurrent multi-tenant ledger settlement | 6 |
-| 2 | Signed payout webhooks under retries and reordering | 7 |
+| 2 | Signed payout webhooks under retries and reordering | 8 |
 | 3 | Tenant export, callbacks, key prefixes, cursor and backpressure | 7 |
 | 4 | Versioned entitlements, billing, downgrade and concurrency | 8 |
 
-**28 expected issues per reviewer**, more than twice the earlier four-round suite's 12. These fixtures intentionally carry explicit runtime/database/billing assumptions and interact across authorization, concurrency, monetary correctness and event delivery. They are **public seeded fixtures**, not a sealed independent holdout. The source and expected-answer key are stored together for deterministic scoring, but candidate prompts contain **only task context, numbered code and shared output contract**. Native sessions are configured with no tools and cannot fetch the key.
+**29 expected issues per reviewer**, more than twice the earlier four-round suite's 12. These fixtures intentionally carry explicit runtime/database/billing assumptions and interact across authorization, concurrency, monetary correctness and event delivery. They are **public seeded fixtures**, not a sealed independent holdout. The source and expected-answer key are stored together for deterministic scoring, but candidate prompts contain **only task context, numbered code and shared output contract**. Native sessions are configured with no tools and cannot fetch the key.
 
 ## Review versus adaptation
 

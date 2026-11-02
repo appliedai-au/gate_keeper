@@ -48,11 +48,11 @@ function fixtureGrant(overrides = {}) {
     sourceCommit, runId, now: issuedAt + 1000 };
 }
 
-test("four harder public fixtures have 28 uniquely located known defects", () => {
+test("four harder public fixtures have 29 uniquely located known defects", () => {
   const tasks = loadHardFixtures();
   const plan = nativeFourPlan();
-  assert.deepEqual(tasks.map((t) => t.expected.length), [6, 7, 7, 8]);
-  assert.equal(plan.knownDefectsPerArm, 28);
+  assert.deepEqual(tasks.map((t) => t.expected.length), [6, 8, 7, 8]);
+  assert.equal(plan.knownDefectsPerArm, 29);
   assert.equal(plan.reviewTurns, 8);
   assert.equal(plan.reflectionTurns, 6);
   assert.equal(plan.previousPlaygroundTurnsCounted, 0);

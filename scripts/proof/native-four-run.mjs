@@ -292,6 +292,9 @@ export async function runNativeFour({
         promptSha256: record.promptSha256,
       };
     } catch {
+      // Best-effort stop a remote turn on every timeout/failure. The gateway
+      // is the independent hard spend cap; this limits drift after abort.
+      if (sessionId) { try { await tf.sessions.cancel(sessionId); } catch {} }
       if (reservation.open) budget.settle(reservation, null);
       try {
         await put("private/failures/" + phase + "-" + round + "-" + arm + ".json", {
