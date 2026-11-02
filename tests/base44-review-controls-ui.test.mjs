@@ -50,4 +50,7 @@ test("Settings panel requires server-side draft store, and never pretends it cha
   assert.match(panel, /No paid inference, live execution/);
   assert.match(css, /\.cd-profile\{/);
   assert.match(css, /\.cd-check-first\{/);
+  for (const label of ["reviewed","candidate","qualification_held","opted_out","evidence"]) {
+    assert.ok(css.includes(".cd-status-lamp."+label), "missing status color "+label);
+  }
 });
