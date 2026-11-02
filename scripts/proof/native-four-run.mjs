@@ -460,8 +460,11 @@ async function cli() {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { await cli(); }
   catch (e) {
-    const code = /^NATIVE_FOUR_HELD:[A-Z_]+$/.test(e?.message || "") ?
-      e.message : "NATIVE_FOUR_HELD:UNVERIFIED_ERROR_NO_RETRY";
+    const raw = String(e?.message || "");
+    const isolatedScope = raw.match(/^SPONSOR_SMOKE_BLOCKED:\s*([A-Z_]+)$/);
+    const code = /^NATIVE_FOUR_HELD:[A-Z_]+$/.test(raw) ? raw :
+      isolatedScope ? "NATIVE_FOUR_HELD:" + isolatedScope[1] :
+      "NATIVE_FOUR_HELD:UNVERIFIED_ERROR_NO_RETRY";
     console.error(code);
     process.exitCode = 3;
   }

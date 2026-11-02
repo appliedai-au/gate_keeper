@@ -129,7 +129,7 @@ test("each arm gets only its own bounded lesson, with the same output contract",
   const task = loadHardFixtures()[0];
   const f = feedbackFor(task, { caught: [], missed: task.expected, noise: [] });
   assert.equal(f.expectedCount, 6);
-  assert.equal(f.missedPreviousDefects.length, 6);
+  assert.equal(f.missedDefectsFromOwnPriorReview.length, 6);
   assert.equal(parseOwnLesson('{"lesson":"Check atomic settlement before publishing."}'),
     "Check atomic settlement before publishing.");
   assert.throws(() => parseOwnLesson('{"lesson":"' + "word ".repeat(45) + '"}'),
