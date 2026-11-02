@@ -2,7 +2,7 @@
  * Native TrueForge 4-round DeepSeek A/B. Not the historical Playground study.
  * 4 matched public hard tasks x 2 agents + 3 separate own-feedback turns each.
  * Default --plan makes no network request. --run requires independent funded
- * gateway receipt, lifetime US$1 Enforce policy and private evidence.
+ * gateway receipt, dedicated lifetime US$5 Enforce policy and private evidence.
  */
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -22,7 +22,10 @@ export const UPSTREAM = "tfy-managed/deepseek-v4-flash-0731";
 export const ARMS = Object.freeze(["baseline", "gate_keeper"]);
 export const REVIEW_TURNS = 8;
 export const LEARNING_TURNS = 6;
-export const HARD_CAP_USD = 1;
+// Owner-approved 2026-11-02: US$5 external Lifetime Enforce for this 14-turn
+// study. The separate two-call sponsor-smoke runner remains at US$1.
+// No user-editable CLI/env override may raise this provider-side cap.
+export const HARD_CAP_USD = 5;
 export const REVIEW_MAX_TOKENS = 2500;
 export const LESSON_MAX_TOKENS = 400;
 const fail = (code) => { throw new Error("NATIVE_FOUR_HELD:" + code); };
@@ -58,7 +61,7 @@ export function fixtureDigest(tasks = loadHardFixtures()) {
 export function nativeFourPlan() {
   const tasks = loadHardFixtures();
   return {
-    study: STUDY_ID, status: "HELD_UNTIL_INDEPENDENT_SPONSOR_AND_USD1_GATEWAY_BUDGET",
+    study: STUDY_ID, status: "HELD_UNTIL_INDEPENDENT_SPONSOR_AND_USD5_GATEWAY_BUDGET",
     channel: "Native TrueForge SDK sessions; NOT Playground",
     model: MODEL, upstream: UPSTREAM, isolatedOnly: true,
     rounds: tasks.map((t, i) => ({
@@ -122,7 +125,7 @@ export function verifyNativeFourAdmission({
       s.expiresAt - s.issuedAt > 86400000 || now - s.issuedAt > 86400000)
     fail("SIGNED_LEASE_EXPIRED");
   if (typeof s.virtualAccountId !== "string" ||
-      !/^gate-keeper-smoke-[a-zA-Z0-9-]+$/.test(s.virtualAccountId) ||
+      !/^gate-keeper-native-[a-zA-Z0-9-]+$/.test(s.virtualAccountId) ||
       !p || typeof p.ruleId !== "string" || !p.ruleId.trim() ||
       p.subject !== s.virtualAccountId || p.mode !== "Enforce" ||
       p.period !== "Lifetime" || p.scope !== "per-virtual-account" ||
