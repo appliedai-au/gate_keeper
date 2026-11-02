@@ -65,6 +65,22 @@ test("both explicit holdout aggregates and all-minus-public differentials are bl
     "HOLDOUT_COMPOSITION_LEAK");
 });
 
+test("every proof event is audited, including future event names and private storage URIs", () => {
+  failsWith([...logs(),
+    'GK_PROOF_AGENTS_EXPORTED={"agents":[],"evidence":{"reference":"railway-bucket://bucket/private/data.json"}}'],
+    "PRIVATE_EVIDENCE_PATH");
+  failsWith([...logs(),
+    'GK_PROOF_PROVIDER_REMOVED={"model":"m","sessionId":"synthetic-sensitive-session"}'],
+    "PRIVATE_METADATA_FIELD");
+  failsWith([...logs(),
+    'GK_PROOF_NEW_EVENT={"arms":{"gate_keeper":{"all":{},"public":{}}}}'],
+    "HOLDOUT_COMPOSITION_LEAK");
+  failsWith([...logs(), 'GK_PROOF_UNKNOWN=[1,2]'],
+    "PUBLIC_EVENT_UNPARSEABLE");
+  failsWith([...logs(), 'GK_PROOF_NEW_EVENT={not-valid-json}'],
+    "PUBLIC_JSON_UNPARSABLE");
+});
+
 test("missing, duplicate, inconsistent and oversized log chunks are held", () => {
   const good = logs();
   failsWith(good.slice(1), "PUBLIC_PROOF_RECORDS_MISSING");
