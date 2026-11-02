@@ -62,7 +62,8 @@ export function resolveAdvisoryGate({
   settings = CONTROL_DEFAULTS, trustedIdentity, override = null, now = Date.now(),
 } = {}) {
   const plan = planReviewControls(settings);
-  if (typeof trustedIdentity?.tenantId !== "string" || !trustedIdentity.tenantId ||
+  if (trustedIdentity?.verifiedByServer !== true ||
+      typeof trustedIdentity?.tenantId !== "string" || !trustedIdentity.tenantId ||
       typeof trustedIdentity?.actorId !== "string" || !trustedIdentity.actorId)
     return { enabled: true, blocked: true, reason: "TRUSTED_TENANT_IDENTITY_REQUIRED" };
   if (!plan.advisoryGateEnabled)
