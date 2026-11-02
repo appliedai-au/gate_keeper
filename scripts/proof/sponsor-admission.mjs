@@ -110,6 +110,18 @@ export function verifySponsorAdmission({
 
 /** Refuse to create any inference sessions outside the separately provisioned
  * qualification project/environment, even if receipts or tokens are present. */
+export const KNOWN_ATTESTATIONS = Object.freeze(["OWNER_ATTESTED", "INDEPENDENT"]);
+
+/** A commissioned issuer pin must say who attested it, and every result it
+ * admits carries that label (owner-attested results are never presented as
+ * independently attested). */
+export function requireCommissionedPin(pin = {}) {
+  if (pin.status !== "VERIFIED" || !pin.signerPublicKeySha256 || !pin.issuerVerifiedBy)
+    fail("TRUSTED_SPONSOR_SIGNER_NOT_COMMISSIONED");
+  if (!KNOWN_ATTESTATIONS.includes(pin.attestation)) fail("ISSUER_ATTESTATION_UNKNOWN");
+  return Object.freeze({ attestation: pin.attestation, issuerVerifiedBy: pin.issuerVerifiedBy });
+}
+
 export function requireIsolatedRailway(env = {}) {
   if (env.RAILWAY_PROJECT_ID !== ISOLATED_RAILWAY_PROJECT ||
       env.RAILWAY_ENVIRONMENT_ID !== ISOLATED_RAILWAY_ENV ||

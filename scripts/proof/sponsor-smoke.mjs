@@ -18,7 +18,7 @@ import { BudgetController } from "./live/budget.mjs";
 import { EvidenceStore } from "./live/evidence.mjs";
 import { scoreTask } from "../../evals/score.ts";
 import {
-  smokePlan, verifySponsorAdmission, requireIsolatedRailway,
+  smokePlan, verifySponsorAdmission, requireIsolatedRailway, requireCommissionedPin,
   assertTrueForgeRoute,
 } from "./sponsor-admission.mjs";
 import pin from "../../config/gk-sponsor-issuer-pin.json" with { type: "json" };
@@ -314,8 +314,7 @@ async function cli() {
   requireIsolatedRailway(env);
   // This pin is intentionally null until the sponsor issuer and source-bound
   // external gateway policy were qualified and reviewed out of band.
-  if (pin.status !== "VERIFIED" || !pin.signerPublicKeySha256 ||
-      !pin.issuerVerifiedBy) fail("TRUSTED_SPONSOR_SIGNER_NOT_COMMISSIONED");
+  const attestationLabel = requireCommissionedPin(pin);
   for (const key of ["GK_SPONSOR_SMOKE_RECEIPT_FILE","GK_SPONSOR_SMOKE_ISSUER_PEM_FILE",
     "GK_SPONSOR_SMOKE_RUN_ID","TRUEFORGE_TOKEN"]) if (!env[key]) fail("EXECUTION_PREREQUISITE_MISSING");
   // Do not accept an exposed HTTP gateway or a user-supplied upstream host.
@@ -344,7 +343,7 @@ async function cli() {
     sourceCommit: env.RAILWAY_GIT_COMMIT_SHA, runId: env.GK_SPONSOR_SMOKE_RUN_ID,
     model, claimRunOnce, evidenceStore, railwayEnv: env,
   });
-  console.log(JSON.stringify(publicSmokeSummary(result)));
+  console.log(JSON.stringify({ ...publicSmokeSummary(result), ...attestationLabel }));
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
