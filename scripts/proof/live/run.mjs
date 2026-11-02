@@ -60,6 +60,20 @@ function publicBenchmarkSha(tasks) {
   return sha256(JSON.stringify(tasks.map((t) => ({ id: t.id, code: t.code, expected: t.expected }))));
 }
 
+// Older proof modes were designed before the trusted issuer / lifetime US$1
+// gateway policy existed. Their local BudgetController estimates do NOT
+// enforce provider-side spend or prove sponsor funding. They are permanently
+// offline-fixture-only; production must use sponsor-smoke.mjs or
+// native-four-run.mjs with their independently verified signed admission.
+// Do not add an env escape hatch: credentials can be present in env by accident.
+export function requireLegacyProofSafeMode(mode, selftestFake = false) {
+  if (!["compare", "learn", "inventory", "provider-remove"].includes(mode))
+    throw new Error("PROOF_MODE_INVALID");
+  if ((mode === "compare" || mode === "learn") && selftestFake !== true)
+    throw new Error("LEGACY_BILLABLE_PROOF_DISABLED_USE_SIGNED_RUNNER");
+  return mode;
+}
+
 export async function main({ tf, env = process.env, log = console.log, now = () => Date.now(), fetchImpl = fetch, selftestFake = false }) {
   const t0 = now();
   const runId = env.GK_PROOF_RUN_ID;
@@ -75,6 +89,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     approvedHttps = u.protocol === "https:" && hosts.includes(u.hostname.toLowerCase()) && !!env.TRUEFORGE_TOKEN;
   } catch {}
   if (!privateUrl && !approvedHttps && env.GK_PROOF_ALLOW_LOCAL !== "1") throw new Error("TRUEFORGE_URL_NOT_APPROVED");
+  const mode = requireLegacyProofSafeMode(env.GK_PROOF_MODE || "compare", selftestFake);
   const deadline = t0 + 60000 * Number(env.GK_PROOF_DEADLINE_MIN || 50);
   const capUsd = Number(env.GK_PROOF_CAP_USD || DEFAULT_CAP_USD);
   const trialsWanted = Math.max(1, Math.min(5, Number(env.GK_PROOF_TRIALS || 3)));
@@ -120,8 +135,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     emit("GK_PROOF_BLOCKED", { reason: "MODEL_NOT_REGISTERED", model, available: modelNames });
     return { blocked: "MODEL_NOT_REGISTERED", preflight };
   }
-  const mode = env.GK_PROOF_MODE || "compare";
-  if (!["compare", "learn", "inventory", "provider-remove"].includes(mode)) throw new Error("PROOF_MODE_INVALID");
+  // Legacy paid modes are already denied before network/S3 preflight.
   // Owner-requested removal of one named model provider from TrueForge (no model calls). The name must match exactly.
   if (mode === "provider-remove") {
     const target = String(env.GK_REMOVE_PROVIDER || "");
@@ -643,7 +657,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const hardStop = setTimeout(() => { console.error("GK_PROOF_ABORT=hard wall-clock limit"); process.exit(7); }, 60000 * (Number(process.env.GK_PROOF_DEADLINE_MIN || 50) + 10));
   hardStop.unref();
   try {
-    await guardRunOnce(process.env);
+    const mode = requireLegacyProofSafeMode(process.env.GK_PROOF_MODE || "compare", false);
+    // Non-billable inventory needs no S3 claim. Provider removal still uses
+    // the original one-shot evidence claim before any operator-scoped deletion.
+    if (mode === "provider-remove") await guardRunOnce(process.env);
     await main({ tf });
   } catch (e) {
     console.error("GK_PROOF_FAILED=" + String(e?.stack || e).slice(0, 1500));
