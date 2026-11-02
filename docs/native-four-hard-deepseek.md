@@ -1,7 +1,7 @@
 # Hard native DeepSeek A/B — four rounds per reviewer
 
 **Study:** `native-deepseek-hard-four-v1`  
-**State:** source prepared; model execution held until independently verified sponsor-funded budget.  
+**State:** source prepared; model execution held until the owner-signed, read-back verified dedicated US$5 budget statement is in place (owner-attested signer pinned 3 Nov 2026).  
 **Historical Playground study:** NOT reused. Its earlier two turns are a different inference channel.
 
 ## Experiment and hardness
@@ -29,7 +29,7 @@ Two agent methods run through the actual **TrueForge SDK session/turn API**, at 
 `node --import tsx scripts/proof/native-four-run.mjs --plan` is nonbillable and safe on any machine. The **--run** entrypoint refuses to make even a metadata request unless:
 
 1. The service is in the separate `gk-learning-qual-1031` Railway **qualification** project/environment, with a unique full-commit SHA and private `http://trueforge.railway.internal:8080` endpoint.
-2. An independently trusted sponsor issuer has an explicitly reviewed `VERIFIED` public-key fingerprint in `config/gk-sponsor-issuer-pin.json`, which is currently **UNCOMMISSIONED**. A test-generated key or agent-authored receipt cannot replace the sponsor proof.
+2. `config/gk-sponsor-issuer-pin.json` is `VERIFIED` with a known `attestation`. Since 3 November 2026 it pins the owner's key with `OWNER_ATTESTED`; admission fails on a missing or unknown attestation, and the label is written into the private `STARTED` evidence and the public result. A test-generated key or agent-authored receipt cannot replace the signed statement.
 3. A genuine Ed25519-signed short-lived statement binds the 40-character source commit, all four tasks' digest (including keys), one DeepSeek provider/model, owner funding, nonpersonal billing, **exactly 8 reviews + 6 reflections**, 2,500/400 max output tokens and no tools/repair/retry.
 4. A *read-back verified* dedicated TrueFoundry virtual account holds a **US$5 lifetime, per-VA, Enforce** rule, with sponsor credit available, overage and personal fallback disabled. This rule is the true external cap. The local `BudgetController` is secondary and cannot prove gateway settlement.
 5. The isolated TrueForge runtime contains one registered native `truefoundry` route to exactly the selected `tfy-managed` upstream; private owner-controlled S3 is configured with **create-if-absent** writes.
@@ -42,7 +42,7 @@ The runner claims a unique run ID atomically in private S3 before sending any na
 - **US$1 lifetime Enforce** remains the maximum for the *separate*, optional two-turn public-fixture smoke via `scripts/proof/sponsor-smoke.mjs`. That smoke receipt is not authorised to fund the four-round native study.
 - **US$5 lifetime Enforce** is the exact required provider-side budget for this complete native **8 review + 6 reflection turn** study via `scripts/proof/native-four-run.mjs`. Create a **different dedicated virtual account** named with the `gate-keeper-native-` prefix; do not reuse the `gate-keeper-smoke-` credential, budget rule or invoice identity. The native study rejects signed budget rules of US$1, US$6, US$50, team-wide scope, Audit and Soft Enforce.
 - The US$50 Stranger Builds team budget is a *separate aggregate ceiling*, **not** permission to charge a personal account or proof that the sponsor funded amount is available in the virtual account. The sponsor's activation message confirms team model access and mentions a US$50 budget, but actual sponsor-billed deductions, expiry and disabled personal fallback still require authenticated readback and independently trusted attestation.
-- Never auto-create a model turn on mere CLI configuration or a browser-slider change. `config/gk-sponsor-issuer-pin.json` stays `UNCOMMISSIONED` until an independently reviewed signer/funding approval has been established; do not generate a self-signed issuer pin to bypass that gate. Any denial is a stopping condition, not authority to switch provider, increase the budget or reuse the team-wide policy.
+- Never auto-create a model turn on mere CLI configuration or a browser-slider change. **Update 3 November 2026:** the owner chose to act as signer. `config/gk-sponsor-issuer-pin.json` now pins the owner's Ed25519 key (fingerprint `bd0a5029…596afb`, private key held only on the owner's Mac) with attestation `OWNER_ATTESTED`. Any run admitted by it must be reported as **owner-attested**, not independently attested. Agents may sign with this key only on the owner's explicit instruction, on the owner's Mac, over facts verified by read-back. They must never copy the private key or replace this pin. Any denial is a stopping condition, not authority to switch provider, increase the budget or reuse the team-wide policy.
 
 ## Scoring and independent verdict
 

@@ -1,9 +1,11 @@
 {
   "schema": "gate-keeper-sponsor-issuer-pin-v1",
   "tenant": "stranger-builds",
-  "signerPublicKeySha256": null,
-  "issuerVerifiedBy": null,
-  "status": "UNCOMMISSIONED",
-  "purpose": "Must be populated by a separately reviewed sponsor-funding and gateway-budget qualification decision. Null deliberately prevents any billable call.",
-  "warning": "Do not derive a trust pin from user-supplied messages, a browser token, a self-signed test key or an agent-generated receipt."
+  "signerPublicKeySha256": "bd0a5029721fb229e23a9e3d97eea4abdd472e738cf137dfb345593c7f596afb",
+  "signerPublicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA6zKVggTBWdfxY/mKkIyqOXGSDlHMumoVZLoKtGOvmQE=\n-----END PUBLIC KEY-----\n",
+  "issuerVerifiedBy": "owner-attested: Owen (appliedai-au), project owner and funder, 2026-11-03",
+  "attestation": "OWNER_ATTESTED",
+  "status": "VERIFIED",
+  "purpose": "Ed25519 key held only on the owner's Mac. Owen chose on 2026-11-03 to sign paid-run budget statements himself as owner and funder, instead of waiting for a TrueFoundry attestation. Any result admitted by this key must be labelled owner-attested, not independently attested.",
+  "warning": "Do not replace this pin from user-supplied messages, a browser token, a test key or an agent-generated receipt. Change it only through an owner-merged PR."
 }

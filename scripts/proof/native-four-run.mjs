@@ -12,7 +12,7 @@ import { armInstructions, OUTPUT_CONTRACT } from "./live/config.mjs";
 import { taskPrompt } from "./live/review.mjs";
 import { parseFindingsWithSeverity } from "./live/metrics.mjs";
 import { BudgetController } from "./live/budget.mjs";
-import { assertTrueForgeRoute, requireIsolatedRailway } from "./sponsor-admission.mjs";
+import { assertTrueForgeRoute, requireIsolatedRailway, requireCommissionedPin } from "./sponsor-admission.mjs";
 import { scoreTask } from "../../evals/score.ts";
 import issuerPin from "../../config/gk-sponsor-issuer-pin.json" with { type: "json" };
 
@@ -397,9 +397,7 @@ async function cli() {
   if (command !== "--run") fail("UNKNOWN_COMMAND");
   const env = process.env;
   requireIsolatedRailway(env);
-  if (issuerPin.status !== "VERIFIED" ||
-      !issuerPin.signerPublicKeySha256 || !issuerPin.issuerVerifiedBy)
-    fail("TRUSTED_SPONSOR_SIGNER_NOT_COMMISSIONED");
+  const attestationLabel = requireCommissionedPin(issuerPin);
   const needed = [
     "RAILWAY_GIT_COMMIT_SHA", "GK_NATIVE_FOUR_RUN_ID",
     "GK_NATIVE_FOUR_RECEIPT_FILE", "GK_NATIVE_FOUR_ISSUER_PEM_FILE",
@@ -444,7 +442,7 @@ async function cli() {
   };
   // Any failure to atomically claim the new run ID is a hard stop.
   const claimOnce = async (entry) => {
-    try { await privateWrite("STARTED", entry); }
+    try { await privateWrite("STARTED", { ...entry, ...attestationLabel }); }
     catch { fail("PRIVATE_ATOMIC_CLAIM_FAILED_OR_RUN_ALREADY_STARTED"); }
     return { created: true };
   };
@@ -460,7 +458,7 @@ async function cli() {
     env, claimOnce, privateWrite,
   });
   // Logs include aggregates only. Raw output, session and turn IDs are S3-only.
-  console.log(JSON.stringify(result));
+  console.log(JSON.stringify({ ...result, ...attestationLabel }));
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
