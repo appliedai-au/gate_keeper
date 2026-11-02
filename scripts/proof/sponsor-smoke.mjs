@@ -264,6 +264,38 @@ async function privateEvidenceConnection(env) {
   };
 }
 
+// Only these public, already-scored fields may reach Railway stdout.
+// Keep S3 bucket paths, raw TrueForge session/turn IDs and model replies in
+// the private evidence store, never in the CLI's report.
+export function publicSmokeSummary(result) {
+  if (!result || result.status !== "INCONCLUSIVE" ||
+      !Array.isArray(result.arms) ||
+      !/^[a-f0-9]{64}$/.test(result.privateEvidence?.manifest_sha256 || ""))
+    throw new Error("SPONSOR_SMOKE_BLOCKED: PUBLIC_REPORT_INVALID");
+  return Object.freeze({
+    run_id: result.run_id,
+    status: "INCONCLUSIVE",
+    reason: result.reason,
+    model: result.model,
+    source_commit: result.source_commit,
+    fixture: result.fixture,
+    arms: result.arms.map((arm) => ({
+      arm: arm.arm, model: arm.model, task_id: arm.task_id,
+      parsed: arm.parsed, caught: arm.caught, missed: arm.missed,
+      noise: arm.noise, score: arm.score,
+      gateway_billed_usd: null,
+      gateway_request_trace: "NOT_YET_CORRELATED",
+    })),
+    localBudget: result.localBudget,
+    actual_gateway_billing_usd: null,
+    privateEvidence: {
+      manifest_sha256: result.privateEvidence.manifest_sha256,
+      reference: "private-reference-withheld",
+    },
+    noRepairOrLearning: true,
+  });
+}
+
 async function cli() {
   const command = process.argv[2] || "--plan";
   const model = process.env.GK_SPONSOR_SMOKE_MODEL || smokePlan().model;
@@ -306,14 +338,16 @@ async function cli() {
     sourceCommit: env.RAILWAY_GIT_COMMIT_SHA, runId: env.GK_SPONSOR_SMOKE_RUN_ID,
     model, claimRunOnce, evidenceStore, railwayEnv: env,
   });
-  console.log(JSON.stringify(result));
+  console.log(JSON.stringify(publicSmokeSummary(result)));
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { await cli(); }
   catch (e) {
     // Sanitised refusal only; never print a token, receipt or upstream payload.
-    console.error("SPONSOR_SMOKE_HELD=" + String(e?.message || "refused").slice(0, 160));
+    const raw = String(e?.message || "");
+    const checked = /^SPONSOR_SMOKE_BLOCKED: ([A-Z_]+)$/.exec(raw);
+    console.error("SPONSOR_SMOKE_HELD=" + (checked?.[1] || "UNVERIFIED_ERROR_NO_RETRY"));
     process.exitCode = 3;
   }
 }
