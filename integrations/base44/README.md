@@ -79,10 +79,20 @@ For the CLI/sandbox variant, put the entry file in the app's `base44/functions/g
 
 **Source verification does not establish which runtime your current Base44 demo uses.** Inspect its app source first and preserve existing auth routes and secrets. Authentication and upstream health must be tested after installation.
 
+### Critical existing-app deployment safety (verified Base44 CLI semantics)
+
+- **Never run `npx base44 entities push` or `npx base44 deploy` from the sparse Gatekeeper integration tree.** Base44's entity sync deletes remote entity schemas absent from the local `base44/entities/` directory. This folder contains only one new private entity and does **not** contain the existing app's complete remote schema inventory. Similarly, never use `base44 functions deploy --force` from this partial tree because it deletes unrelated remote functions. See [entities push](https://docs.base44.com/developers/references/cli/commands/entities-push) and [functions deploy](https://docs.base44.com/developers/references/cli/commands/functions-deploy).
+- With the **owner's authenticated app**, checkpoint and inventory all existing entities/functions/pages, then create **only** `GateKeeperControlPolicy` through Base44's single-entity schema API, or retain and diff the *full* existing schema collection before any full sync. Preserve `rls.create/read/update/delete=false`; a hosted backend's service role bypasses it after the function verifies admin identity.
+- For an existing app when there is no local project, use `npx base44 scaffold --app-id 6ae577c8f34f21f5eebe75d9 --no-skills` in a new working directory after authenticated login; **never `base44 create`**. Scaffold is backend-only, not a checkout of the existing pages. Preserve the live site source. [Base44 scaffold](https://docs.base44.com/developers/skills/base44-cli/references/scaffold).
+- The Settings component has two supported backend routes: the **editor/Deno** function is `gatekeeperControls` (the panel default), and the **CLI/sandbox** function is `gatekeeper-controls`. For the latter, after verifying the app convention, render `<GateKeeperControlSettings functionName="gatekeeper-controls" />` instead of the default `<GateKeeperControlSettings />`. As above, the CLI status function is `gatekeeper-status`, not `gatekeeperStatus`.
+- This repo's files do not prove the app's current runtime mode or account authority. Test in a preview and publish only to the **existing** `secure-authentic-gate-flow.base44.app`, with unchanged auth, routes, entities and live review/spend restrictions.
+
+See `docs/review-control-settings.md` for the complete checkpoint, RLS, installation and rollback criteria.
+
 ## Phase 0: safe integration preflight
 
 1. In the **existing** Base44 app's editor, confirm the owner workspace, plan and app ID. Do not provision a new app.
-2. Prefer Base44 CLI `npx base44 link --app-id <existing-app-id>` from a configured local `base44/config.jsonc` project. Linking requires account login. Do not execute `base44 create`. If the existing editor app uses a different source tree, inspect/sync that tree before modifying it.
+2. After authenticated login, use `npx base44 scaffold --app-id 6ae577c8f34f21f5eebe75d9 --no-skills` for a new local working directory, or `npx base44 link` only for a **previously configured** local `base44/config.jsonc` project. Do not run `base44 create`, a partial `entities push`, bulk `deploy` or `functions deploy --force`; independently inventory the existing app first.
 3. Add `functions/gatekeeperStatus.js` from this folder as a backend function in the **existing** Base44 app. Call with `base44.functions.invoke('gatekeeperStatus', {})`; it checks only `GET /healthz` through the proxy.
 4. Configure the following **Base44 backend secrets**; never commit credential values:
    - `GATEKEEPER_PROXY_USERNAME` — existing Railway proxy authentication username.

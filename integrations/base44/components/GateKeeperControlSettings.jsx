@@ -6,7 +6,7 @@ import controls from "../data/controlProfiles.json";
 // stored rows and revision checks. This never starts model inference.
 const defaults = controls.defaults;
 const levels = controls.levels;
-export default function GateKeeperControlSettings() {
+export default function GateKeeperControlSettings({ functionName = "gatekeeperControls" }) {
   const [state, setState] = useState({
     ready: false, saving: false, error: "", notice: "",
     revision: 0, current: null, form: { ...defaults },
@@ -14,7 +14,7 @@ export default function GateKeeperControlSettings() {
   const load = useCallback(async () => {
     setState((s) => ({ ...s, ready: false, error: "", notice: "" }));
     try {
-      const response = await base44.functions.invoke("gatekeeperControls", { action: "load" });
+      const response = await base44.functions.invoke(functionName, { action: "load" });
       const data = response?.data;
       if (data?.status !== "draft_only" || !data.controls ||
           !Number.isSafeInteger(data.revision)) throw new Error("invalid_response");
@@ -31,7 +31,7 @@ export default function GateKeeperControlSettings() {
           "Settings backend or private policy entity is not installed. Defaults shown for preview only.",
       }));
     }
-  }, []);
+  }, [functionName]);
   useEffect(() => { void load(); }, [load]);
   const patch = (name, value) => setState((s) => ({
     ...s, form: { ...s.form, [name]: value }, notice: "", error: "",
@@ -43,7 +43,7 @@ export default function GateKeeperControlSettings() {
     if (!state.ready || state.saving || !dirty) return;
     setState((s) => ({ ...s, saving: true, error: "", notice: "" }));
     try {
-      const response = await base44.functions.invoke("gatekeeperControls", {
+      const response = await base44.functions.invoke(functionName, {
         action: "save", controls: state.form, expectedRevision: state.revision,
       });
       const data = response?.data;
