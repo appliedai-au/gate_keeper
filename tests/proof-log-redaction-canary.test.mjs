@@ -94,11 +94,20 @@ test("canary refuses production or unverified Railway environment before any wor
 
 test("full offline proof canary decodes and audits its logs before publishing them", async () => {
   const records = [];
-  const result = await runSyntheticLogCanary({
-    environment: { RAILWAY_PROJECT_ID: "a8f4c4a4-0f32-4166-ba92-dad9baf2b652",
-      RAILWAY_ENVIRONMENT_NAME: "qualification" },
-    log: x => records.push(x),
-  });
+  let result;
+  try {
+    result = await runSyntheticLogCanary({
+      environment: { RAILWAY_PROJECT_ID: "a8f4c4a4-0f32-4166-ba92-dad9baf2b652",
+        RAILWAY_ENVIRONMENT_NAME: "qualification" },
+      log: x => records.push(x),
+    });
+  } catch (error) {
+    // Print only the canary's fixed diagnostic codes; never reproduce a
+    // decoded public record, model text, session ID, object path or source.
+    const record = records.find(x => x.startsWith("GK_LOG_CANARY_VERDICT="));
+    const verdict = record ? JSON.parse(record.slice("GK_LOG_CANARY_VERDICT=".length)) : null;
+    assert.fail("SYNTHETIC_CANARY_FAILED: " + (verdict?.codes || ["NO_VERDICT"]).join(","));
+  }
   assert.equal(result.status, "PASS");
   assert.ok(records.some(x => x.startsWith("GK_LOG_CANARY_VERDICT=")));
   assert.ok(records.some(x => x === "GK_LOG_CANARY_FINISHED=INCONCLUSIVE_SYNTHETIC_NO_MODEL_CALL"));
