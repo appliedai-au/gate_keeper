@@ -5,7 +5,7 @@ import {
   smokePlan, verifySponsorAdmission, requireIsolatedRailway,
   assertTrueForgeRoute,
 } from "../scripts/proof/sponsor-admission.mjs";
-import { runPairedSmoke, publicFixture, pollSingleTurn, publicSmokeSummary } from "../scripts/proof/sponsor-smoke.mjs";
+import { runPairedSmoke, publicFixture, pollSingleTurn, publicSmokeSummary, publicSmokeFailureCode } from "../scripts/proof/sponsor-smoke.mjs";
 
 const model="truefoundry/deepseek-v4-flash-0731";
 const sha="a".repeat(40);
@@ -291,4 +291,15 @@ test("CLI public report refuses malformed evidence and never logs raw private up
     status: "INCONCLUSIVE", arms: [],
     privateEvidence: { manifest_sha256: "not-a-digest" },
   }), /PUBLIC_REPORT_INVALID/);
+});
+
+test("fixed refusal codes with digits survive; arbitrary upstream errors are fully redacted", () => {
+  assert.equal(publicSmokeFailureCode(new Error("SPONSOR_SMOKE_BLOCKED: TRUSTED_KEY_NOT_ED25519")),
+    "TRUSTED_KEY_NOT_ED25519");
+  assert.equal(publicSmokeFailureCode(new Error("SPONSOR_SMOKE_BLOCKED: SOURCE_COMMIT_UNBOUND")),
+    "SOURCE_COMMIT_UNBOUND");
+  assert.equal(publicSmokeFailureCode(new Error("gateway leaked token=top-secret")),
+    "UNVERIFIED_ERROR_NO_RETRY");
+  assert.equal(publicSmokeFailureCode(new Error("SPONSOR_SMOKE_BLOCKED: CODE\\nsecret")),
+    "UNVERIFIED_ERROR_NO_RETRY");
 });
