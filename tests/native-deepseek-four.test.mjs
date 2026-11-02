@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, createHash, sign } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
-  STUDY_ID, MODEL, UPSTREAM, nativeFourPlan, loadHardFixtures,
+  STUDY_ID, MODEL, UPSTREAM, HARD_CAP_USD, nativeFourPlan, loadHardFixtures,
   fixtureDigest, verifyNativeFourAdmission, instructionsFor,
   feedbackFor, parseOwnLesson, runNativeFour,
 } from "../scripts/proof/native-four-run.mjs";
 import { scoreTask } from "../evals/score.ts";
+import { smokePlan } from "../scripts/proof/sponsor-admission.mjs";
 
 const sourceCommit = "a".repeat(40);
 const runId = "gk-native-deepseek-20261102-qual-a";
@@ -32,13 +33,13 @@ function fixtureGrant(overrides = {}) {
     noTools: true, noRepair: true, noAutomaticRetry: true,
     maxReviewTurns: 8, maxLearningTurns: 6, maxTurns: 14,
     maxReviewTokens: 2500, maxLearningTokens: 400,
-    virtualAccountId: "gate-keeper-smoke-native-qual",
+    virtualAccountId: "gate-keeper-native-four-qual",
     gatewayBudget: {
-      ruleId: "synthetic-test-only", subject: "gate-keeper-smoke-native-qual",
+      ruleId: "synthetic-test-only", subject: "gate-keeper-native-four-qual",
       mode: "Enforce", period: "Lifetime", scope: "per-virtual-account",
-      currency: "USD", limitUsd: 1, remainingUsd: 1,
+      currency: "USD", limitUsd: 5, remainingUsd: 5,
     },
-    sponsorCreditRemainingUsd: 1,
+    sponsorCreditRemainingUsd: 5,
     issuedAt, expiresAt: issuedAt + 60000,
     ...overrides,
   };
@@ -57,6 +58,9 @@ test("four harder public fixtures have 29 uniquely located known defects", () =>
   assert.equal(plan.reflectionTurns, 6);
   assert.equal(plan.previousPlaygroundTurnsCounted, 0);
   assert.equal(plan.model, MODEL);
+  assert.equal(HARD_CAP_USD, 5, "the native full study must have a US$5 hard cap");
+  assert.equal(plan.externalGatewayHardCapUsd, 5);
+  assert.equal(smokePlan().maxGatewayLifetimeUsd, 1, "the two-turn smoke stays capped at US$1");
   assert.match(fixtureDigest(), /^[a-f0-9]{64}$/);
   for (const task of tasks) {
     assert.equal(task.holdout, false);
@@ -91,6 +95,12 @@ test("default plan CLI needs no network or credentials; execution fails closed",
 test("signed 14-turn scope verifies; independent funding and budget controls fail closed", () => {
   const v = fixtureGrant();
   assert.equal(verifyNativeFourAdmission(v).model, MODEL);
+  assert.equal(verifyNativeFourAdmission(v).hardCapUsd, 5);
+  assert.equal(v.receipt.statement.gatewayBudget.period, "Lifetime");
+  assert.equal(v.receipt.statement.gatewayBudget.mode, "Enforce");
+  assert.equal(v.receipt.statement.gatewayBudget.scope, "per-virtual-account");
+  assert.ok(v.receipt.statement.virtualAccountId.startsWith("gate-keeper-native-"));
+  assert.notEqual(v.receipt.statement.gatewayBudget.subject.startsWith("gate-keeper-smoke-"), true);
   for (const replacement of [
     { maxTurns: 8 }, { maxLearningTurns: 5 },
     { overageDisabled: false }, { personalBillingFallbackDisabled: false },
@@ -98,7 +108,11 @@ test("signed 14-turn scope verifies; independent funding and budget controls fai
     { fixtureDigestSha256: "b".repeat(64) },
     { gatewayBudget: { ...v.receipt.statement.gatewayBudget, mode: "Audit" } },
     { gatewayBudget: { ...v.receipt.statement.gatewayBudget, scope: "team" } },
+    { gatewayBudget: { ...v.receipt.statement.gatewayBudget, limitUsd: 1 } },
+    { gatewayBudget: { ...v.receipt.statement.gatewayBudget, limitUsd: 6 } },
     { gatewayBudget: { ...v.receipt.statement.gatewayBudget, limitUsd: 50 } },
+    { virtualAccountId: "gate-keeper-smoke-native-qual" },
+    { gatewayBudget: { ...v.receipt.statement.gatewayBudget, subject: "gate-keeper-smoke-native-qual" } },
     { sponsorCreditRemainingUsd: 0.25 }, { maxReviewTokens: 8000 },
   ]) {
     const x = fixtureGrant(replacement);
@@ -213,6 +227,7 @@ test("synthetic native engine performs exactly 8 paired reviews and 6 own feedba
     wait: async () => {},
   });
   assert.equal(result.result, "INCONCLUSIVE");
+  assert.equal(result.localBudget.cap_usd ?? result.localBudget.capUsd ?? result.localBudget.cap, 5);
   assert.equal(result.reviewTurnsObserved, 8);
   assert.equal(result.reflectionTurnsObserved, 6);
   assert.equal(result.separateNativeSessions, 14);

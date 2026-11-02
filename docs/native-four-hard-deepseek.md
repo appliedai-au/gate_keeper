@@ -31,10 +31,18 @@ Two agent methods run through the actual **TrueForge SDK session/turn API**, at 
 1. The service is in the separate `gk-learning-qual-1031` Railway **qualification** project/environment, with a unique full-commit SHA and private `http://trueforge.railway.internal:8080` endpoint.
 2. An independently trusted sponsor issuer has an explicitly reviewed `VERIFIED` public-key fingerprint in `config/gk-sponsor-issuer-pin.json`, which is currently **UNCOMMISSIONED**. A test-generated key or agent-authored receipt cannot replace the sponsor proof.
 3. A genuine Ed25519-signed short-lived statement binds the 40-character source commit, all four tasks' digest (including keys), one DeepSeek provider/model, owner funding, nonpersonal billing, **exactly 8 reviews + 6 reflections**, 2,500/400 max output tokens and no tools/repair/retry.
-4. A *read-back verified* dedicated TrueFoundry virtual account holds a **US$1 lifetime, per-VA, Enforce** rule, with sponsor credit available, overage and personal fallback disabled. This rule is the true external cap. The local `BudgetController` is secondary and cannot prove gateway settlement.
+4. A *read-back verified* dedicated TrueFoundry virtual account holds a **US$5 lifetime, per-VA, Enforce** rule, with sponsor credit available, overage and personal fallback disabled. This rule is the true external cap. The local `BudgetController` is secondary and cannot prove gateway settlement.
 5. The isolated TrueForge runtime contains one registered native `truefoundry` route to exactly the selected `tfy-managed` upstream; private owner-controlled S3 is configured with **create-if-absent** writes.
 
 The runner claims a unique run ID atomically in private S3 before sending any native session requests. It saves raw instructions, prompts, outputs and turn/session references privately **immediately after each call**, then private scoring/lesson evidence. Any error becomes a **non-retryable unreconciled run**. Public logs report only sanitized aggregates; no private session identifiers, holdout keys, object paths or authentication tokens.
+
+
+### Owner-approved spending limits (2 November 2026)
+
+- **US$1 lifetime Enforce** remains the maximum for the *separate*, optional two-turn public-fixture smoke via `scripts/proof/sponsor-smoke.mjs`. That smoke receipt is not authorised to fund the four-round native study.
+- **US$5 lifetime Enforce** is the exact required provider-side budget for this complete native **8 review + 6 reflection turn** study via `scripts/proof/native-four-run.mjs`. Create a **different dedicated virtual account** named with the `gate-keeper-native-` prefix; do not reuse the `gate-keeper-smoke-` credential, budget rule or invoice identity. The native study rejects signed budget rules of US$1, US$6, US$50, team-wide scope, Audit and Soft Enforce.
+- The US$50 Stranger Builds team budget is a *separate aggregate ceiling*, **not** permission to charge a personal account or proof that the sponsor funded amount is available in the virtual account. The sponsor's activation message confirms team model access and mentions a US$50 budget, but actual sponsor-billed deductions, expiry and disabled personal fallback still require authenticated readback and independently trusted attestation.
+- Never auto-create a model turn on mere CLI configuration or a browser-slider change. `config/gk-sponsor-issuer-pin.json` stays `UNCOMMISSIONED` until an independently reviewed signer/funding approval has been established; do not generate a self-signed issuer pin to bypass that gate. Any denial is a stopping condition, not authority to switch provider, increase the budget or reuse the team-wide policy.
 
 ## Scoring and independent verdict
 
@@ -46,4 +54,4 @@ The frozen deterministic `evals/score.ts` computes line/category defect matching
 
 `Dockerfile.qualify` runs TypeScript checking, the frozen scorer self-test and all offline Node tests. `tests/native-deepseek-four.test.mjs` uses only disposable synthetic signing keys and a fake TrueForge API; a mock test proves no leakage but cannot count as a live DeepSeek turn. The qualification environment must not connect to a production database or provider credential.
 
-**Operational blockers at preparation:** sponsor grant and separate US$1 account/rule unverified; the isolated qualification project currently has no TrueForge service, DB or budget identity. The connected browser automation balance was negative, so the authenticated TrueFoundry account could not be commissioned from this chat. No evidence of actual native DeepSeek review/learning turns has been produced.
+**Operational blockers at preparation:** sponsor-funded billing identity and separate US$5 native-account/rule unverified; the isolated qualification project currently has no TrueForge service, DB or budget identity. The connected browser automation balance was negative, so the authenticated TrueFoundry account could not be commissioned from this chat. No evidence of actual native DeepSeek review/learning turns has been produced.
