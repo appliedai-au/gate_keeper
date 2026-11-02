@@ -52,6 +52,18 @@ const LESSON_WRITER = `From the run evidence below, write ONE tenant-private les
 
 const messageText = (msg) => { const c = msg?.content; if (!c) return ""; return typeof c === "string" ? c : c.map((p) => ("text" in p ? p.text : "")).join(""); };
 
+// Public proof outputs intentionally withhold private S3 bucket/object paths.
+// Verifiers correlate signed manifest hashes and retrieve the actual object
+// location using independent, authorised private evidence access, not logs.
+export function publicEvidenceUpload(upload) {
+  return Object.freeze({
+    uploaded: upload?.uploaded === true,
+    reference: upload?.uploaded === true ? "private-reference-withheld" : "runner-local (upload failed)",
+    manifest_sha256: /^[a-f0-9]{64}$/.test(upload?.manifest_sha256 || "") ? upload.manifest_sha256 : null,
+    objects: Number.isSafeInteger(upload?.objects) && upload.objects >= 0 ? upload.objects : null,
+  });
+}
+
 function loadPublicTasks() {
   const dir = join(ROOT, "evals", "tasks");
   return readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((f) => ({ ...JSON.parse(readFileSync(join(dir, f), "utf8")), holdout: false, public_holdout_flag: JSON.parse(readFileSync(join(dir, f), "utf8")).holdout === true }));
@@ -113,7 +125,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   function uploadEvidence() {
     return ev.upload({ endpoint: env.GK_EVIDENCE_S3_ENDPOINT, bucket: env.GK_EVIDENCE_S3_BUCKET, region: env.GK_EVIDENCE_S3_REGION,
       accessKeyId: env.GK_EVIDENCE_S3_ACCESS_KEY_ID, secretAccessKey: env.GK_EVIDENCE_S3_SECRET_ACCESS_KEY,
-      forcePathStyle: env.GK_EVIDENCE_S3_PATH_STYLE !== "false" }).catch((e) => ({ uploaded: false, reason: "UPLOAD_FAILED: " + String(e?.message || e).slice(0, 160) }));
+      forcePathStyle: env.GK_EVIDENCE_S3_PATH_STYLE !== "false" }).catch(() => ({ uploaded: false, reason: "PRIVATE_UPLOAD_FAILED" }));
   }
 
   // ---------- preflight (no spend) ----------
@@ -168,7 +180,10 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
         emit("GK_PROOF_BLOCKED", { reason: "AGENT_EXPORT_NOT_UPLOADED", detail: upload.reason });
         throw new Error("AGENT_EXPORT_NOT_UPLOADED");
       }
-      emit("GK_PROOF_AGENTS_EXPORTED", { agents: detached, evidence: upload.uploaded ? { reference: upload.reference, manifest_sha256: upload.manifest_sha256 } : "local-selftest" });
+      emit("GK_PROOF_AGENTS_EXPORTED", {
+        agents: detached.map(({ name, model, sessions_exported }) => ({ name, model, sessions_exported })),
+        evidence: upload.uploaded ? publicEvidenceUpload(upload) : "local-selftest",
+      });
       for (const a of agentsUsing) await tf.agents.delete(a.id);
       const remaining = [];
       for await (const a of await tf.agents.list()) if (agentsUsing.some((u) => u.id === a.id)) remaining.push(a.name);
@@ -186,7 +201,10 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
       emit("GK_PROOF_BLOCKED", { reason: "PROVIDER_MODELS_STILL_LISTED", target });
       throw new Error("PROVIDER_MODELS_STILL_LISTED");
     }
-    emit("GK_PROOF_PROVIDER_REMOVED", result);
+    emit("GK_PROOF_PROVIDER_REMOVED", {
+      ...result,
+      agents_detached: detached.map(({ name, model, sessions_exported }) => ({ name, model, sessions_exported })),
+    });
     ev.put("provider-remove.json", result, "provider_change");
     const upload = await uploadEvidence();
     return { providerRemoved: result, upload };
@@ -330,7 +348,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     const publicData = { mode: "learn", run_id: runId, source_commit: sourceCommit, preflight, candidate_model: model, adjudicator_model: adjudicatorModel, adjudicator_calibration: adjudicatorCalibration, learning_model: learningModel, learning: learning.public, budget: budget.snapshot(),
       sessions: sessions.map((s) => ({ phase: s.phase, arm: s.arm, trial: s.trial, role: s.role })), blockers, limitations,
       hashes: { ...hashes, ...learning.hashes, evidence_manifest_sha256: manifest.sha256 },
-      private_evidence_item_count: manifest.body.items.length, upload, elapsed_ms: now() - t0 };
+      private_evidence_item_count: manifest.body.items.length, upload: publicEvidenceUpload(upload), elapsed_ms: now() - t0 };
     emitChunked(log, "GK_PROOF_PUBLIC_DATA", publicData);
     emit("GK_PROOF_DONE", { run_id: runId, mode, spent_usd: budget.snapshot().spent_usd, evidence_manifest_sha256: manifest.sha256 });
     return { publicData };
@@ -407,7 +425,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
     fairness: { same_model: true, same_provider: true, same_inputs: true, same_scoring: true, same_limits: true },
     arms: { baseline: pick(arms.baseline.public) || emptyArm(), gate_keeper: pick(arms.gate_keeper.public) || emptyArm() },
     loop: drill.stages,
-    evidence: [{ kind: "private_evidence_manifest", private_reference: upload.reference || "runner-local (upload failed)", sha256: manifest.sha256 }],
+    evidence: [{ kind: "private_evidence_manifest", private_reference: publicEvidenceUpload(upload).reference, sha256: manifest.sha256 }],
     blockers, limitations,
   };
   for (const arm of compArms) if (!(arm in summary.arms)) summary.arms[arm] = pick(arms[arm].public) || emptyArm();
@@ -418,7 +436,7 @@ export async function main({ tf, env = process.env, log = console.log, now = () 
   validatePublicProof(summary);
   const publicData = { preflight, complete_trials: completeTrials, arms: publicArms, drill: drill.public, budget: budget.snapshot(), sessions: sessions.map((s) => ({ phase: s.phase, arm: s.arm, trial: s.trial })),
     hashes: { ...hashes, public_benchmark_sha256: publicBenchmarkSha(publicTasks), private_holdout_sha256: holdout.sha256, evidence_manifest_sha256: manifest.sha256 },
-    private_evidence_item_count: manifest.body.items.length, upload, elapsed_ms: now() - t0 };
+    private_evidence_item_count: manifest.body.items.length, upload: publicEvidenceUpload(upload), elapsed_ms: now() - t0 };
   emitChunked(log, "GK_PROOF_PUBLIC_SUMMARY", summary);
   emitChunked(log, "GK_PROOF_PUBLIC_DATA", publicData);
   emit("GK_PROOF_DONE", { run_id: runId, spent_usd: budget.snapshot().spent_usd, evidence_manifest_sha256: manifest.sha256 });
