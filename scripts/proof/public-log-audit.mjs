@@ -11,7 +11,11 @@ const ID_KEYS = new Set([
   "private_holdout", "holdout_tasks", "raw_historical_sessions",
 ]);
 const SENSITIVE_FIXTURE = /SECRET_HOLDOUT|SECRET_UNSEEN|h-secret-01|u-secret-0[12]/;
+// A valid GK_PROOF_DRILL public JSON event may exceed 10 KB because it
+// includes the entire multi-fixture public V-model result. Keep input strictly
+// bounded by a 128 KiB per-event ceiling plus a 2 MiB aggregate ceiling.
 const MAX_INPUT_LINES = 1500, MAX_CHUNKS = 300, MAX_B64_BYTES = 1024 * 1024;
+const MAX_LINE_BYTES = 128 * 1024, MAX_LOG_BYTES = 2 * 1024 * 1024;
 const own = (v, key) => Object.prototype.hasOwnProperty.call(v, key);
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -20,7 +24,8 @@ export function auditProofPublicLogs(lines, { requireSummary = true } = {}) {
   const chunks = new Map(), payloads = [];
   let totalBytes = 0;
   if (!Array.isArray(lines) || lines.length > MAX_INPUT_LINES ||
-      lines.some((x) => typeof x !== "string" || x.length > 10000)) {
+      lines.some((x) => typeof x !== "string" || Buffer.byteLength(x) > MAX_LINE_BYTES) ||
+      lines.reduce((n, x) => n + Buffer.byteLength(x), 0) > MAX_LOG_BYTES) {
     return { status: "FAIL", codes: ["LOG_INPUT_OUT_OF_BOUNDS"], decodedPublicRecords: 0 };
   }
   for (const original of lines) {
