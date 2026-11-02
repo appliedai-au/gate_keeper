@@ -10,6 +10,7 @@ const pages=[
  "integrations/base44/pages/GateKeeper.jsx",
  "integrations/base44/components/AdversarialLab.jsx",
  "integrations/base44/components/ControlDeck.jsx",
+ "integrations/base44/components/GateKeeperControlSettings.jsx",
  "integrations/base44/components/LearningLab.jsx",
  "integrations/base44/components/GateKeeperConnectionPanel.jsx",
  "integrations/base44/components/GateKeeperBenchmark.jsx",
