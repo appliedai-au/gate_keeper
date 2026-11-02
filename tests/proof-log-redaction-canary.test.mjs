@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { auditProofPublicLogs } from "../scripts/proof/public-log-audit.mjs";
-import { emitChunked } from "../scripts/proof/live/run.mjs";
+import { emitChunked, publicEvidenceUpload } from "../scripts/proof/live/run.mjs";
 import { runSyntheticLogCanary } from "../scripts/proof/synthetic-log-canary.mjs";
 
 const publicSummary = () => ({
@@ -63,6 +63,34 @@ test("both explicit holdout aggregates and all-minus-public differentials are bl
   }), "HOLDOUT_COMPOSITION_LEAK");
   failsWith([...logs(), 'GK_PROOF_COMPARISON={"arms":{"gate_keeper":{"public":{},"all":{}}}}'],
     "HOLDOUT_COMPOSITION_LEAK");
+});
+
+test("real successful-upload public record shapes must withhold private bucket references", () => {
+  const privateUri = "railway-bucket://private-bucket/gate-keeper-proof/sensitive-run/";
+  const digest = "a".repeat(64);
+  const upload = publicEvidenceUpload({
+    uploaded: true, reference: privateUri,
+    manifest_sha256: digest, objects: 42,
+  });
+  assert.deepEqual(upload, {
+    uploaded: true, reference: "private-reference-withheld",
+    manifest_sha256: digest, objects: 42,
+  });
+  const summary = {
+    ...publicSummary(),
+    evidence: [{ kind: "private_evidence_manifest",
+      private_reference: upload.reference, sha256: digest }],
+  };
+  const data = { ...publicData(), upload };
+  assert.equal(auditProofPublicLogs(logs(summary, data)).status, "PASS");
+  failsWith(logs({
+    ...summary,
+    evidence: [{ kind: "private_evidence_manifest",
+      private_reference: privateUri, sha256: digest }],
+  }, data), "PRIVATE_EVIDENCE_PATH");
+  failsWith(logs(summary, { ...data, upload: {
+    ...upload, reference: privateUri,
+  } }), "PRIVATE_EVIDENCE_PATH");
 });
 
 test("every proof event is audited, including future event names and private storage URIs", () => {
