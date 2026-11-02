@@ -9,6 +9,7 @@ import { armInstructions, instructionHashes, OUTPUT_CONTRACT, ROOT } from "../sc
 import { aggregateArm, blindTask, parseAdjudication, parseFindingsWithSeverity } from "../scripts/proof/live/metrics.mjs";
 import { applyBoundedPatch, cloneCandidate, createFixtureRepo, discardCandidate, extractPatch, pollValidation, startValidation, verifyOrigin } from "../scripts/proof/live/drill.mjs";
 import { validatePublicProof } from "../scripts/proof/validate-public-proof.mjs";
+import { requireLegacyProofSafeMode } from "../scripts/proof/live/run.mjs";
 
 const PHASES = { comparison: 0.55, adjudication: 0.2, drill: 0.25 };
 
@@ -625,10 +626,10 @@ test("a registered grader without a positive calibration receipt is held, not la
   const models = ["truefoundry/claude-sonnet-5-5", "truefoundry/claude-fable-5-1",
     "truefoundry/claude-opus-5-5", "truefoundry/claude-haiku-5-5"];
   const env = { GK_PROOF_MODE: "learn", GK_PROOF_ADJUDICATOR_MODEL: "truefoundry/claude-haiku-5-5" };
-  const held = e2e({ offlineFake: false, env, fake: { models } });
+  const held = e2e({ offlineFake: true, env, fake: { models } });
   assert.equal(held.out.blocked, "ADJUDICATOR_CALIBRATION_PENDING");
   assert.equal(held.calls, 0);
-  const calibration = e2e({ offlineFake: false, env: { ...env, GK_PROOF_CALIBRATION_RUN: "1" }, fake: { models } });
+  const calibration = e2e({ offlineFake: true, env: { ...env, GK_PROOF_CALIBRATION_RUN: "1" }, fake: { models } });
   const data = decodeChunks(calibration.lines, "GK_PROOF_PUBLIC_DATA");
   assert.equal(data.adjudicator_calibration, "pending");
   assert.ok(data.limitations.some((l) => /^CALIBRATION RUN:/.test(l)));
@@ -644,4 +645,26 @@ test("a comparison graded by a pending-calibration grader is stamped and can nev
   assert.throws(() => validatePublicProof({ ...summary, result: "PASS" }), /pending-calibration grader cannot be a PASS/);
   const normal = decodeChunks(e2e({ trials: 1 }).lines, "GK_PROOF_PUBLIC_SUMMARY");
   assert.equal(normal.environment.adjudicator_calibration, "calibrated");
+});
+
+test("legacy compare/learn paid paths refuse real invocation before model sessions or network calls", () => {
+  for (const mode of ["compare", "learn"]) {
+    assert.throws(() => requireLegacyProofSafeMode(mode), /LEGACY_BILLABLE_PROOF_DISABLED_USE_SIGNED_RUNNER/);
+    assert.throws(() => requireLegacyProofSafeMode(mode, false), /LEGACY_BILLABLE_PROOF_DISABLED_USE_SIGNED_RUNNER/);
+    assert.equal(requireLegacyProofSafeMode(mode, true), mode, "injected fake test only");
+    assert.throws(() => e2e({ offlineFake: false, env: {
+      GK_PROOF_MODE: mode, GK_PROOF_CALIBRATION_RUN: "1",
+      GK_PROOF_SELFTEST_FAKE: "1", GK_PROOF_ALLOW_LOCAL: "1",
+    } }), /LEGACY_BILLABLE_PROOF_DISABLED_USE_SIGNED_RUNNER/);
+  }
+  assert.equal(requireLegacyProofSafeMode("inventory"), "inventory");
+  assert.equal(requireLegacyProofSafeMode("provider-remove"), "provider-remove");
+  assert.throws(() => requireLegacyProofSafeMode("fast"), /PROOF_MODE_INVALID/);
+});
+
+test("real CLI rejects legacy paid run before S3 once-claim; no environment escape hatch", () => {
+  const source = readFileSync(new URL("../scripts/proof/live/run.mjs", import.meta.url), "utf8");
+  assert.match(source, /const mode = requireLegacyProofSafeMode\(process\.env\.GK_PROOF_MODE \|\| "compare", false\)/);
+  assert.match(source, /if \(mode === "provider-remove"\) await guardRunOnce\(process\.env\)/);
+  assert.doesNotMatch(source, /if \(mode === "compare"\) await guardRunOnce/);
 });
