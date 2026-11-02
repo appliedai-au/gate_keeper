@@ -42,7 +42,7 @@ test("tenant advisory opt-out cannot trigger a paid or production action", () =>
 test("Settings panel requires server-side draft store, and never pretends it changed runtime", () => {
   assert.match(page, /import GateKeeperControlSettings/);
   assert.match(page, /<GateKeeperControlSettings \/>/);
-  assert.match(panel, /export default function GateKeeperControlSettings\(\{ functionName = "gatekeeperControls" \} \)/);
+  assert.match(panel, /export default function GateKeeperControlSettings\(\{ functionName = "gatekeeperControls" \}\)/);
   assert.equal((panel.match(/base44\.functions\.invoke\(functionName,/g)||[]).length,2);
   assert.match(panel, /\}, \[functionName\]\);/);
   assert.doesNotMatch(panel, /base44\.functions\.invoke\("gatekeeperControls"/);
