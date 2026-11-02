@@ -75,6 +75,10 @@ test("missing, duplicate, inconsistent and oversized log chunks are held", () =>
   failsWith(["GK_PROOF_PUBLIC_DATA_B64[1/1]=NOTBASE64!", ...logs().filter(x => x.startsWith("GK_PROOF_PUBLIC_SUMMARY"))],
     "PUBLIC_CHUNK_INVALID");
   failsWith(Array(1501).fill("GK_PROOF_DONE={}"), "LOG_INPUT_OUT_OF_BOUNDS");
+  failsWith(["GK_PROOF_DRILL=" + "x".repeat(131073), ...logs()],
+    "LOG_INPUT_OUT_OF_BOUNDS");
+  failsWith(Array(25).fill("GK_PROOF_DRILL=" + "x".repeat(90000)).concat(logs()),
+    "LOG_INPUT_OUT_OF_BOUNDS");
 });
 
 test("synthetic public proofs may not claim verified model cost or premature PASS", () => {
