@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import GateKeeperConnectionPanel from "../components/GateKeeperConnectionPanel";
 import AdversarialLab from "../components/AdversarialLab";
 import GateKeeperBenchmark from "../components/GateKeeperBenchmark";
+import GateKeeperControlSettings from "../components/GateKeeperControlSettings";
 import "./GateKeeper.css";
 
 // A product walkthrough fixture, not output from TrueForge. Never display it
@@ -169,6 +170,7 @@ function Settings() {
         <div><span className="gk-label-small">ADMINISTRATOR PROBE</span><p>Checks only the TrueForge runtime's health, not model readiness or a successful agent review.</p></div>
         <GateKeeperConnectionPanel />
       </div>
+      <GateKeeperControlSettings />
     </>
   );
 }

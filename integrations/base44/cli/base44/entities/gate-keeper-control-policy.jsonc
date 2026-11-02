@@ -1,0 +1,46 @@
+{
+  "name": "GateKeeperControlPolicy",
+  "type": "object",
+  "description": "Owner-only draft review controls; never a trusted execution authorisation or credential.",
+  "properties": {
+    "owner_user_id": {
+      "type": "string",
+      "description": "Authenticated owner id set by backend only"
+    },
+    "adversarial_review": {
+      "type": "boolean",
+      "default": true,
+      "description": "Review method: adversarial when true"
+    },
+    "v_model_level": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "default": 0,
+      "description": "V-shaped validation profile 0..3"
+    },
+    "gate_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Optional advisory gate; never a security or spending bypass"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Best-effort optimistic draft version; not atomic release control"
+    }
+  },
+  "required": [
+    "owner_user_id",
+    "adversarial_review",
+    "v_model_level",
+    "gate_enabled",
+    "revision"
+  ],
+  "rls": {
+    "read": false,
+    "create": false,
+    "update": false,
+    "delete": false
+  }
+}

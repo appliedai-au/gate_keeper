@@ -1,0 +1,71 @@
+{
+  "schema": "gate-keeper-control-profiles-v1",
+  "defaults": {
+    "adversarialReview": true,
+    "vModelLevel": 0,
+    "gateEnabled": true
+  },
+  "levels": [
+    {
+      "id": 0,
+      "key": "current",
+      "label": "Current Gatekeeper",
+      "summary": "Existing adversarial, read-only reviewer. No repair or extra V-model gate.",
+      "requires": [
+        "review"
+      ],
+      "mode": "review-only",
+      "liveRelease": false
+    },
+    {
+      "id": 1,
+      "key": "enhanced",
+      "label": "Enhanced review",
+      "summary": "Review plus requirements and threat mapping; still no automatic code changes.",
+      "requires": [
+        "review",
+        "requirements",
+        "threat_model"
+      ],
+      "mode": "review-only",
+      "liveRelease": false
+    },
+    {
+      "id": 2,
+      "key": "partial",
+      "label": "Partial V-model",
+      "summary": "Isolated candidate repair with mapped tests; incomplete evidence remains explicitly unverified.",
+      "requires": [
+        "review",
+        "acceptance",
+        "adversarial",
+        "integration",
+        "unit",
+        "static",
+        "polling"
+      ],
+      "mode": "sandbox-candidate",
+      "liveRelease": false
+    },
+    {
+      "id": 3,
+      "key": "full",
+      "label": "Full V-model",
+      "summary": "All V tests and independent sealed qualification are required before promotion.",
+      "requires": [
+        "review",
+        "acceptance",
+        "adversarial",
+        "integration",
+        "unit",
+        "static",
+        "polling",
+        "sealed_holdout",
+        "independent_qualification",
+        "signed_budget_settlement"
+      ],
+      "mode": "independent-qualification",
+      "liveRelease": false
+    }
+  ]
+}
