@@ -64,7 +64,7 @@ export function resolveAdvisoryGate({
   const plan = planReviewControls(settings);
   if (typeof trustedIdentity?.tenantId !== "string" || !trustedIdentity.tenantId ||
       typeof trustedIdentity?.actorId !== "string" || !trustedIdentity.actorId)
-    return { enabled: false, reason: "TRUSTED_TENANT_IDENTITY_REQUIRED" };
+    return { enabled: true, blocked: true, reason: "TRUSTED_TENANT_IDENTITY_REQUIRED" };
   if (!plan.advisoryGateEnabled)
     return { enabled: false, reason: "TENANT_OPTED_OUT" };
   if (override !== null) {
@@ -76,7 +76,7 @@ export function resolveAdvisoryGate({
         !Number.isFinite(override.expiresAtMs) ||
         !Number.isFinite(now) || override.expiresAtMs <= now ||
         override.expiresAtMs - now > 15 * 60_000)
-      return { enabled: false, reason: "INVALID_ADMIN_OVERRIDE_HELD" };
+      return { enabled: true, blocked: true, reason: "INVALID_ADMIN_OVERRIDE_REJECTED" };
     return { enabled: false, reason: "ADMIN_ADVISORY_OVERRIDE", expiresAtMs: override.expiresAtMs };
   }
   return { enabled: true, reason: "ADVISORY_GATE_ENABLED" };
