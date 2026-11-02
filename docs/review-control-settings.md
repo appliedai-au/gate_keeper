@@ -34,6 +34,21 @@ The saved row is scoped to authenticated `user.id` with `user.role=admin`, **not
 
 Target existing app ID `6ae577c8f34f21f5eebe75d9`, URL `https://secure-authentic-gate-flow.base44.app/`. **Do not create a second app**.
 
+**Protect the existing app's data models.** Base44's documented `entities push` is an entire-directory synchronization: a remote entity missing from the local `base44/entities/` directory is removed from the remote schema. The current Gatekeeper integration folder includes **only one new entity**, not the existing app's full entity inventory. **Never run `npx base44 entities push` or `npx base44 deploy` from this partial folder, and never use `--force` or `base44 create`**. Doing so could remove existing schema definitions and break existing functions. Reference: [Base44 entities push](https://docs.base44.com/developers/references/cli/commands/entities-push) and [Base44 functions deploy](https://docs.base44.com/developers/references/cli/commands/functions-deploy).
+
+**Safe existing-app sequence:**
+- Authenticate and inspect app ID, active runtime convention, all currently deployed entities, functions and website source. Create a rollback checkpoint and export/save the **complete** prechange schema inventory; preserve original pages, auth, secrets, URL and existing user data.
+- To bootstrap a *separate working directory for this existing app*, prefer `npx base44 scaffold --app-id 6ae577c8f34f21f5eebe75d9 --no-skills` with owner authentication; never `create`. Scaffolding alone does not deploy. Its backend-only output is not a copy of the live frontend or all existing remote entities.
+- Use the authenticated Base44 app API's **create-one-entity-schema** operation, scoped to exactly `GateKeeperControlPolicy`, after verifying it does not already exist. Alternatively, perform a full entity synchronization only when **every existing remote entity** is present locally and a no-deletion comparison has been reviewed. The private entity must retain `rls: { create:false,read:false,update:false,delete:false }`. Direct client reads/writes remain denied; backend service role bypasses RLS only after admin identity validation.
+- Install exactly the required backend function by name, without `--force` or a bulk delete. For editor/Deno, its name is `gatekeeperControls`; for CLI/sandbox, the function directory is `gatekeeper-controls`. The settings component defaults to editor/Deno:
+  `<GateKeeperControlSettings />`. For CLI/sandbox, use
+  `<GateKeeperControlSettings functionName="gatekeeper-controls" />` in `GateKeeper.jsx` after verifying that the app uses the CLI runtime. The same principle applies to the health probe:
+  `<GateKeeperConnectionPanel functionName="gatekeeper-status" />` only in CLI mode.
+- Deploy **no site assets** until the private entity, admin function, no-auth denial, owner draft persistence, and one-user refresh behaviour pass. Test on the existing app's branch/preview first; preserve its route and publish the same app through normal owner deployment. The site must continue to show `INCONCLUSIVE` for exploratory DeepSeek evidence.
+- Compare pre/post entity names and function names: **zero unrelated removals**; check anonymous/user/admin access and mobile and keyboard UX. If any preexisting entity or function disappears or data access changes, restore from the saved checkpoint and hold publication.
+
+**The above is a deployment contract, not an assertion that an authenticated Base44 deployment has occurred.** The connected browser cannot open an owner editor in this session.
+
 1. In its authenticated Base44 editor, verify whether the project is editor/Deno or CLI/sandbox. Checkpoint before editing. Preserve existing auth and routes.
 2. Install the **private entity schema first**; inspect that unauthenticated and ordinary users cannot list, create, read, update or delete settings.
 3. Install the matching single backend variant. Confirm `load` returns the default only for an authenticated administrator. Test invalid settings, admin denial, oversized JSON, simulated missing database, stale-revision conflict and no external requests.
