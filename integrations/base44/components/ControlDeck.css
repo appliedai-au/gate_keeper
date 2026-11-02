@@ -37,6 +37,16 @@
 .cd-check>input{accent-color:#d9ff86;margin-top:4px;width:18px;height:18px;flex-shrink:0}
 .cd-check strong{display:block;font-size:14px;color:#f2f5ec}
 .cd-check small{display:block;color:#b1c2c6;font-size:11px;line-height:1.6;margin-top:6px}
+.cd-check-first{border-top:0;padding:0 0 14px}
+.cd-check>input:disabled{opacity:.55;cursor:not-allowed}
+.cd-mode{font:12px/1.7 ui-monospace,monospace;color:#b6c7cf;margin:0 0 18px}
+.cd-mode strong{color:#e0ffaf}
+.cd-profile{margin:12px 0 20px;padding:17px;border-radius:9px;background:#10252e;border:1px solid #55737c}
+.cd-profile strong{display:block;color:#e0ffaf;font-size:15px}
+.cd-profile p{color:#d7e3e3;line-height:1.65;font-size:12px;margin:8px 0}
+.cd-profile small{display:block;font-size:11px;color:#b5c7cc;line-height:1.6;margin-top:7px}
+.cd-profile + .cd-v-diagram{margin-top:18px}
+
 .cd-v-diagram{border:1px solid #304956;border-radius:9px;background:#10202b;overflow-x:auto}
 .cd-v-diagram svg{display:block;width:100%;min-width:410px;height:auto}
 .cd-v-text{fill:#a5bec2;font:11px ui-monospace,monospace}
