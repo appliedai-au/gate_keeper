@@ -1,0 +1,110 @@
+{
+  "schema": "gate-keeper-native-hard-v1",
+  "id": "native-hard-02-webhook",
+  "title": "Authenticated payout webhook under retries and reordering",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "services/payout-webhook.ts",
+  "context": "The provider signs the EXACT RAW request bytes with HMAC-SHA256 and sends x-sent-at in UNIX SECONDS. Provider event IDs are unique only per tenant. Events may retry concurrently and arrive out of order; a refunded payout must never regress to paid. The database uses read-committed isolation and has no uniqueness guarantee for (tenantId,providerEventId). queue.send is an external broker, not in the DB transaction. Payment and event IDs are globally unique but tenant access must be enforced.",
+  "code": [
+    "import { createHmac, timingSafeEqual } from \"node:crypto\";",
+    "export async function receivePayout(req, { secret, db, queue }) {",
+    "  const signature = String(req.headers[\"x-signature\"] || \"\");",
+    "  const raw = req.rawBody.toString(\"utf8\");",
+    "  const event = JSON.parse(raw);",
+    "  const digest = createHmac(\"sha256\", secret)",
+    "    .update(JSON.stringify(event)).digest(\"hex\");",
+    "  if (!/^[a-f0-9]{64}$/i.test(signature)) return { status: 401 };",
+    "  if (!timingSafeEqual(Buffer.from(signature, \"hex\"), Buffer.from(digest, \"hex\"))) {",
+    "    return { status: 401 };",
+    "  }",
+    "  const sentAt = Number(req.headers[\"x-sent-at\"]);",
+    "  if (!Number.isFinite(sentAt)) return { status: 400 };",
+    "  if (Math.abs(Date.now() - sentAt) > 300000) return { status: 408 };",
+    "  const tenantId = event.tenantId;",
+    "  if (!tenantId || !event.id) return { status: 400 };",
+    "  return db.$transaction(async (tx) => {",
+    "    const seen = await tx.webhookEvent.findFirst({",
+    "      where: { providerEventId: event.id }",
+    "    });",
+    "    if (seen) return { status: 200, duplicate: true };",
+    "    await tx.webhookEvent.create({",
+    "      data: { providerEventId: event.id, tenantId, type: event.type }",
+    "    });",
+    "    if (event.type === \"payout.paid\") {",
+    "      await tx.payout.update({",
+    "        where: { id: event.payoutId },",
+    "        data: { state: \"paid\" }",
+    "      });",
+    "    }",
+    "    if (event.type === \"payout.refunded\") {",
+    "      await tx.payout.update({",
+    "        where: { id: event.payoutId },",
+    "        data: { state: \"refunded\" }",
+    "      });",
+    "    }",
+    "    await queue.send(\"payout.changed\", {",
+    "      tenantId, payoutId: event.payoutId, eventId: event.id",
+    "    });",
+    "    return { status: 200 };",
+    "  });",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 7,
+      "categories": [
+        "bug"
+      ],
+      "why": "Signing parsed and reserialized JSON rather than exact raw bytes invalidates signatures for legitimate noncanonical payloads."
+    },
+    {
+      "line": 14,
+      "categories": [
+        "security"
+      ],
+      "why": "Compares millisecond clock to seconds timestamp, rejecting timely signed requests (or mis-applying freshness enforcement)."
+    },
+    {
+      "line": 19,
+      "categories": [
+        "security"
+      ],
+      "why": "Deduplication ignores tenant scope; provider event IDs may coincide across tenants."
+    },
+    {
+      "line": 18,
+      "categories": [
+        "bug"
+      ],
+      "why": "Read-before-insert without uniqueness permits concurrent retries to apply the same event more than once."
+    },
+    {
+      "line": 27,
+      "categories": [
+        "security"
+      ],
+      "why": "Payout writes use global ID without tenant authorization predicates, allowing cross-tenant mutation."
+    },
+    {
+      "line": 28,
+      "categories": [
+        "bug"
+      ],
+      "why": "An older payout.paid event can overwrite a newer refunded state without version/timestamp ordering."
+    },
+    {
+      "line": 37,
+      "categories": [
+        "bug"
+      ],
+      "why": "External broker publication inside a DB transaction can deliver before commit or outlive rollback."
+    }
+  ],
+  "hardness": {
+    "realistic_context": true,
+    "seeded_defects": 7,
+    "contains_decoys": true,
+    "public_exploratory": true
+  }
+}
