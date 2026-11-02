@@ -37,6 +37,10 @@ Two agent methods run through the actual **TrueForge SDK session/turn API**, at 
 The runner claims a unique run ID atomically in private S3 before sending any native session requests. It saves raw instructions, prompts, outputs and turn/session references privately **immediately after each call**, then private scoring/lesson evidence. Any error becomes a **non-retryable unreconciled run**. Public logs report only sanitized aggregates; no private session identifiers, holdout keys, object paths or authentication tokens.
 
 
+### Team-capped personal token fallback (3 November 2026, pending owner approval)
+
+Tenant members cannot create virtual accounts in the shared `stranger-builds` tenant. The admission therefore also accepts a statement with `credentialKind: "personal-access-token"`. It must name the owner's token, an Applied_AI **team-scoped, Lifetime, Enforce** gateway rule of at most US$50 with at least US$5 remaining, and `localHardCapUsd: 5`. In that mode TrueFoundry enforces the team ceiling and the runner's `BudgetController` stops at US$5. Every result and the private `STARTED` evidence carry `budgetEnforcement: TEAM_GATEWAY_ENFORCE_PLUS_LOCAL_HARD_STOP`, so the US$5 is never described as gateway-enforced. The dedicated virtual-account path is unchanged and remains preferred.
+
 ### Owner-approved spending limits (2 November 2026)
 
 - **US$1 lifetime Enforce** remains the maximum for the *separate*, optional two-turn public-fixture smoke via `scripts/proof/sponsor-smoke.mjs`. That smoke receipt is not authorised to fund the four-round native study.

@@ -26,6 +26,8 @@ export const LEARNING_TURNS = 6;
 // study. The separate two-call sponsor-smoke runner remains at US$1.
 // No user-editable CLI/env override may raise this provider-side cap.
 export const HARD_CAP_USD = 5;
+export const TEAM_SUBJECT = "Applied_AI";
+export const TEAM_CAP_MAX_USD = 50;
 export const REVIEW_MAX_TOKENS = 2500;
 export const LESSON_MAX_TOKENS = 400;
 const fail = (code) => { throw new Error("NATIVE_FOUR_HELD:" + code); };
@@ -124,22 +126,43 @@ export function verifyNativeFourAdmission({
       s.issuedAt > now || s.expiresAt <= now ||
       s.expiresAt - s.issuedAt > 86400000 || now - s.issuedAt > 86400000)
     fail("SIGNED_LEASE_EXPIRED");
-  if (typeof s.virtualAccountId !== "string" ||
-      !/^gate-keeper-native-[a-zA-Z0-9-]+$/.test(s.virtualAccountId) ||
-      !p || typeof p.ruleId !== "string" || !p.ruleId.trim() ||
-      p.subject !== s.virtualAccountId || p.mode !== "Enforce" ||
-      p.period !== "Lifetime" || p.scope !== "per-virtual-account" ||
-      p.currency !== "USD" || p.limitUsd !== HARD_CAP_USD ||
-      !Number.isFinite(p.remainingUsd) || p.remainingUsd <= 0 ||
-      p.remainingUsd > p.limitUsd ||
-      !Number.isFinite(s.sponsorCreditRemainingUsd) ||
-      s.sponsorCreditRemainingUsd < p.remainingUsd)
-    fail("DEDICATED_SPONSORED_HARD_BUDGET_UNVERIFIED");
+  let budgetEnforcement;
+  if (s.credentialKind === "personal-access-token") {
+    // Owner-approved fallback (3 Nov 2026): tenant members cannot create
+    // virtual accounts. The owner's personal token is capped externally by
+    // the Applied_AI team's lifetime Enforce rule (at most US$50) and
+    // internally by the runner's US$5 BudgetController hard stop.
+    if (typeof s.tokenOwner !== "string" || !s.tokenOwner.trim() ||
+        !p || typeof p.ruleId !== "string" || !p.ruleId.trim() ||
+        p.subject !== TEAM_SUBJECT || p.scope !== "team" ||
+        p.mode !== "Enforce" || p.period !== "Lifetime" || p.currency !== "USD" ||
+        !Number.isFinite(p.limitUsd) || p.limitUsd <= 0 || p.limitUsd > TEAM_CAP_MAX_USD ||
+        !Number.isFinite(p.remainingUsd) || p.remainingUsd < HARD_CAP_USD ||
+        p.remainingUsd > p.limitUsd || s.localHardCapUsd !== HARD_CAP_USD ||
+        !Number.isFinite(s.sponsorCreditRemainingUsd) ||
+        s.sponsorCreditRemainingUsd < HARD_CAP_USD)
+      fail("TEAM_CAPPED_PERSONAL_TOKEN_BUDGET_UNVERIFIED");
+    budgetEnforcement = "TEAM_GATEWAY_ENFORCE_PLUS_LOCAL_HARD_STOP";
+  } else {
+    if (typeof s.virtualAccountId !== "string" ||
+        !/^gate-keeper-native-[a-zA-Z0-9-]+$/.test(s.virtualAccountId) ||
+        !p || typeof p.ruleId !== "string" || !p.ruleId.trim() ||
+        p.subject !== s.virtualAccountId || p.mode !== "Enforce" ||
+        p.period !== "Lifetime" || p.scope !== "per-virtual-account" ||
+        p.currency !== "USD" || p.limitUsd !== HARD_CAP_USD ||
+        !Number.isFinite(p.remainingUsd) || p.remainingUsd <= 0 ||
+        p.remainingUsd > p.limitUsd ||
+        !Number.isFinite(s.sponsorCreditRemainingUsd) ||
+        s.sponsorCreditRemainingUsd < p.remainingUsd)
+      fail("DEDICATED_SPONSORED_HARD_BUDGET_UNVERIFIED");
+    budgetEnforcement = "DEDICATED_VIRTUAL_ACCOUNT_GATEWAY_ENFORCE";
+  }
   return Object.freeze({
     runId, sourceCommit, model: MODEL,
     fixtureDigestSha256: fixtureDigest(tasks),
     evidenceSha256: digest(JSON.stringify(receipt.statement)),
-    hardCapUsd: p.limitUsd,
+    hardCapUsd: Math.min(HARD_CAP_USD, p.limitUsd),
+    gatewayCapUsd: p.limitUsd, budgetEnforcement,
   });
 }
 
@@ -228,6 +251,8 @@ export async function runNativeFour({
   const lock = await claimOnce({
     runId, sourceCommit, evidenceSha256: grant.evidenceSha256,
     fixtureDigestSha256: grant.fixtureDigestSha256, model: MODEL,
+    budgetEnforcement: grant.budgetEnforcement, gatewayCapUsd: grant.gatewayCapUsd,
+    localHardCapUsd: HARD_CAP_USD,
   });
   if (lock?.created !== true) fail("DURABLE_ONCE_CLAIM_NOT_PROVED");
 
@@ -385,7 +410,9 @@ export async function runNativeFour({
     ],
   };
   await put("private/SUMMARY.json", summary);
-  return { ...summary, privateEvidenceItemCount: writes };
+  return { ...summary, budgetEnforcement: grant.budgetEnforcement,
+    gatewayCapUsd: grant.gatewayCapUsd, localHardCapUsd: HARD_CAP_USD,
+    privateEvidenceItemCount: writes };
 }
 
 async function cli() {
