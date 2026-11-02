@@ -1,0 +1,110 @@
+{
+  "schema": "gate-keeper-native-hard-v1",
+  "id": "native-hard-04-entitlements",
+  "title": "Plan migration with versioned entitlements and payment idempotency",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "services/change-entitlements.ts",
+  "context": "Each tenant subscription has versioned entitlements. Seats must be integer 1..20. Subscription IDs are globally unique but tenant authorization must be enforced on every read/write. Callers send the exact expectedVersion; stale or future versions must be rejected. This method supports upgrades and downgrades and must charge/refund only the seat-count DELTA at prorated period price, rounded half-up to cents. A billing charge must be idempotent by requestId. Old rights must remain in force unless the new rights are atomically committed. The database has read-committed isolation. Billing is external to the DB transaction.",
+  "code": [
+    "export async function changeEntitlements(req, { db, billing, makeRights }) {",
+    "  const tenantId = req.auth.tenantId;",
+    "  const subscriptionId = req.params.subscriptionId;",
+    "  const seats = Number(req.body.seats);",
+    "  if (seats < 1 && seats > 20) return { status: 400 };",
+    "  if (!tenantId || !req.body.requestId) return { status: 401 };",
+    "  const sub = await db.subscription.findUnique({",
+    "    where: { id: subscriptionId }",
+    "  });",
+    "  if (!sub) return { status: 404 };",
+    "  if (sub.version > Number(req.body.expectedVersion)) {",
+    "    return { status: 409, error: \"Version conflict\" };",
+    "  }",
+    "  const periodMs = sub.periodEndMs - sub.periodStartMs;",
+    "  const remainingMs = Math.max(0, sub.periodEndMs - Date.now());",
+    "  if (periodMs <= 0) return { status: 409 };",
+    "  const chargeCents = Math.floor(",
+    "    sub.seatPriceCents * seats * remainingMs / periodMs",
+    "  );",
+    "  await billing.charge({",
+    "    accountId: sub.billingAccountId,",
+    "    amountCents: chargeCents",
+    "  });",
+    "  await db.entitlement.deleteMany({",
+    "    where: { subscriptionId }",
+    "  });",
+    "  await db.entitlement.createMany({",
+    "    data: makeRights({ tenantId, subscriptionId, seats, version: sub.version + 1 })",
+    "  });",
+    "  await db.subscription.update({",
+    "    where: { id: subscriptionId },",
+    "    data: { seatCount: seats, version: { increment: 1 } }",
+    "  });",
+    "  return { status: 200, version: sub.version + 1 };",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 5,
+      "categories": [
+        "bug"
+      ],
+      "why": "Impossible conjunction and missing integer check permit out-of-range and fractional seats."
+    },
+    {
+      "line": 8,
+      "categories": [
+        "security"
+      ],
+      "why": "Subscription lookup without authenticated tenant filter exposes or changes another tenant's subscription."
+    },
+    {
+      "line": 11,
+      "categories": [
+        "bug"
+      ],
+      "why": "Expected version must equal current version; greater/future values bypass optimistic-concurrency protection."
+    },
+    {
+      "line": 18,
+      "categories": [
+        "bug"
+      ],
+      "why": "Bills all requested seats instead of the difference from existing seats, including on downgrades."
+    },
+    {
+      "line": 17,
+      "categories": [
+        "bug"
+      ],
+      "why": "Floor rounding violates specified half-up cents policy for prorated amounts."
+    },
+    {
+      "line": 20,
+      "categories": [
+        "bug"
+      ],
+      "why": "External payment call lacks idempotency key and failure-reconciliation boundary; retries can double-charge."
+    },
+    {
+      "line": 24,
+      "categories": [
+        "bug"
+      ],
+      "why": "Removing old rights before new rights are durably committed and outside a DB transaction can leave a tenant without entitlements."
+    },
+    {
+      "line": 30,
+      "categories": [
+        "security"
+      ],
+      "why": "Version/seat update lacks tenant-scoped conditional version match and is not atomic with entitlement replacement."
+    }
+  ],
+  "hardness": {
+    "realistic_context": true,
+    "seeded_defects": 8,
+    "contains_decoys": true,
+    "public_exploratory": true
+  }
+}

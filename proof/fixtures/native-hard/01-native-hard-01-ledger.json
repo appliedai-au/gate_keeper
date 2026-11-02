@@ -1,0 +1,102 @@
+{
+  "schema": "gate-keeper-native-hard-v1",
+  "id": "native-hard-01-ledger",
+  "title": "Concurrent multi-tenant invoice settlement",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "services/settle-invoice.ts",
+  "context": "A live multi-tenant ledger posts invoice settlements using a read-committed PostgreSQL transaction. Invoice IDs are globally unique, but every read/write must check the authenticated tenant. invoice.totalDollars is a decimal string. There is NO unique constraint on (tenantId,idempotencyKey). Account funds may be reserved concurrently. eventBus.publish is external to PostgreSQL and can deliver before commit. Every payment request must be exactly-once, stay within available funds and never expose another tenant's invoice.",
+  "code": [
+    "export async function settleInvoice(request, services) {",
+    "  const { db, eventBus } = services;",
+    "  const tenantId = request.auth.tenantId;",
+    "  const invoiceId = request.params.invoiceId;",
+    "  const idempotencyKey = request.headers[\"idempotency-key\"];",
+    "  if (!tenantId || !idempotencyKey) {",
+    "    return { status: 400, error: \"Invalid settlement request\" };",
+    "  }",
+    "  return db.$transaction(async (tx) => {",
+    "    const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });",
+    "    if (!invoice) return { status: 404, error: \"Invoice missing\" };",
+    "    const previous = await tx.ledger.findFirst({",
+    "      where: { tenantId, idempotencyKey }",
+    "    });",
+    "    if (previous) return { status: 200, ledgerId: previous.id };",
+    "    const amountCents = Math.round(Number(invoice.totalDollars) * 100);",
+    "    if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {",
+    "      return { status: 400, error: \"Invalid amount\" };",
+    "    }",
+    "    const account = await tx.account.findUnique({ where: { tenantId } });",
+    "    if (!account) return { status: 404, error: \"Account missing\" };",
+    "    if (account.balanceCents < amountCents) {",
+    "      return { status: 409, error: \"Insufficient funds\" };",
+    "    }",
+    "    const ledger = await tx.ledger.create({",
+    "      data: { tenantId, invoiceId, idempotencyKey, amountCents, kind: \"debit\" }",
+    "    });",
+    "    await tx.account.update({",
+    "      where: { tenantId },",
+    "      data: { balanceCents: { decrement: amountCents } }",
+    "    });",
+    "    await tx.invoice.update({",
+    "      where: { id: invoiceId },",
+    "      data: { status: \"settled\" }",
+    "    });",
+    "    await eventBus.publish(\"invoice.settled\", {",
+    "      tenantId, invoiceId, ledgerId: ledger.id",
+    "    });",
+    "    return { status: 201, ledgerId: ledger.id };",
+    "  });",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 10,
+      "categories": [
+        "security"
+      ],
+      "why": "Invoice lookup is not tenant scoped, permitting cross-tenant invoice settlement."
+    },
+    {
+      "line": 12,
+      "categories": [
+        "bug"
+      ],
+      "why": "An existence check followed by insertion without a unique constraint permits duplicate postings under concurrent identical idempotency keys."
+    },
+    {
+      "line": 16,
+      "categories": [
+        "bug"
+      ],
+      "why": "Converting a decimal money string through binary floating point can round cent values incorrectly."
+    },
+    {
+      "line": 22,
+      "categories": [
+        "bug"
+      ],
+      "why": "Read-check-decrement under read-committed isolation is not an atomic sufficient-funds guard; concurrent settlements can overdraw."
+    },
+    {
+      "line": 33,
+      "categories": [
+        "security"
+      ],
+      "why": "Invoice status update lacks tenant scope, allowing mutation of an invoice outside the authenticated tenant."
+    },
+    {
+      "line": 36,
+      "categories": [
+        "bug"
+      ],
+      "why": "Publishing an external event inside an uncommitted DB transaction can announce a settlement that later rolls back."
+    }
+  ],
+  "hardness": {
+    "realistic_context": true,
+    "seeded_defects": 6,
+    "contains_decoys": true,
+    "public_exploratory": true
+  }
+}
