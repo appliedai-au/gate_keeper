@@ -1,5 +1,6 @@
 // Three-agent review test on stock TrueForge -> DeepSeek via TrueFoundry. Equal limits for every agent.
 import { gunzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 const { TrueForge } = globalThis.GK3_SDK ?? await import("@truefoundry/trueforge-sdk");
 // Model-agnostic: the same sealed tasks and locked agents rerun on any TrueFoundry model.
 const MODEL = process.env.GK3_MODEL || "tfy-direct/deepseek-v4-flash-0731"; // boot.mjs sets this to the proxied provider
@@ -251,7 +252,66 @@ async function pipe() {
   for (const x of sum) console.log("GK3_MATRIX " + JSON.stringify(x));
   console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6 }));
 }
-if (process.env.GK3_PIPE) { await pipe(); } else if (process.env.GK3_MATRIX) {
+// Gate Keeper's improve step (GK3_IMPROVE=1): Gate Keeper rewrites its own rules from its training misses.
+// Each round: review the training tasks with the current rules (quote + code merge), show the improver the missed
+// bugs (with their reasons) and the false alarms, take at most two new general rules, re-run, and keep them only
+// if net rises by GK3_MIN_GAIN or more and neither split (t4-t5 fit, t6 check) gets worse. Scored by the same score().
+async function improve() {
+  const GM = MODEL_B || MODEL, ROUNDS = Number(process.env.GK3_ROUNDS || "3"), GAIN = Number(process.env.GK3_MIN_GAIN || "8");
+  const FOCUS = ["untrusted input (pass 2) and identity and access (pass 3)", "state and concurrency (pass 4) and failure paths (pass 5)", "boundaries (pass 1) and semantics (pass 6)"]
+    .map((x) => `\n\nThis pass: hunt only ${x}, plus any rule stated in the context that the code breaks. Other defect types are covered by other passes; leave them out.`);
+  const toSpans = (r) => r.status === "done" ? (jsonFindings(r.text) || null)?.map((x) => { const l = Number(x?.line); return Number.isInteger(l) ? { start: l, end: l, comment: String(x?.comment || "").slice(0, 200) } : null; }).filter(Boolean) ?? null : null;
+  const merge = (fs) => { if (!fs) return null; const out = []; for (const f of [...fs].sort((a, b) => a.start - b.start)) { if (out.length && f.start - out[out.length - 1].start <= 1) continue; out.push(f); } return out; };
+  const codeOf = (t) => { const m = new Map(); for (const x of t.prompts.gate_keeper.matchAll(/^\s*(\d+) \| ?(.*)$/gm)) m.set(+x[1], x[2].trim()); return m; };
+  const isFit = (t) => !t.id.startsWith("t6-");
+  async function evalRules(tag, sys, focused = false) {
+    const q = []; for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) q.push({ trial, task });
+    const res = { tag, fit: 0, val: 0, caught: 0, fa: 0, cost: 0, sec: 0, n: 0, unparsed: 0, misses: [], fas: [] };
+    async function one({ trial, task }) {
+      const id = `i/${tag}/${task.id}/t${trial}`, pr = task.prompts.gate_keeper;
+      const rs = focused ? await Promise.all(FOCUS.map((x, i) => turn(id + "/f" + i, sys, pr + x, GM))) : [await turn(id, sys, pr, GM)];
+      const parts = rs.map(toSpans), fs = parts.some(Boolean) ? merge(parts.filter(Boolean).flat()) : null;
+      const sc = score(task.expected, fs, task.benign || []), code = codeOf(task);
+      res.caught += sc.caught; res.fa += sc.extra; res[isFit(task) ? "fit" : "val"] += sc.caught - sc.extra; res.n++; if (!sc.parsed) res.unparsed++;
+      res.cost += rs.reduce((a, r) => a + (r.cost || 0), 0); res.sec += Math.max(...rs.map((r) => r.seconds || 0));
+      if (fs) { for (const w of task.why) if (!fs.some((f) => Math.abs(f.start - w.line) <= 1)) res.misses.push({ task: task.id, line: w.line, code: code.get(w.line) || "", why: w.why });
+        for (const f of fs) if (!task.expected.some((l) => Math.abs(l - f.start) <= 1) && !(task.benign || []).some((l) => Math.abs(l - f.start) <= 1)) res.fas.push({ task: task.id, line: f.start, code: code.get(f.start) || "", comment: f.comment }); }
+      console.log("GK3_ROW " + JSON.stringify({ arm: tag, task: task.id, trial, ...sc }));
+    }
+    await Promise.all(Array.from({ length: CONC }, async () => { while (q.length) await one(q.shift()); }));
+    const out = { tag, net: res.caught - res.fa, caught: res.caught, of: P.tasks.reduce((a, t) => a + t.expected.length, 0) * TRIALS, fa: res.fa, fitNet: res.fit, checkNet: res.val, unparsed: res.unparsed, avgS: Math.round(10 * res.sec / res.n) / 10, avgUsd: Math.round(1e6 * res.cost / res.n) / 1e6 };
+    console.log("GK3_EVAL " + JSON.stringify(out)); return { ...out, misses: res.misses, fas: res.fas };
+  }
+  const IMPROVER = `You maintain the instructions of an automated code reviewer. You get its current instructions, the planted bugs it missed on training reviews (with the reason each is a bug), and its false alarms.
+Write at most two NEW general rules that would make it catch more of these misses or raise fewer of these false alarms on code it has never seen.
+- Each rule is one sentence of at most 40 words, about a kind of defect or a reviewing habit, never about one task: no file, function, variable or product names from the examples.
+- Do not repeat or reword a rule the instructions already have. Prefer the pattern behind the most misses.
+Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
+  const tally = (xs) => { const seen = new Map(); for (const x of xs) { const k = x.task + ":" + x.line; seen.set(k, { ...x, n: (seen.get(k)?.n || 0) + 1 }); } return [...seen.values()].sort((a, b) => b.n - a.n); };
+  console.log("GK3_START " + JSON.stringify({ improve: true, model: GM, rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
+  const BASE = P.agents.gate_keeper.system;
+  const withRules = (list) => BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n") + "\n\nExtra field:") : BASE + "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
+  let rules = BASE, learned = [], rejected = [];
+  let best = await evalRules("v12", rules);
+  const fq = await evalRules("v12 focused x3", rules, true);
+  for (let r = 1; r <= ROUNDS; r++) {
+    const ms = tally(best.misses).slice(0, 14), fs = tally(best.fas).slice(0, 10);
+    const ask = "Current instructions:\n" + rules + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n") +
+      "\n\nFalse alarms:\n" + fs.map((f) => `- [${f.n}x] line ${f.line}: \`${f.code}\` — reviewer said: ${f.comment}`).join("\n") + (rejected.length ? "\n\nRules already tried that did not help (do not propose these again):\n" + rejected.map((x) => "- " + x).join("\n") : "");
+    const rr = await turn(`i/improve-r${r}`, IMPROVER, ask, GM);
+    const nr = (jsonFindings(rr.text, "rules") || []).filter((x) => typeof x === "string" && x.length > 10).slice(0, 2).map((x) => x.trim().slice(0, 300));
+    if (!nr.length) { console.log("GK3_IMPROVE " + JSON.stringify({ round: r, error: "no rules", status: rr.status })); continue; }
+    const candRules = withRules([...learned, ...nr]);
+    const c = await evalRules(`r${r}`, candRules);
+    const ok = c.net - best.net >= GAIN && c.fitNet >= best.fitNet && c.checkNet >= best.checkNet;
+    console.log("GK3_IMPROVE " + JSON.stringify({ round: r, rules: nr, why: (() => { try { return JSON.parse(rr.text.slice(rr.text.indexOf("{"), rr.text.lastIndexOf("}") + 1)).why; } catch { return null; } })(), base: { net: best.net, fit: best.fitNet, check: best.checkNet }, cand: { net: c.net, fit: c.fitNet, check: c.checkNet }, accepted: ok }));
+    if (ok) { rules = candRules; learned = [...learned, ...nr]; best = c; } else rejected.push(...nr);
+  }
+  console.log("GK3_RULES " + JSON.stringify({ learned, sha256: createHash("sha256").update(rules).digest("hex") }));
+  console.log("GK3_FINAL " + JSON.stringify(rules));
+  console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, best: { net: best.net, caught: best.caught, fa: best.fa }, focused: { net: fq.net, caught: fq.caught, fa: fq.fa, avgUsd: fq.avgUsd } }));
+}
+if (process.env.GK3_IMPROVE) { await improve(); } else if (process.env.GK3_PIPE) { await pipe(); } else if (process.env.GK3_MATRIX) {
   const M = { ds: MODEL, oss: "tfy-direct/gpt-oss-120b", glm: "tfy-direct/glm-5-3-flash", mimo: "tfy-direct/mimo-v2-6-flash" };
   const G = { ds: ["gk_v10", "ds"], ds2: ["gk_v10", "ds"], ds0: ["gk_v10", "ds", 0], ds8: ["gk_v8", "ds"], oss: ["gk_v10", "oss"], glm: ["gk_v10", "glm"], mimo: ["gk_v10", "mimo"] };
   const JM = ["ds", "oss", "glm"];
