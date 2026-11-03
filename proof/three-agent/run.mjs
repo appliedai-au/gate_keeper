@@ -10,6 +10,9 @@ const CONC = Number(process.env.GK3_CONCURRENCY || "3");
 const P = JSON.parse(gunzipSync(Buffer.from(process.env.GK3_PAYLOAD_B64, "base64")).toString("utf8"));
 const tf = new TrueForge({ baseUrl: process.env.TRUEFORGE_BASE_URL, token: process.env.TRUEFORGE_TOKEN, timeoutInSeconds: 60 });
 let spent = 0, reserved = 0, calls = 0;
+// Same for every agent. Reviews are non-interactive: no one can answer TrueForge's built-in ask_user_question
+// tool, and a call to it ends the turn with no answer (seen in practice run 2). Everything else stays stock.
+const RUNTIME = { askUserQuestions: { enabled: false } };
 const est = (chars, out) => ((chars / 3 + 3000) * PRICE[0] + out * PRICE[1]) / 1e6;
 async function turn(label, instructions, prompt) {
   const { temperature, maxTokens } = P.params;
@@ -19,7 +22,7 @@ async function turn(label, instructions, prompt) {
   const t0 = Date.now();
   let sid = null, st = null, tid = null;
   try {
-    const s = await tf.sessions.create({ agent: { spec: { model: { name: MODEL, params: { temperature, maxTokens } }, instructions } },
+    const s = await tf.sessions.create({ agent: { spec: { model: { name: MODEL, params: { temperature, maxTokens } }, instructions, config: RUNTIME } },
       metadata: { purpose: "gk-three-agent-" + P.set, label } });
     sid = s.data.id;
     let t = (await tf.sessions.createTurn(sid, { input: [{ type: "user.message", content: prompt }], previousTurnId: "none" }, { maxRetries: 0 })).data;
@@ -116,7 +119,7 @@ async function worker() {
     console.log("GK3_RAW " + `${arm}/${task.id}/t${trial} ` + JSON.stringify(r.text.slice(0, 6000)));
   }
 }
-console.log("GK3_START " + JSON.stringify({ model: MODEL, set: P.set, arms: ARMS, trials: TRIALS, tasks: P.tasks.length, cap: CAP, params: P.params, sha256: P.sha256 }));
+console.log("GK3_START " + JSON.stringify({ runtime: RUNTIME, model: MODEL, set: P.set, arms: ARMS, trials: TRIALS, tasks: P.tasks.length, cap: CAP, params: P.params, sha256: P.sha256 }));
 await Promise.all(Array.from({ length: CONC }, worker));
 const summary = Object.fromEntries(ARMS.map((a) => { const rs = rows.filter((r) => r.arm === a); const n = rs.length || 1;
   const caught = rs.reduce((s, r) => s + r.caught, 0), of = rs.reduce((s, r) => s + r.of, 0);
