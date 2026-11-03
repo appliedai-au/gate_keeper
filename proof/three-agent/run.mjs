@@ -17,7 +17,7 @@ async function turn(label, instructions, prompt) {
   if (spent + reserved + reserve > CAP) return { label, status: "BUDGET_STOP", text: "" };
   reserved += reserve; calls++;
   const t0 = Date.now();
-  let sid = null, st = null;
+  let sid = null, st = null, tid = null;
   try {
     const s = await tf.sessions.create({ agent: { spec: { model: { name: MODEL, params: { temperature, maxTokens } }, instructions } },
       metadata: { purpose: "gk-three-agent-" + P.set, label } });
@@ -26,24 +26,45 @@ async function turn(label, instructions, prompt) {
     for (let i = 0; i < 400 && !["done", "error", "failed", "cancelled"].includes(t?.state?.status); i++) {
       await new Promise((r) => setTimeout(r, 1500)); t = (await tf.sessions.getTurn(sid, t.id)).data;
     }
-    st = t?.state;
+    tid = t?.id ?? null; st = t?.state;
   } catch (e) { st = { status: "EXCEPTION", error: String(e?.message || e).slice(0, 300) }; }
   if (st?.status !== "done" && sid) { try { await tf.sessions.cancel(sid); } catch {} }
   const o = st?.output, m = st?.metrics ?? null;
   const cost = Number.isFinite(m?.totalCostInUsd) ? m.totalCostInUsd :
     Number.isFinite(m?.totalInputTokens) ? (m.totalInputTokens * PRICE[0] + (m.totalOutputTokens || 0) * PRICE[1]) / 1e6 : reserve;
   reserved -= reserve; spent += cost;
-  const text = typeof o?.content === "string" ? o.content : Array.isArray(o?.content) ? o.content.map((x) => x?.text || "").join("") : "";
+  let text = typeof o?.content === "string" ? o.content : Array.isArray(o?.content) ? o.content.map((x) => x?.text || "").join("") : "";
+  let source = text ? "output" : "none";
+  // Same fallback for every agent: if the final message is empty, rebuild the text from the turn's streamed deltas.
+  if (!text && sid && st?.status === "done") {
+    try {
+      if (tid) { let acc = "", rc = "";
+        for await (const ev of await tf.sessions.listTurnEvents(sid, tid)) {
+          if (ev?.type === "model.message.delta") { acc += ev.content || ""; rc += ev.reasoningContent || ""; }
+          else if (ev?.type === "model.message" && typeof ev.content === "string") acc = acc || ev.content;
+        }
+        if (acc) { text = acc; source = "deltas"; } else if (rc) { text = rc; source = "reasoning"; } }
+    } catch (e) { source = "fallback-error:" + String(e?.message || e).slice(0, 80); }
+  }
   const tools = (o?.toolCalls || []).map((x) => x?.function?.name ?? x?.name);
-  return { label, status: st?.status, finishReason: o?.finishReason ?? null, tools, text, cost, seconds: Math.round((Date.now() - t0) / 100) / 10,
+  return { label, status: st?.status, finishReason: o?.finishReason ?? null, tools, text, source, outputNull: o == null, reasoningChars: (o?.reasoningContent || "").length, cost, seconds: Math.round((Date.now() - t0) / 100) / 10,
     error: st?.error ? JSON.stringify(st.error).slice(0, 300) : null, tokens: m ? { in: m.totalInputTokens, out: m.totalOutputTokens, reasoning: m.totalReasoningTokens ?? null } : null };
 }
+// Harness-level and the same for every agent: take the last balanced {...} with a findings array, wherever it sits in the reply.
 function jsonFindings(text) {
-  const c = [...text.matchAll(/```(?:json)?\s*\n([\s\S]*?)```/g)].map((m) => m[1]).reverse();
-  const a = text.indexOf("{"), b = text.lastIndexOf("}");
-  if (a >= 0 && b > a) c.push(text.slice(a, b + 1));
-  for (const x of c) { try { const j = JSON.parse(x.trim()); if (Array.isArray(j?.findings)) return j.findings; } catch {} }
-  return null;
+  let best = null;
+  for (let a = text.indexOf("{"); a >= 0; a = text.indexOf("{", a + 1)) {
+    let d = 0, q = false, esc = false;
+    for (let i = a; i < text.length; i++) {
+      const ch = text[i];
+      if (q) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') q = false; continue; }
+      if (ch === '"') q = true; else if (ch === "{") d++; else if (ch === "}" && --d === 0) {
+        try { const j = JSON.parse(text.slice(a, i + 1)); if (Array.isArray(j?.findings)) best = j.findings; } catch {}
+        break;
+      }
+    }
+  }
+  return best;
 }
 const span = (s, e) => (Number.isInteger(e) && e >= s && e - s <= 10 ? { start: s, end: e } : { start: s, end: s });
 function parse(arm, text) {
@@ -85,7 +106,7 @@ async function worker() {
     const { trial, task, arm } = jobs.shift();
     const r = await turn(`${arm}/${task.id}/t${trial}`, P.agents[arm].system, task.prompts[arm]);
     const sc = score(task.expected, r.status === "done" ? parse(arm, r.text) : null, task.benign || []);
-    const row = { arm, task: task.id, trial, status: r.status, finish: r.finishReason, tools: r.tools, ...sc, cost: r.cost, seconds: r.seconds, tokens: r.tokens, error: r.error };
+    const row = { arm, task: task.id, trial, status: r.status, finish: r.finishReason, source: r.source, outputNull: r.outputNull, reasoningChars: r.reasoningChars, tools: r.tools, ...sc, cost: r.cost, seconds: r.seconds, tokens: r.tokens, error: r.error };
     rows.push(row);
     console.log("GK3_ROW " + JSON.stringify(row));
     console.log("GK3_RAW " + `${arm}/${task.id}/t${trial} ` + JSON.stringify(r.text.slice(0, 6000)));
