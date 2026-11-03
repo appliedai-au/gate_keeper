@@ -3,7 +3,7 @@
 // fails with AI_JSONParseError. This proxy passes everything through unchanged except that
 // it ends each `data:` line as its own event. Bodies are never logged.
 import http from "node:http";
-import { Readable } from "node:stream";
+import { Readable, pipeline } from "node:stream";
 export function reframe() {
   let buf = "";
   const dec = new TextDecoder(), enc = new TextEncoder();
@@ -39,7 +39,8 @@ export function startProxy({ port = 8787, upstream = "https://stranger-builds.tr
       res.writeHead(r.status, out);
       if (!r.body) return res.end();
       const stream = type.includes("text/event-stream") ? (reframed++, r.body.pipeThrough(reframe())) : r.body;
-      Readable.fromWeb(stream).pipe(res);
+      // pipeline, not pipe: a mid-stream upstream reset must end this response, not the process.
+      pipeline(Readable.fromWeb(stream), res, (err) => { if (err) res.destroy(err); });
     } catch (e) { if (!res.headersSent) res.writeHead(502); res.end(); }
   });
   server.listen(port, "::");
