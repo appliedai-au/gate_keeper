@@ -187,7 +187,7 @@ async function duo(arm, task, trial) {
 // Gate Keeper's rule bag (gk-bag.mjs): rule packs picked for this code, pattern hints, post-call filters and
 // fingerprints, still ONE model call per review. gk_bag = rules + hints; gk_bag_strict adds the Codex-style report bar.
 // Fingerprints come from GK3_FP_URL / payload P.fingerprints, built only from tasks outside the set being scored.
-const BAG = (process.env.GK3_BAG_PATH || ARMS.some((a) => a.startsWith("gk_bag"))) ? await import(process.env.GK3_BAG_PATH || "file:///tmp/gk3-bag.mjs") : null;
+const BAG = (process.env.GK3_BAG_PATH || ARMS.some((a) => a.startsWith("gk_"))) ? await import(process.env.GK3_BAG_PATH || "file:///tmp/gk3-bag.mjs") : null;
 const FP = P.fingerprints || null;
 async function bag(arm, task, trial) {
   const strict = arm.includes("strict"), useFp = arm.includes("fp");
@@ -201,6 +201,41 @@ async function bag(arm, task, trial) {
   rows.push(row); console.log("GK3_ROW " + JSON.stringify(row));
   console.log("GK3_RAW " + `${arm}/${task.id}/t${trial} ` + JSON.stringify(r.text.slice(0, 6000)));
 }
+// Gate Keeper four-call pipeline (gk_four): two find runs with the rule bag (union, merged), then two review runs.
+// A reviewer must name the triggering input and wrong result, or drop the finding, and gives the line where the fix goes.
+// A finding survives only if both reviewers keep it; its line comes from reviewer 1 when both agree within 1 line.
+// Find run 1 uses the same inputs and label as gk_bag, so it reuses gk_bag's cached reply. Scored by the same score().
+const REVIEW = `You are the second stage of a code reviewer. Below the code is a numbered list of candidate findings from the first stage. Most lists contain false alarms.
+For each candidate decide:
+- real: true only if you can name, from the code and context shown, a concrete input or state that triggers it AND the wrong result it causes. Style, best practice, hypotheticals, "could be", missing features not asked for, and anything the context says is acceptable are false.
+- A candidate that repeats the root cause of an earlier candidate (same fix) is false.
+- line: the single line where the fix must be made (the faulty condition, call, assignment or missing check), which may differ from the candidate's line. Use the numbers shown in the code.
+Reply with only this JSON: {"verdicts":[{"id":1,"real":true,"line":12,"trigger":"<= 15 words"}]}, one entry per candidate, same ids.`;
+const toF = (raw) => raw ? raw.map((x) => { const l = Number(x?.line ?? x?.code_location?.line_range?.start); return Number.isInteger(l) ? { start: l, end: l, quote: String(x?.quote || ""), comment: String(x?.comment || x?.title || "").slice(0, 240) } : null; }).filter(Boolean) : null;
+async function four(arm, task, trial) {
+  const pr = task.prompts.gate_keeper, prep = BAG.prepare(P.agents.gate_keeper.system, pr, {}), id = `${task.id}/t${trial}`;
+  const [a, b] = await Promise.all([turn(`gk_bag/${id}`, prep.system, prep.prompt), turn(`gk_four/${id}/f2`, prep.system, prep.prompt)]);
+  const fa = a.status === "done" ? toF(jsonFindings(a.text)) : null, fb = b.status === "done" ? toF(jsonFindings(b.text)) : null;
+  const cand = (fa || fb) ? BAG.post(pr, [...(fa || []), ...(fb || [])], null).out : null;
+  let final = cand, rv = [];
+  if (cand && cand.length) {
+    const list = cand.map((f, i) => `${i + 1}. line ${f.start}: ${f.comment}`).join("\n");
+    rv = await Promise.all([1, 2].map((k) => turn(`gk_four/${id}/r${k}`, REVIEW, pr + "\n\nCandidate findings:\n" + list)));
+    const V = rv.map((r) => { const m = new Map(); for (const v of (r.status === "done" ? jsonFindings(r.text, "verdicts") || [] : [])) m.set(Number(v?.id), v); return r.status === "done" ? m : null; });
+    final = [];
+    cand.forEach((f, i) => { const v1 = V[0]?.get(i + 1), v2 = V[1]?.get(i + 1);
+      const ok = (v) => v?.real === true; const keep = V[0] && V[1] ? ok(v1) && ok(v2) : ok(V[0] ? v1 : v2);
+      if (!keep) return; const l1 = Number(v1?.line), l2 = Number(v2?.line);
+      const line = Number.isInteger(l1) && (!Number.isInteger(l2) || Math.abs(l1 - l2) <= 1) ? l1 : f.start;
+      final.push({ ...f, start: line, end: line }); });
+    final = BAG.post(pr, final.map(({ quote, ...f }) => f), null).out;
+  }
+  const calls4 = [a, b, ...rv], cost = calls4.reduce((s, r) => s + (r.cost || 0), 0), seconds = Math.max(a.seconds || 0, b.seconds || 0) + Math.max(0, ...rv.map((r) => r.seconds || 0));
+  for (const [name, fs, c, sec] of [["gk_four_find2", cand, (a.cost || 0) + (b.cost || 0), Math.max(a.seconds || 0, b.seconds || 0)], [arm, final, cost, seconds]]) {
+    const row = { arm: name, task: task.id, trial, status: a.status, cached: !!a.cached, ...score(task.expected, fs, task.benign || []), cost: c, seconds: sec, calls: name === arm ? calls4.length : 2 };
+    rows.push(row); console.log("GK3_ROW " + JSON.stringify(row)); }
+  console.log("GK3_RAW gk_four/" + id + " cand=" + JSON.stringify((cand || []).map((f) => f.start)) + " final=" + JSON.stringify((final || []).map((f) => f.start)) + " rv=" + JSON.stringify(rv.map((r) => r.text.slice(-1500))));
+}
 const jobs = [];
 for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) for (const arm of ARMS) jobs.push({ trial, task, arm });
 const rows = [];
@@ -209,6 +244,7 @@ async function worker() {
     const { trial, task, arm } = jobs.shift();
     if (arm.endsWith("_vote")) { await vote(arm, task, trial); continue; }
     if (arm.endsWith("_duo")) { await duo(arm, task, trial); continue; }
+    if (arm === "gk_four") { await four(arm, task, trial); continue; }
     if (arm.startsWith("gk_bag")) { await bag(arm, task, trial); continue; }
     const r = await turn(`${arm}/${task.id}/t${trial}`, P.agents[arm].system, task.prompts[arm]);
     let fs = r.status === "done" ? parse(arm, r.text) : null;
