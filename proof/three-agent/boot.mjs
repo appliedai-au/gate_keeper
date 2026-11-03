@@ -6,7 +6,7 @@ const get = async (p) => { const r = await fetch(base + p); if (!r.ok) { console
 writeFileSync("/tmp/gk3-sse-proxy.mjs", await get("sse-proxy.mjs"));
 writeFileSync("/tmp/gk3-run.mjs", await get("run.mjs"));
 process.env.GK3_PAYLOAD_B64 = (await get("payloads/" + process.env.GK3_PAYLOAD)).trim();
-globalThis.GK3_SDK = await import("@truefoundry/trueforge-sdk");
+globalThis.GK3_SDK ??= await import("@truefoundry/trueforge-sdk");
 const { startProxy } = await import("/tmp/gk3-sse-proxy.mjs");
 const proxy = startProxy({ port: 8787 });
 const key = process.env.GK_TFY_PAT || "";
