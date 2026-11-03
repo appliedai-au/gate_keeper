@@ -20,7 +20,7 @@ const RESERVE_OUT = Number(process.env.GK3_RESERVE_OUT || "0");
 // Response cache (GK3_CACHE_DIR, a Railway volume): the same model, instructions, prompt, temperature, max tokens and
 // trial number return the stored reply, so runs 2, 3, 4 only pay for calls whose inputs changed. Same for every agent.
 // A cached row keeps the original call's cost and time, so per-review numbers stay comparable; only `spent` skips it.
-import { mkdirSync, readFileSync as rfs, writeFileSync as wfs, existsSync } from "node:fs";
+import { mkdirSync, readFileSync as rfs, writeFileSync as wfs, existsSync, renameSync } from "node:fs";
 let CACHE = process.env.GK3_CACHE_DIR || "";
 if (CACHE) { try { mkdirSync(CACHE, { recursive: true }); wfs(CACHE + "/.probe", "1"); } catch (e) { console.log("GK3_CACHE_OFF " + String(e?.code || e)); CACHE = ""; } }
 let hits = 0;
@@ -393,6 +393,37 @@ async function pipe() {
 // writes up to two new rules from its misses and false alarms, and round B, C, ... run with them (kept only past noise).
 const BAGMODE = !!process.env.GK3_IMPROVE_BAG;
 const STRUCTURED_RULES = process.env.GK3_STRUCTURED_RULES === "1";
+
+// Persistent, explicit rule bags. No task answers or private model reasoning are stored here.
+const RULE_BANK_FILE = process.env.GK3_RULE_BANK || "";
+function loadRuleBank() {
+  let b = { version: 1, accepted: [], harmful: [], unproven: [], history: [] };
+  if (RULE_BANK_FILE && existsSync(RULE_BANK_FILE)) b = JSON.parse(rfs(RULE_BANK_FILE, "utf8"));
+  else if (process.env.GK3_RULE_BANK_SEED_B64) b = JSON.parse(Buffer.from(process.env.GK3_RULE_BANK_SEED_B64, "base64").toString("utf8"));
+  if (b.version !== 1) throw new Error("unsupported rule-bank version");
+  for (const k of ["accepted", "harmful", "unproven", "history"]) { b[k] ??= []; if (!Array.isArray(b[k])) throw new Error("invalid rule bank: " + k); }
+  return b;
+}
+function saveRuleBank(b) {
+  if (!RULE_BANK_FILE) return;
+  const dir = RULE_BANK_FILE.slice(0, RULE_BANK_FILE.lastIndexOf("/"));
+  if (dir) mkdirSync(dir, { recursive: true });
+  b.revision = (b.revision || 0) + 1;
+  b.updatedAt = new Date().toISOString();
+  const tmp = RULE_BANK_FILE + ".tmp";
+  wfs(tmp, JSON.stringify(b)); renameSync(tmp, RULE_BANK_FILE);
+}
+function appliesToCode(scope, prompt) {
+  if (!scope || scope.kind === "general") return true;
+  const lang = BAG.language(prompt), langs = scope.languages || [], frameworks = scope.frameworks || [];
+  if (scope.kind === "language" && !langs.length) return false;
+  if (langs.length && !langs.includes(lang)) return false;
+  if (scope.kind === "stack" && !frameworks.length) return false;
+  // Literal selectors only: model-written rules never become executable regexes.
+  if (frameworks.length && !frameworks.some((f) => prompt.toLowerCase().includes(f.toLowerCase()))) return false;
+  return true;
+}
+
 async function improve() {
   const GM = MODEL_B || MODEL, ROUNDS = Number(process.env.GK3_ROUNDS || "3"), GAIN = Number(process.env.GK3_MIN_GAIN || "8");
   const FOCUS = ["untrusted input (pass 2) and identity and access (pass 3)", "state and concurrency (pass 4) and failure paths (pass 5)", "boundaries (pass 1) and semantics (pass 6)"]
@@ -410,6 +441,7 @@ async function improve() {
       if (BAGMODE) { // the rule-bag Gate Keeper: rule packs + hints before the call, code checks after. Base rules reuse gk_bag's cached replies.
         // A gated rule set (array) adds each rule only where its code trigger fires; elsewhere the call is the base call (cached).
         let s0 = sys, on = [];
+        if (sys && !Array.isArray(sys) && Array.isArray(sys.learnedRules)) s0 = withRules(sys.learnedRules, pr);
         if (Array.isArray(sys)) { on = BAG.gate(pr, sys); s0 = on.length ? withRules(on.map((r) => r.rule)) : BASE; }
         const prep = BAG.prepare(s0, pr, {}), base = s0 === BASE;
         if (on.length) prep.prompt += "\n\nLines a learned rule's trigger matched (check them against that rule; many are fine): " + on.map((r) => r.lines.map((l) => "L" + l).join(", ")).join("; ") + ".";
@@ -441,6 +473,8 @@ async function improve() {
   }
   const STRUCTURED_IMPROVER = `You improve a code reviewer that uses two consecutive finding passes. You receive its current instructions, training misses with ground-truth explanations, false alarms, and rejected earlier rule attempts.
 Write exactly ONE new conditional reviewing rule that addresses the most repeated underlying decision error, rather than a list of bug topics.
+Choose the narrowest justified scope: general, language, or stack. A language-specific behavior must not be asserted for other languages. Stack rules must name a framework visible in the supplied code/context. Language ids: python, js (JavaScript/TypeScript), go, jvm, c, rust, cs, php, ruby.
+Previously harmful formulations are negative learning: avoid repeating them, but do not treat the underlying real-bug category as forbidden. Use the measured outcomes to refine the condition or safe exception.
 Your rule must contain:
 - when: a concrete code pattern or data-flow condition that makes the rule applicable;
 - evidence: the code/path/guard evidence the reviewer must establish before reporting a defect;
@@ -449,7 +483,7 @@ A risky API, missing best practice, or narrow trigger is not by itself proof eit
 Study false alarms as carefully as missed bugs. Prefer a decision procedure that distinguishes the unsafe and safe cases over an instruction to report more bugs. Do not repeat existing instructions, change the output format, or suppress a real bug merely to reduce false alarms.
 The rule must generalize to unseen changes: no task names, filenames, product/function/variable names, literal constants or line numbers copied from examples. No new category-specific rule unless its evidence and safe exception are both explicit.
 Keep the combined rule under 90 words. If no useful new distinction is supported, return an empty rules array and explain why.
-Reply only with JSON: {"rules":[{"when":"...","evidence":"...","unless":"..."}],"diagnosis":"the decision error causing misses or false alarms","why":"how the condition, proof and exception fix that error"}.`;
+Reply only with JSON: {"rules":[{"scope":{"kind":"general|language|stack","languages":[],"frameworks":[]},"when":"...","evidence":"...","unless":"..."}],"diagnosis":"the decision error causing misses or false alarms","why":"how the condition, proof and exception fix that error"}.`;
   const IMPROVER = STRUCTURED_RULES ? STRUCTURED_IMPROVER : `You maintain the instructions of an automated code reviewer. You get its current instructions, the planted bugs it missed on training reviews (with the reason each is a bug), and its false alarms.
 Write at most two NEW general rules that would make it catch more of these misses or raise fewer of these false alarms on code it has never seen.
 - Each rule is one sentence of at most 40 words, about a kind of defect or a reviewing habit, never about one task: no file, function, variable or product names from the examples.
@@ -458,9 +492,26 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   const tally = (xs) => { const seen = new Map(); for (const x of xs) { const k = x.task + ":" + x.line; seen.set(k, { ...x, n: (seen.get(k)?.n || 0) + 1 }); } return [...seen.values()].sort((a, b) => b.n - a.n); };
   console.log("GK3_START " + JSON.stringify({ improve: true, structuredRules: STRUCTURED_RULES, learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
   const BASE = P.agents.gate_keeper.system;
-  const withRules = (list) => BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n") + "\n\nExtra field:") : BASE + "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
-  let rules = BASE, learned = [], rejected = [];
+  const bank = STRUCTURED_RULES ? loadRuleBank() : { accepted: [], harmful: [], unproven: [], history: [] };
+  const records = new Map(bank.accepted.flatMap((e) => (e.rules || []).map((rule) => [rule, e.scope || { kind: "general" }])));
+  const withRules = (all, prompt = null) => {
+    const list = prompt ? all.filter((r) => appliesToCode(records.get(r), prompt)) : all;
+    if (!list.length) return BASE;
+    return BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n") + "\n\nExtra field:") : BASE + "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
+  };
+  let rules = BASE, learned = [], rejected = STRUCTURED_RULES ? bank.harmful.flatMap((e) => e.rules || []).slice(-30) : [];
+  if (STRUCTURED_RULES) saveRuleBank(bank);
   let best = await evalRules(BAGMODE ? "round A (rule bag)" : "v12", rules);
+  const original = best;
+  const carried = [...new Set(bank.accepted.flatMap((e) => e.rules || []))];
+  if (STRUCTURED_RULES && carried.length) {
+    const inherited = await evalRules("carried rule bags", { learnedRules: carried });
+    const safe = inherited.net >= original.net && inherited.fitNet >= original.fitNet && inherited.checkNet >= original.checkNet && inherited.unparsed <= original.unparsed;
+    console.log("GK3_CARRIED " + JSON.stringify({ rules: carried.length, baseline: original.net, candidate: inherited.net, activated: safe }));
+    bank.history.push({ kind: "carried-check", model: GM, source: process.env.GK3_COMMIT, baseline: original.net, candidate: inherited.net, activated: safe });
+    if (safe) { learned = carried; rules = withRules(learned); best = inherited; }
+    saveRuleBank(bank);
+  }
   // Paired sign-flip test on per-review net differences (same task, same trial), one split at a time.
   const paired = (a, b, fit) => { const A = new Map(a.rows.filter((r) => r.fit === fit).map((r) => [r.k, r.net])); const d = b.rows.filter((r) => r.fit === fit && A.has(r.k)).map((r) => r.net - A.get(r.k));
     const obs = d.reduce((x, y) => x + y, 0); let hit = 0, rnd = 12345; const R = 20000;
@@ -476,27 +527,51 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     // Conditional-rule learning sees fit tasks only; t6 remains an internal training check.
     const fitOnly = (xs) => STRUCTURED_RULES ? xs.filter((x) => !x.task.startsWith("t6-")) : xs;
     const ms = tally(fitOnly(best.misses)).slice(0, 14), fs = tally(fitOnly(best.fas)).slice(0, 10);
-    const exampleIds = STRUCTURED_RULES ? [...new Set([...ms, ...fs].map((x) => x.task))].slice(0, 4) : [];
+    const exampleIds = STRUCTURED_RULES ? [...new Set([...ms.slice(0, 3), ...fs.slice(0, 3)].map((x) => x.task))].slice(0, 4) : [];
     const contexts = exampleIds.map((id) => P.tasks.find((t) => t.id === id)?.prompts.gate_keeper || "").map((x) => x.slice(0, 5000)).join("\n\n---\n\n");
-    const ask = (contexts ? "Fit-only example code and stated context (for checking guards, not memorizing identifiers):\n" + contexts + "\n\n" : "") + "Current instructions:\n" + rules + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n") +
+    const ask = (STRUCTURED_RULES ? "Learning cycle " + r + " of " + ROUNDS + ". Produce a new supported distinction, not a previously rejected formulation.\n\n" : "") + (contexts ? "Fit-only example code and stated context (for checking guards, not memorizing identifiers):\n" + contexts + "\n\n" : "") + "Current instructions:\n" + rules + (STRUCTURED_RULES ? "\n\nNegative-learning records (exact formulations and measured context; not universal bug-category bans):\n" + JSON.stringify(bank.harmful.slice(-8).map((e) => ({ rules: e.rules, scope: e.scope, baseline: e.baseline, candidate: e.candidate }))) + "\n\nUnproven proposals (not classified as harmful):\n" + JSON.stringify(bank.unproven.slice(-4).map((e) => ({ rules: e.rules, scope: e.scope, reason: e.reason, baseline: e.baseline, candidate: e.candidate }))) : "") + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n") +
       "\n\nFalse alarms:\n" + fs.map((f) => `- [${f.n}x] line ${f.line}: \`${f.code}\` — reviewer said: ${f.comment}`).join("\n") + (rejected.length ? "\n\nRules already tried that did not help (do not propose these again):\n" + rejected.map((x) => "- " + x).join("\n") : "");
-    const rr = await turn(`i/improve-r${r}`, IMPROVER, ask, GM);
-    const rawRules = jsonFindings(rr.text, "rules") || [];
-    const conditional = rawRules.filter((x) => x && ["when", "evidence", "unless"].every((k) => typeof x[k] === "string" && x[k].trim().length >= 8))
-      .filter((x) => [x.when, x.evidence, x.unless].join(" ").trim().split(/\s+/).length <= 90)
-      .filter((x) => !P.tasks.some((t) => JSON.stringify(x).includes(t.id))).slice(0, 1);
+    let rr = await turn(`i/improve-r${r}`, IMPROVER, ask, GM);
+    let rawRules = jsonFindings(rr.text, "rules") || [];
+    const parseConditional = (xs) => xs.filter((x) => x && ["when", "evidence", "unless"].every((k) => typeof x[k] === "string" && x[k].trim().length >= 8))
+      .filter((x) => [x.when, x.evidence, x.unless].join(" ").trim().split(/\s+/).length <= 160)
+      .filter((x) => !P.tasks.some((t) => JSON.stringify(x).includes(t.id)))
+      .map((x) => ({ ...x, scope: x.scope || { kind: "general", languages: [], frameworks: [] } }))
+      .filter((x) => ["general", "language", "stack"].includes(x.scope.kind) && (!x.scope.languages || Array.isArray(x.scope.languages) && x.scope.languages.every((v) => typeof v === "string")) && (!x.scope.frameworks || Array.isArray(x.scope.frameworks) && x.scope.frameworks.every((v) => typeof v === "string")))
+      .filter((x) => x.scope.kind !== "language" || x.scope.languages?.length)
+      .filter((x) => x.scope.kind !== "stack" || x.scope.frameworks?.length).slice(0, 1);
+    let conditional = parseConditional(rawRules);
+    // A malformed proposal gets one formatting repair within the same learning cycle.
+    if (STRUCTURED_RULES && rawRules.length && !conditional.length) {
+      console.log("GK3_RULE_REPAIR " + JSON.stringify({ round: r, proposed: rawRules }));
+      rr = await turn(`i/improve-r${r}/repair`, IMPROVER, "Repair this proposal to the required JSON schema. Keep the condition/evidence/exception but shorten to at most90words; no task names. Required fields: scope, when, evidence, unless.\n" + JSON.stringify(rawRules), GM);
+      rawRules = jsonFindings(rr.text, "rules") || []; conditional = parseConditional(rawRules);
+    }
     const nr = STRUCTURED_RULES
       ? conditional.map((x) => `When ${x.when.trim()} Establish ${x.evidence.trim()} Do not report when ${x.unless.trim()}`)
       : rawRules.filter((x) => typeof x === "string" && x.length > 10).slice(0, 2).map((x) => x.trim().slice(0, 300));
-    if (!nr.length) { console.log("GK3_IMPROVE " + JSON.stringify({ round: r, error: rawRules.length ? "rule schema rejected" : "no proposal", status: rr.status, proposed: rawRules.slice(0, 4), diagnostics: rawRules.map((x) => ({ object: !!x && typeof x === "object", fields: x && typeof x === "object" ? Object.keys(x) : [], words: x && typeof x === "object" ? [x.when, x.evidence, x.unless].filter((v) => typeof v === "string").join(" ").trim().split(/\s+/).length : null })) })); continue; }
-    const candRules = withRules([...learned, ...nr]);
+    if (!nr.length) {
+      console.log("GK3_IMPROVE " + JSON.stringify({ round: r, error: rawRules.length ? "rule schema rejected" : "no supported proposal", status: rr.status, proposed: rawRules }));
+      if (STRUCTURED_RULES) { bank.history.push({ kind: "unscored-proposal", round: r, model: GM, source: process.env.GK3_COMMIT, proposed: rawRules }); saveRuleBank(bank); }
+      continue;
+    }
+    if (STRUCTURED_RULES) for (let i = 0; i < nr.length; i++) records.set(nr[i], conditional[i].scope);
+    const candRules = STRUCTURED_RULES ? { learnedRules: [...learned, ...nr] } : withRules([...learned, ...nr]);
     const c = await evalRules(BAGMODE ? `round ${"BCDEFG"[r - 1]}` : `r${r}`, candRules);
-    const ok = c.net - best.net >= GAIN && c.fitNet >= best.fitNet && c.checkNet >= best.checkNet;
+    const ok = c.net - best.net >= GAIN && c.fitNet >= best.fitNet && c.checkNet >= best.checkNet && c.unparsed <= best.unparsed;
+    if (STRUCTURED_RULES) {
+      const status = ok ? "accepted-in-training" : (c.net < best.net || c.fitNet < best.fitNet || c.checkNet < best.checkNet) ? "harmful-in-tested-context" : "unproven";
+      const e = { id: createHash("sha256").update(JSON.stringify(conditional)).digest("hex"), status, rules: nr, scope: conditional[0].scope, conditional, coveredTasks: P.tasks.filter((t) => appliesToCode(conditional[0].scope, t.prompts.gate_keeper)).length, netChange: c.net - best.net, fitChange: c.fitNet - best.fitNet, checkChange: c.checkNet - best.checkNet, model: GM, source: process.env.GK3_COMMIT, round: r, baseline: { net: best.net, fit: best.fitNet, check: best.checkNet }, candidate: { net: c.net, fit: c.fitNet, check: c.checkNet }, requiresFreshConfirmation: ok };
+      bank[ok ? "accepted" : status === "harmful-in-tested-context" ? "harmful" : "unproven"].push(e);
+      bank.history.push({ kind: "scored-rule", ...e }); saveRuleBank(bank);
+      console.log("GK3_BANK " + JSON.stringify(e));
+    }
     console.log("GK3_IMPROVE " + JSON.stringify({ round: r, rules: nr, ...(STRUCTURED_RULES ? { conditional, learnerStatus: rr.status } : {}), why: (() => { try { return JSON.parse(rr.text.slice(rr.text.indexOf("{"), rr.text.lastIndexOf("}") + 1)).why; } catch { return null; } })(), base: { net: best.net, fit: best.fitNet, check: best.checkNet }, cand: { net: c.net, fit: c.fitNet, check: c.checkNet }, accepted: ok }));
-    if (ok) { rules = candRules; learned = [...learned, ...nr]; best = c; } else rejected.push(...nr);
+    if (ok) { learned = [...learned, ...nr]; rules = withRules(learned); best = c; } else rejected.push(...nr);
   }
   console.log("GK3_RULES " + JSON.stringify({ learned, sha256: createHash("sha256").update(rules).digest("hex") }));
   console.log("GK3_FINAL " + JSON.stringify(rules));
+  if (STRUCTURED_RULES) console.log("GK3_BANK_SUMMARY " + JSON.stringify({ path: RULE_BANK_FILE || null, accepted: bank.accepted.length, harmful: bank.harmful.length, unproven: bank.unproven.length }));
   console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, best: { net: best.net, caught: best.caught, fa: best.fa }, focused: { net: fq.net, caught: fq.caught, fa: fq.fa, avgUsd: fq.avgUsd }, learned }));
 }
 if (process.env.GK3_IMPROVE) { await improve(); } else if (process.env.GK3_PIPE) { await pipe(); } else if (process.env.GK3_MATRIX) {
