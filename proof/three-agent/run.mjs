@@ -14,8 +14,8 @@ let spent = 0, reserved = 0, calls = 0;
 // tool, and a call to it ends the turn with no answer (seen in practice run 2). Everything else stays stock.
 const RUNTIME = { askUserQuestions: { enabled: false } };
 const est = (chars, out) => ((chars / 3 + 3000) * PRICE[0] + out * PRICE[1]) / 1e6;
-async function turn(label, instructions, prompt, model = MODEL) {
-  const { temperature, maxTokens } = P.params;
+async function turn(label, instructions, prompt, model = MODEL, tempOverride = null) {
+  const { maxTokens } = P.params; const temperature = tempOverride ?? P.params.temperature;
   const reserve = est(instructions.length + prompt.length, maxTokens);
   if (spent + reserved + reserve > CAP) return { label, status: "BUDGET_STOP", text: "" };
   reserved += reserve; calls++;
@@ -177,6 +177,75 @@ async function worker() {
     console.log("GK3_RAW " + `${arm}/${task.id}/t${trial} ` + JSON.stringify(r.text.slice(0, 6000)));
   }
 }
+// Gate Keeper design search (GK3_MATRIX=1): one shared set of generations and judge calls per task and trial,
+// then 20 Gate Keeper configurations are formed from them and each is scored by the same score().
+// Cost per config = the generations it uses plus the full cost of any judge call it uses (an upper bound).
+if (process.env.GK3_MATRIX) {
+  const M = { ds: MODEL, oss: "tfy-direct/gpt-oss-120b", glm: "tfy-direct/glm-5.3-flash", mimo: "tfy-direct/mimo-v2.6-flash" };
+  const G = { ds: ["gk_v10", "ds"], ds2: ["gk_v10", "ds"], ds0: ["gk_v10", "ds", 0], ds8: ["gk_v8", "ds"], oss: ["gk_v10", "oss"], glm: ["gk_v10", "glm"], mimo: ["gk_v10", "mimo"] };
+  const JM = ["ds", "oss", "glm"];
+  const C = [
+    ["ds", ["ds"], "one"], ["oss", ["oss"], "one"], ["glm", ["glm"], "one"], ["mimo", ["mimo"], "one"], ["ds_t0", ["ds0"], "one"], ["ds_v8", ["ds8"], "one"],
+    ["ds+oss agree", ["ds", "oss"], "agree"], ["ds+oss duo", ["ds", "oss"], "duo"], ["ds+glm duo", ["ds", "glm"], "duo"], ["ds+mimo duo", ["ds", "mimo"], "duo"],
+    ["oss+glm duo", ["oss", "glm"], "duo"], ["ds+oss+glm 2of3", ["ds", "oss", "glm"], "maj2"], ["ds+oss+glm 2of3+judge", ["ds", "oss", "glm"], "maj2j"],
+    ["ds checked by oss", ["ds"], "check:oss"], ["ds self-check", ["ds"], "check:ds"], ["oss checked by ds", ["oss"], "check:ds"],
+    ["ds x2 union checked by oss", ["ds", "ds2"], "union:oss"], ["ds+oss union checked by glm", ["ds", "oss"], "union:glm"],
+    ["4-model 2of4", ["ds", "oss", "glm", "mimo"], "maj2"], ["ds_v8+oss duo", ["ds8", "oss"], "duo"],
+  ];
+  const near = (f, g) => g.start <= f.end + 1 && f.start <= g.end + 1;
+  const toSpans = (r) => r.status === "done" ? (jsonFindings(r.text) || null)?.map((x) => { const l = Number(x?.line); return Number.isInteger(l) ? { start: l, end: l, comment: String(x?.comment || "").slice(0, 200) } : null; }).filter(Boolean) ?? null : null;
+  const JUDGE = `You check another reviewer's findings on one change. For each finding, decide if it is a real defect a careful senior engineer would block the merge for.
+A finding is real only if you can name, from the code and context shown, the realistic input or state that triggers it and the wrong result. Style, speculation and hypotheticals are not real.
+Reply with only this JSON: {"verdicts":[{"line":12,"real":true,"trigger":"<= 15 words"}]}, one entry per finding, same line numbers.`;
+  const mrows = [];
+  const mjobs = [];
+  for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) mjobs.push({ trial, task });
+  console.log("GK3_START " + JSON.stringify({ mode: "matrix", models: M, configs: C.length, tasks: P.tasks.length, trials: TRIALS, cap: CAP, sha256: P.sha256 }));
+  async function one({ trial, task }) {
+    const id = `${task.id}/t${trial}`;
+    const gk = Object.keys(G), gr = await Promise.all(gk.map((k) => turn(`m/${id}/${k}`, P.agents[G[k][0]].system, task.prompts.gate_keeper, M[G[k][1]], G[k][2] ?? null)));
+    const gen = Object.fromEntries(gk.map((k, i) => [k, { r: gr[i], f: toSpans(gr[i]) }]));
+    const all = []; for (const k of gk) for (const f of gen[k].f || []) if (!all.some((g) => g.start === f.start)) all.push(f);
+    const jr = await Promise.all(JM.map((j) => all.length ? turn(`m/${id}/judge-${j}`, JUDGE, task.prompts.gate_keeper + "\n\nFindings to check:\n" + all.map((f) => `- line ${f.start}: ${f.comment}`).join("\n"), M[j]) : null));
+    const jv = Object.fromEntries(JM.map((j, i) => { const r = jr[i]; const v = r?.status === "done" ? (jsonFindings(r.text, "verdicts") || []) : [];
+      return [j, { ok: new Set(v.filter((x) => x?.real === true).map((x) => Number(x.line))), cost: r?.cost || 0, seconds: r?.seconds || 0, n: v.length }]; }));
+    console.log("GK3_GEN " + id + " " + JSON.stringify(Object.fromEntries(gk.map((k) => [k, { st: gen[k].r.status, lines: (gen[k].f || []).map((f) => f.start), cost: gen[k].r.cost, s: gen[k].r.seconds, err: gen[k].r.error }]))) + " judges " + JSON.stringify(Object.fromEntries(JM.map((j) => [j, { n: jv[j].n, ok: [...jv[j].ok], cost: jv[j].cost }]))));
+    for (const [name, use, how] of C) {
+      const fs = use.map((k) => gen[k].f).filter(Boolean);
+      let out = null, judges = [];
+      if (fs.length) {
+        const count = (f) => fs.filter((x) => x.some((g) => near(f, g))).length;
+        const uni = []; for (const x of fs) for (const f of x) if (!uni.some((g) => near(f, g) && g.start === f.start)) uni.push(f);
+        if (how === "one") out = fs[0];
+        else if (how === "agree") out = fs.length < 2 ? fs[0] : fs[0].filter((f) => count(f) >= 2);
+        else if (how === "maj2") out = uni.filter((f) => count(f) >= 2);
+        else if (how === "duo" || how === "maj2j") {
+          out = []; const need = how === "duo" ? 2 : 2;
+          for (let i = 0; i < fs.length; i++) for (const f of fs[i]) { if (out.some((g) => near(f, g))) continue;
+            if (count(f) >= need) { out.push(f); continue; }
+            const judge = how === "duo" ? G[use[1 - i]][1] : (G[use[i]][1] === "ds" ? "oss" : "ds");
+            if (!judges.includes(judge)) judges.push(judge);
+            if (jv[judge].ok.has(f.start)) out.push(f); }
+        } else if (how.startsWith("check:") || how.startsWith("union:")) {
+          const j = how.split(":")[1]; judges = [j]; out = (how.startsWith("check:") ? fs[0] : uni).filter((f) => jv[j].ok.has(f.start));
+        }
+      }
+      const gens = use.map((k) => gen[k].r);
+      const cost = gens.reduce((a, r) => a + (r.cost || 0), 0) + judges.reduce((a, j) => a + jv[j].cost, 0);
+      const seconds = Math.max(...gens.map((r) => r.seconds || 0)) + (judges.length ? Math.max(...judges.map((j) => jv[j].seconds)) : 0);
+      const row = { arm: name, task: task.id, trial, ...score(task.expected, out, task.benign || []), cost, seconds };
+      mrows.push(row); console.log("GK3_ROW " + JSON.stringify(row));
+    }
+  }
+  const q = [...mjobs];
+  await Promise.all(Array.from({ length: CONC }, async () => { while (q.length) await one(q.shift()); }));
+  const sum = C.map(([name]) => { const rs = mrows.filter((r) => r.arm === name); const n = rs.length || 1;
+    const caught = rs.reduce((a, r) => a + r.caught, 0), fa = rs.reduce((a, r) => a + r.extra, 0);
+    return { name, caught, of: rs.reduce((a, r) => a + r.of, 0), fa, net: caught - fa, unparsed: rs.filter((r) => !r.parsed).length,
+      avgS: Math.round(10 * rs.reduce((a, r) => a + r.seconds, 0) / n) / 10, avgUsd: Math.round(1e6 * rs.reduce((a, r) => a + r.cost, 0) / n) / 1e6 }; }).sort((a, b) => b.net - a.net);
+  for (const x of sum) console.log("GK3_MATRIX " + JSON.stringify(x));
+  console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6 }));
+} else {
 console.log("GK3_START " + JSON.stringify({ runtime: RUNTIME, model: MODEL, set: P.set, arms: ARMS, trials: TRIALS, tasks: P.tasks.length, cap: CAP, params: P.params, sha256: P.sha256 }));
 await Promise.all(Array.from({ length: CONC }, worker));
 const summary = Object.fromEntries([...new Set(rows.map((r) => r.arm))].map((a) => { const rs = rows.filter((r) => r.arm === a); const n = rs.length || 1;
@@ -185,3 +254,4 @@ const summary = Object.fromEntries([...new Set(rows.map((r) => r.arm))].map((a) 
     unparsed: rs.filter((r) => !r.parsed).length, avgSeconds: Math.round(10 * rs.reduce((s, r) => s + (r.seconds || 0), 0) / n) / 10,
     avgCostUsd: Math.round(1e6 * rs.reduce((s, r) => s + (r.cost || 0), 0) / n) / 1e6 }]; }));
 console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, summary }));
+}
