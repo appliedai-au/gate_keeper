@@ -388,12 +388,12 @@ async function pipe() {
 // Gate Keeper's improve step (GK3_IMPROVE=1): Gate Keeper rewrites its own rules from its training misses.
 // Each round: review the training tasks with the current rules (quote + code merge), show the improver the missed
 // bugs (with their reasons) and the false alarms, take at most two new general rules, re-run, and keep them only
-// if net rises by GK3_MIN_GAIN or more and neither split (t4-t5 fit, t6 check) gets worse. Scored by the same score().
+// if net rises by GK3_MIN_GAIN or more (default +1 fault-equivalent) and neither split (t4-t5 fit, t6 check) gets worse. Scored by the same score().
 // GK3_IMPROVE_BAG=1: the same loop on the rule-bag Gate Keeper. Round A = current rules; after each round Gate Keeper
 // writes up to two new rules from its misses and false alarms, and round B, C, ... run with them (kept only past noise).
 const BAGMODE = !!process.env.GK3_IMPROVE_BAG;
 async function improve() {
-  const GM = MODEL_B || MODEL, ROUNDS = Number(process.env.GK3_ROUNDS || "3"), GAIN = Number(process.env.GK3_MIN_GAIN || "8");
+  const GM = MODEL_B || MODEL, ROUNDS = Number(process.env.GK3_ROUNDS || "3"), GAIN = Number(process.env.GK3_MIN_GAIN ?? "1");
   const FOCUS = ["untrusted input (pass 2) and identity and access (pass 3)", "state and concurrency (pass 4) and failure paths (pass 5)", "boundaries (pass 1) and semantics (pass 6)"]
     .map((x) => `\n\nThis pass: hunt only ${x}, plus any rule stated in the context that the code breaks. Other defect types are covered by other passes; leave them out.`);
   const toSpans = (r) => r.status === "done" ? (jsonFindings(r.text) || null)?.map((x) => { const l = Number(x?.line); return Number.isInteger(l) ? { start: l, end: l, comment: String(x?.comment || "").slice(0, 200) } : null; }).filter(Boolean) ?? null : null;
@@ -474,7 +474,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     const candRules = withRules([...learned, ...nr]);
     const c = await evalRules(BAGMODE ? `round ${"BCDEFG"[r - 1]}` : `r${r}`, candRules);
     const ok = c.net - best.net >= GAIN && c.fitNet >= best.fitNet && c.checkNet >= best.checkNet;
-    console.log("GK3_IMPROVE " + JSON.stringify({ round: r, rules: nr, why: (() => { try { return JSON.parse(rr.text.slice(rr.text.indexOf("{"), rr.text.lastIndexOf("}") + 1)).why; } catch { return null; } })(), base: { net: best.net, fit: best.fitNet, check: best.checkNet }, cand: { net: c.net, fit: c.fitNet, check: c.checkNet }, accepted: ok }));
+    console.log("GK3_IMPROVE " + JSON.stringify({ round: r, rules: nr, why: (() => { try { return JSON.parse(rr.text.slice(rr.text.indexOf("{"), rr.text.lastIndexOf("}") + 1)).why; } catch { return null; } })(), base: { net: best.net, caught: best.caught, fa: best.fa, fit: best.fitNet, check: best.checkNet }, cand: { net: c.net, caught: c.caught, fa: c.fa, fit: c.fitNet, check: c.checkNet }, delta: { net: c.net - best.net, caught: c.caught - best.caught, falseAlarms: c.fa - best.fa, fit: c.fitNet - best.fitNet, check: c.checkNet - best.checkNet }, accepted: ok }));
     if (ok) { rules = candRules; learned = [...learned, ...nr]; best = c; } else rejected.push(...nr);
   }
   console.log("GK3_RULES " + JSON.stringify({ learned, sha256: createHash("sha256").update(rules).digest("hex") }));
