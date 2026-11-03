@@ -181,7 +181,7 @@ async function worker() {
 // then 20 Gate Keeper configurations are formed from them and each is scored by the same score().
 // Cost per config = the generations it uses plus the full cost of any judge call it uses (an upper bound).
 if (process.env.GK3_MATRIX) {
-  const M = { ds: MODEL, oss: "tfy-direct/gpt-oss-120b", glm: "tfy-direct/glm-5.3-flash", mimo: "tfy-direct/mimo-v2.6-flash" };
+  const M = { ds: MODEL, oss: "tfy-direct/gpt-oss-120b", glm: "tfy-direct/glm-5-3-flash", mimo: "tfy-direct/mimo-v2-6-flash" };
   const G = { ds: ["gk_v10", "ds"], ds2: ["gk_v10", "ds"], ds0: ["gk_v10", "ds", 0], ds8: ["gk_v8", "ds"], oss: ["gk_v10", "oss"], glm: ["gk_v10", "glm"], mimo: ["gk_v10", "mimo"] };
   const JM = ["ds", "oss", "glm"];
   const C = [

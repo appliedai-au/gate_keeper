@@ -26,7 +26,7 @@ if (key.length < 20) { console.error("GK3_PAT_MISSING"); process.exit(2); }
 const tf = new globalThis.GK3_SDK.TrueForge({ baseUrl: process.env.TRUEFORGE_BASE_URL, token: process.env.TRUEFORGE_TOKEN, timeoutInSeconds: 60 });
 await tf.settings.modelProviders.createOrUpdate({ manifest: { type: "custom", name: "tfy-direct",
   baseUrl: "http://" + privateHost + ":8787/" + prefix + "/api/llm", auth: { apiKey: key },
-  models: [...new Set([m, m2, ...extra].filter(Boolean))].map((x) => ({ name: x, modelId: "tfy-managed/" + x, properties: {} })) } });
+  models: [...new Set([m, m2, ...extra].filter(Boolean))].map((x) => ({ name: x.replace(/\./g, "-"), modelId: "tfy-managed/" + x, properties: {} })) } });
 console.log("GK3_BOOT " + c + " " + process.env.GK3_PAYLOAD + " model " + process.env.GK3_MODEL + (m2 ? " + " + process.env.GK3_MODEL_B : "") + " via sse-proxy");
 await import("file:///tmp/gk3-run.mjs");
 console.log("GK3_PROXY " + JSON.stringify(proxy.stats()));
