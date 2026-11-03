@@ -488,7 +488,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     const nr = STRUCTURED_RULES
       ? conditional.map((x) => `When ${x.when.trim()} Establish ${x.evidence.trim()} Do not report when ${x.unless.trim()}`)
       : rawRules.filter((x) => typeof x === "string" && x.length > 10).slice(0, 2).map((x) => x.trim().slice(0, 300));
-    if (!nr.length) { console.log("GK3_IMPROVE " + JSON.stringify({ round: r, error: "no rules", status: rr.status })); continue; }
+    if (!nr.length) { console.log("GK3_IMPROVE " + JSON.stringify({ round: r, error: rawRules.length ? "rule schema rejected" : "no proposal", status: rr.status, proposed: rawRules.slice(0, 4), diagnostics: rawRules.map((x) => ({ object: !!x && typeof x === "object", fields: x && typeof x === "object" ? Object.keys(x) : [], words: x && typeof x === "object" ? [x.when, x.evidence, x.unless].filter((v) => typeof v === "string").join(" ").trim().split(/\s+/).length : null })) })); continue; }
     const candRules = withRules([...learned, ...nr]);
     const c = await evalRules(BAGMODE ? `round ${"BCDEFG"[r - 1]}` : `r${r}`, candRules);
     const ok = c.net - best.net >= GAIN && c.fitNet >= best.fitNet && c.checkNet >= best.checkNet;
