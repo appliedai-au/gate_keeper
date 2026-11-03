@@ -15,7 +15,7 @@ const proposal = (kind = 'general', bad = false) => ({ scope: { kind, languages:
   unless: 'A working earlier guard prevents the wrong result on every path.' });
 const payload = { set: 'train-synthetic', params: { temperature: 0.2, maxTokens: 200 }, agents: { gate_keeper: { system: 'Base reviewer\n\nExtra field: include quote.' } },
   tasks: [['t4-synthetic', 'python'], ['t6-synthetic', 'typescript']].map(([id, lang]) => ({ id, expected: [10, 20], benign: [],
-    why: [{ line: 10, why: 'Synthetic defect one' }, { line: 20, why: 'Synthetic defect two' }],
+    why: [{ line: 10, why: 'Synthetic defect one ' + (id.startsWith('t6-') ? 'CHECK_ONLY_TRUTH' : 'FIT_ONLY_TRUTH') }, { line: 20, why: 'Synthetic defect two' }],
     prompts: { gate_keeper: 'Context: synthetic operations can fail.\n```' + lang + '\n10 | danger()\n20 | danger2()\n99 | safe()\n```' } })) };
 function run(bankFile, rule = proposal(), extra = {}) {
   const source = `
@@ -23,11 +23,11 @@ function run(bankFile, rule = proposal(), extra = {}) {
     globalThis.fetch = () => { throw new Error('network forbidden'); };
     globalThis.GK3_SDK = { TrueForge: class { sessions = {
       create: async ({agent,metadata}) => { const id = String(++seq); sessions.set(id,{sys:agent.spec.instructions,label:metadata.label}); return {data:{id}}; },
-      createTurn: async (id) => {
-        const s = sessions.get(id); let text;
-        if (s.label.startsWith('i/improve-')) text = JSON.stringify({rules:[${JSON.stringify(rule)}],why:'Synthetic rule proposal'});
-        else { console.log('MOCK_REQUEST '+JSON.stringify({label:s.label,good:s.sys.includes('TEST_GOOD_RULE'),bad:s.sys.includes('TEST_BAD_RULE')}));
-          const fs = [{line:10,quote:'danger()',comment:'Synthetic defect'}];
+      createTurn: async (id, {input}) => {
+        const s = sessions.get(id); let text; const prompt = input.map(x => x.content).join('\\n');
+        if (s.label.startsWith('i/improve-')) { console.log('MOCK_LEARNER '+JSON.stringify({label:s.label,instructions:s.sys,prompt})); text = JSON.stringify({rules:[${JSON.stringify(rule)}],why:'Synthetic rule proposal'}); }
+        else { console.log('MOCK_REQUEST '+JSON.stringify({label:s.label,instructions:s.sys,prompt,good:s.sys.includes('TEST_GOOD_RULE'),bad:s.sys.includes('TEST_BAD_RULE')}));
+          const fs = s.sys.includes('TEST_BAD_RULE') ? [] : [{line:10,quote:'danger()',comment:'Synthetic defect'}];
           if(s.sys.includes('TEST_GOOD_RULE')) fs.push({line:20,quote:'danger2()',comment:'Second synthetic defect'});
           if(s.sys.includes('TEST_BAD_RULE')) fs.push({line:99,quote:'safe()',comment:'Synthetic false alarm'});
           text=JSON.stringify({findings:fs}); }
@@ -76,4 +76,32 @@ test('language-scoped rules affect only matching code', () => fixture((path) => 
 test('malformed seed fails before any review request', () => fixture((path) => {
   const r = run(path, proposal(), { GK3_RULE_BANK_SEED_B64: Buffer.from('{}{}').toString('base64') });
   assert.notEqual(r.status, 0); assert.equal(records(r, 'MOCK_REQUEST').length, 0);
+}));
+
+test('delta learning feeds fit-only regressions into the next learner, never reviewer calls', () => fixture((path) => {
+  const r = run(path, proposal('general', true), { GK3_DELTA_LEARNING: '1', GK3_ROUNDS: '2' });
+  success(r);
+  const learners = records(r, 'MOCK_LEARNER');
+  assert.equal(learners.length, 2);
+  assert.ok(learners[1].prompt.includes('FIT_ONLY_TRUTH'));
+  assert.ok(learners[1].prompt.includes('lostRealBugs'));
+  assert.ok(learners[1].prompt.includes('addedFalseAlarms'));
+  assert.ok(learners.every((x) => !x.prompt.includes('CHECK_ONLY_TRUTH')));
+  const reviews = records(r, 'MOCK_REQUEST');
+  assert.ok(reviews.length > 0);
+  for (const x of reviews) {
+    const call = x.instructions + x.prompt;
+    for (const secret of ['FIT_ONLY_TRUTH', 'CHECK_ONLY_TRUTH', 'Measured changes caused by recent proposals', 'lostRealBugs', 'addedFalseAlarms'])
+      assert.ok(!call.includes(secret), 'learner diagnostic leaked into reviewer: ' + secret);
+  }
+  const bank = JSON.parse(readFileSync(path, 'utf8'));
+  assert.equal(bank.accepted.length, 0);
+  assert.equal(bank.harmful.length, 2);
+  for (const e of bank.harmful) {
+    assert.ok(e.fitFeedback.lostRealBugs.some((x) => x.why.includes('FIT_ONLY_TRUTH') && x.occurrencesChanged === 1));
+    assert.ok(e.fitFeedback.addedFalseAlarms.some((x) => x.line === 99 && x.occurrencesChanged === 1));
+    for (const key of ['lostRealBugs', 'recoveredRealBugs', 'addedFalseAlarms', 'removedFalseAlarms'])
+      assert.ok(e.fitFeedback[key].every((x) => x.task.startsWith('t4-')));
+  }
+  assert.equal(records(r, 'GK3_SUMMARY')[0].best.net, 2);
 }));
