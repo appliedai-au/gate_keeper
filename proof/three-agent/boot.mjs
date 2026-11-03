@@ -20,7 +20,7 @@ process.env.GK3_MODEL = "tfy-direct/" + m;
 const m2 = (process.env.GK3_MODEL_B || "").replace(/^[^/]+\//, "");
 if (m2) process.env.GK3_MODEL_B = "tfy-direct/" + m2.replace(/\./g, "-");
 // Matrix mode registers every model it uses.
-const extra = process.env.GK3_MATRIX ? ["gpt-oss-120b", "glm-5.3-flash", "mimo-v2.6-flash"] : [];
+const extra = process.env.GK3_MATRIX ? ["gpt-oss-120b", "glm-5.3-flash", "mimo-v2.6-flash"] : process.env.GK3_PIPE ? ["glm-5.3-flash", "mimo-v2.6-flash"] : [];
 const key = process.env.GK_TFY_PAT || "";
 if (key.length < 20) { console.error("GK3_PAT_MISSING"); process.exit(2); }
 const tf = new globalThis.GK3_SDK.TrueForge({ baseUrl: process.env.TRUEFORGE_BASE_URL, token: process.env.TRUEFORGE_TOKEN, timeoutInSeconds: 60 });

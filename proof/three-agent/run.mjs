@@ -206,15 +206,19 @@ async function pipe() {
       if (best !== null && Math.abs(best - f.start) <= 8) { moved++; return { ...f, start: best, end: best }; } return f; });
     return { out, moved };
   }
-  const C = ["v10", "v10+merge", "focused x3", "v10+second look", "quote anchor", "quote anchor+merge", "v10+focused x3", "v10+second look+quote"];
+  const MM = "tfy-direct/mimo-v2-6-flash";
+  const C = ["v10", "v10+merge", "focused x3", "v10+second look", "quote anchor", "quote anchor+merge", "v10+focused x3", "v10+second look+quote",
+    "mimo", "mimo+merge", "glm+mimo union+merge", "glm+mimo agree", "glm+mimo+second look union+merge", "glm+mimo+focused union+merge"];
   const prow = [], q = [];
   for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) q.push({ trial, task });
   async function one({ trial, task }) {
     const id = `p/${task.id}/t${trial}`, pr = task.prompts.gate_keeper;
+    const mimoP = turn(id + "/mimo", sys, pr, MM);
     const [base, qa, ...foc] = await Promise.all([turn(id + "/base", sys, pr, GM), turn(id + "/quote", QSYS, pr, GM), ...FOCUS.map((x, i) => turn(id + "/focus" + i, sys, pr + x, GM))]);
     const fb = toSpans(base);
     const seen = (fb || []).map((f) => `- line ${f.start}: ${f.comment}`).join("\n") || "- (none)";
     const gap = await turn(id + "/gap", sys, pr + "\n\nA first review of this change already reported:\n" + seen + "\nReport only real defects it missed, on other lines. Do not repeat or rephrase its findings. If it missed nothing, reply with the checklist and {\"findings\":[]}.", GM);
+    const mi = await mimoP, fm = toSpans(mi);
     const fq = toSpans(qa), ff = foc.map(toSpans), fg = toSpans(gap), aq = anchor(pr, fq);
     const uni = (...xs) => xs.some(Boolean) ? xs.filter(Boolean).flat() : null;
     const foundF = uni(...ff);
@@ -227,8 +231,14 @@ async function pipe() {
       "quote anchor+merge": [merge(aq?.out ?? null), qa.cost, qa.seconds],
       "v10+focused x3": [merge(uni(fb, foundF)), (base.cost || 0) + foc.reduce((a, r) => a + (r.cost || 0), 0), Math.max(base.seconds || 0, ...foc.map((r) => r.seconds || 0))],
       "v10+second look+quote": [merge(uni(fb, fg, aq?.out ?? null)), (base.cost || 0) + (gap.cost || 0) + (qa.cost || 0), (base.seconds || 0) + (gap.seconds || 0)],
+      "mimo": [fm, mi.cost, mi.seconds],
+      "mimo+merge": [merge(fm), mi.cost, mi.seconds],
+      "glm+mimo union+merge": [merge(uni(fb, fm)), (base.cost || 0) + (mi.cost || 0), Math.max(base.seconds || 0, mi.seconds || 0)],
+      "glm+mimo agree": [fb && fm ? merge(fb.filter((f) => fm.some((g) => Math.abs(g.start - f.start) <= 1))) : merge(fb || fm), (base.cost || 0) + (mi.cost || 0), Math.max(base.seconds || 0, mi.seconds || 0)],
+      "glm+mimo+second look union+merge": [merge(uni(fb, fg, fm)), (base.cost || 0) + (gap.cost || 0) + (mi.cost || 0), Math.max((base.seconds || 0) + (gap.seconds || 0), mi.seconds || 0)],
+      "glm+mimo+focused union+merge": [merge(uni(fb, foundF, fm)), (base.cost || 0) + foc.reduce((a, r) => a + (r.cost || 0), 0) + (mi.cost || 0), Math.max(base.seconds || 0, mi.seconds || 0, ...foc.map((r) => r.seconds || 0))],
     };
-    console.log("GK3_GEN " + id.slice(2) + " " + JSON.stringify({ base: fb?.map((f) => f.start), quote: fq?.map((f) => [f.start, f.quote.slice(0, 60)]), anchored: aq?.out.map((f) => f.start), moved: aq?.moved, focus: ff.map((x) => x?.map((f) => f.start)), gap: fg?.map((f) => f.start), st: [base, qa, gap, ...foc].map((r) => r.status) }));
+    console.log("GK3_GEN " + id.slice(2) + " " + JSON.stringify({ base: fb?.map((f) => f.start), quote: fq?.map((f) => [f.start, f.quote.slice(0, 60)]), anchored: aq?.out.map((f) => f.start), moved: aq?.moved, focus: ff.map((x) => x?.map((f) => f.start)), gap: fg?.map((f) => f.start), mimo: fm?.map((f) => f.start), mimoErr: mi.error, st: [base, qa, gap, mi, ...foc].map((r) => r.status) }));
     for (const name of C) { const [fs, cost, seconds] = sets[name];
       const row = { arm: name, task: task.id, trial, ...score(task.expected, fs, task.benign || []), cost, seconds }; prow.push(row); console.log("GK3_ROW " + JSON.stringify(row)); }
   }
