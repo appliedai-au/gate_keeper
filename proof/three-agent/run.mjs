@@ -427,7 +427,7 @@ async function improve() {
         const parts = rs.map(toSpans); fs = parts.some(Boolean) ? merge(parts.filter(Boolean).flat()) : null;
       }
       const sc = score(task.expected, fs, task.benign || []), code = codeOf(task);
-      res.rows.push({ k: `${task.id}/t${trial}`, fit: isFit(task), net: sc.caught - sc.extra });
+      res.rows.push({ k: `${task.id}/t${trial}`, fit: isFit(task), net: sc.caught - sc.extra, parsed: !!sc.parsed });
       res.caught += sc.caught; res.fa += sc.extra; res[isFit(task) ? "fit" : "val"] += sc.caught - sc.extra; res.n++; if (!sc.parsed) res.unparsed++;
       res.cost += rs.reduce((a, r) => a + (r.cost || 0), 0); res.sec += BAGMODE ? rs.reduce((a, r) => a + (r.seconds || 0), 0) : Math.max(...rs.map((r) => r.seconds || 0));
       if (fs) { for (const w of task.why) if (!fs.some((f) => Math.abs(f.start - w.line) <= 1)) res.misses.push({ task: task.id, line: w.line, code: code.get(w.line) || "", why: w.why });
@@ -450,10 +450,14 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   let rules = BASE, learned = [], rejected = [];
   let best = await evalRules(BAGMODE ? "round A (rule bag)" : "v12", rules);
   // Paired sign-flip test on per-review net differences (same task, same trial), one split at a time.
-  const paired = (a, b, fit) => { const A = new Map(a.rows.filter((r) => r.fit === fit).map((r) => [r.k, r.net])); const d = b.rows.filter((r) => r.fit === fit && A.has(r.k)).map((r) => r.net - A.get(r.k));
-    const obs = d.reduce((x, y) => x + y, 0); let hit = 0, rnd = 12345; const R = 20000;
-    for (let i = 0; i < R; i++) { let t = 0; for (const x of d) { rnd = (rnd * 1103515245 + 12345) % 2147483648; t += rnd & 1024 ? x : -x; } if (t >= obs) hit++; }
-    return { diff: obs, reviews: d.length, changed: d.filter((x) => x).length, up: d.filter((x) => x > 0).length, down: d.filter((x) => x < 0).length, p: Math.round(1e4 * (hit + 1) / (R + 1)) / 1e4 }; };
+  // Pairs where either side failed or did not parse are left out. Exact over all sign vectors of the non-zero
+  // differences when there are at most 20 of them; otherwise 20000 draws from mulberry32 (exact 32-bit math).
+  const paired = (a, b, fit) => { const A = new Map(a.rows.filter((r) => r.fit === fit && r.parsed).map((r) => [r.k, r.net])); const d = b.rows.filter((r) => r.fit === fit && r.parsed && A.has(r.k)).map((r) => r.net - A.get(r.k));
+    const obs = d.reduce((x, y) => x + y, 0), nz = d.filter((x) => x); let hit = 0, R;
+    if (nz.length <= 20) { R = 2 ** nz.length; for (let m = 0; m < R; m++) { let t = 0; for (let j = 0; j < nz.length; j++) t += (m >> j) & 1 ? nz[j] : -nz[j]; if (t >= obs) hit++; } }
+    else { R = 20000; let s = 12345; const rand = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return (t ^ (t >>> 14)) >>> 0; };
+      for (let i = 0; i < R; i++) { let t = 0; for (const x of nz) t += rand() & 1 ? x : -x; if (t >= obs) hit++; } hit++; R++; }
+    return { diff: obs, reviews: d.length, changed: nz.length, up: nz.filter((x) => x > 0).length, down: nz.filter((x) => x < 0).length, p: Math.round(1e4 * hit / R) / 1e4 }; };
   if (BAGMODE && process.env.GK3_GATED) {
     const g = await evalRules("round D gated", BAG.GATED);
     const fired = P.tasks.map((t) => ({ task: t.id, rules: BAG.gate(t.prompts.gate_keeper).map((r) => r.id) })).filter((x) => x.rules.length);
