@@ -217,22 +217,25 @@ async function four(arm, task, trial) {
   const [a, b] = await Promise.all([turn(`gk_bag/${id}`, prep.system, prep.prompt), turn(`gk_four/${id}/f2`, prep.system, prep.prompt)]);
   const fa = a.status === "done" ? toF(jsonFindings(a.text)) : null, fb = b.status === "done" ? toF(jsonFindings(b.text)) : null;
   const cand = (fa || fb) ? BAG.post(pr, [...(fa || []), ...(fb || [])], null).out : null;
-  let final = cand, rv = [];
+  let final = cand, rv = [], reviewOk = null;
   if (cand && cand.length) {
     const list = cand.map((f, i) => `${i + 1}. line ${f.start}: ${f.comment}`).join("\n");
     rv = await Promise.all([1, 2].map((k) => turn(`gk_four/${id}/r${k}`, REVIEW, pr + "\n\nCandidate findings:\n" + list)));
-    const V = rv.map((r) => { const m = new Map(); for (const v of (r.status === "done" ? jsonFindings(r.text, "verdicts") || [] : [])) m.set(Number(v?.id), v); return r.status === "done" ? m : null; });
+    // A reviewer whose reply fails or does not parse is unusable, not a reviewer that rejected everything.
+    const V = rv.map((r) => { const vs = r.status === "done" ? jsonFindings(r.text, "verdicts") : null; if (!vs) return null; const m = new Map(); for (const v of vs) m.set(Number(v?.id), v); return m; });
+    reviewOk = V.filter(Boolean).length;
+    if (!reviewOk) final = null; else {
     final = [];
     cand.forEach((f, i) => { const v1 = V[0]?.get(i + 1), v2 = V[1]?.get(i + 1);
       const ok = (v) => v?.real === true; const keep = V[0] && V[1] ? ok(v1) && ok(v2) : ok(V[0] ? v1 : v2);
       if (!keep) return; const l1 = Number(v1?.line), l2 = Number(v2?.line);
       const line = Number.isInteger(l1) && (!Number.isInteger(l2) || Math.abs(l1 - l2) <= 1) ? l1 : f.start;
       final.push({ ...f, start: line, end: line }); });
-    final = BAG.post(pr, final.map(({ quote, ...f }) => f), null).out;
+    final = BAG.post(pr, final.map(({ quote, ...f }) => f), null).out; }
   }
   const calls4 = [a, b, ...rv], cost = calls4.reduce((s, r) => s + (r.cost || 0), 0), seconds = Math.max(a.seconds || 0, b.seconds || 0) + Math.max(0, ...rv.map((r) => r.seconds || 0));
   for (const [name, fs, c, sec] of [["gk_four_find2", cand, (a.cost || 0) + (b.cost || 0), Math.max(a.seconds || 0, b.seconds || 0)], [arm, final, cost, seconds]]) {
-    const row = { arm: name, task: task.id, trial, status: a.status, cached: !!a.cached, ...score(task.expected, fs, task.benign || []), cost: c, seconds: sec, calls: name === arm ? calls4.length : 2 };
+    const row = { arm: name, task: task.id, trial, status: a.status, cached: !!a.cached, ...score(task.expected, fs, task.benign || []), cost: c, seconds: sec, calls: name === arm ? calls4.length : 2, ...(name === arm ? { reviewOk, reviewStatus: rv.map((r) => r.status) } : {}) };
     rows.push(row); console.log("GK3_ROW " + JSON.stringify(row)); }
   console.log("GK3_RAW gk_four/" + id + " cand=" + JSON.stringify((cand || []).map((f) => f.start)) + " final=" + JSON.stringify((final || []).map((f) => f.start)) + " rv=" + JSON.stringify(rv.map((r) => r.text.slice(-1500))));
 }
