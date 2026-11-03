@@ -6,22 +6,29 @@ import http from "node:http";
 import { Readable } from "node:stream";
 export function reframe() {
   let buf = "";
+  const dec = new TextDecoder(), enc = new TextEncoder();
   return new TransformStream({
     transform(chunk, ctl) {
-      buf += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk, { stream: true });
+      // One decoder per stream so a UTF-8 character split across chunks survives.
+      buf += typeof chunk === "string" ? chunk : dec.decode(chunk, { stream: true });
       let i;
       while ((i = buf.indexOf("\n")) >= 0) {
         const line = buf.slice(0, i).replace(/\r$/, ""); buf = buf.slice(i + 1);
         if (line === "") continue;
-        ctl.enqueue(new TextEncoder().encode(line + (line.startsWith("data:") ? "\n\n" : "\n")));
+        ctl.enqueue(enc.encode(line + (line.startsWith("data:") ? "\n\n" : "\n")));
       }
     },
-    flush(ctl) { if (buf.trim()) ctl.enqueue(new TextEncoder().encode(buf + "\n\n")); },
+    flush(ctl) { buf += dec.decode(); if (buf.trim()) ctl.enqueue(enc.encode(buf + "\n\n")); },
   });
 }
-export function startProxy({ port = 8787, upstream = "https://stranger-builds.truefoundry.cloud" } = {}) {
-  let requests = 0, reframed = 0;
+// prefix: a per-run random path segment. TrueForge refuses private hosts, so the proxy is
+// reached through a public Railway domain; requests without the prefix get 404. The proxy
+// never adds credentials: it forwards the caller's own Authorization header.
+export function startProxy({ port = 8787, upstream = "https://stranger-builds.truefoundry.cloud", prefix = "" } = {}) {
+  let requests = 0, reframed = 0, rejected = 0;
   const server = http.createServer(async (req, res) => {
+    if (prefix && !req.url.startsWith("/" + prefix + "/")) { rejected++; res.writeHead(404); return res.end(); }
+    if (prefix) req.url = req.url.slice(prefix.length + 1);
     requests++;
     try {
       const body = await new Promise((ok) => { const a = []; req.on("data", (d) => a.push(d)); req.on("end", () => ok(Buffer.concat(a))); });
@@ -36,5 +43,5 @@ export function startProxy({ port = 8787, upstream = "https://stranger-builds.tr
     } catch (e) { if (!res.headersSent) res.writeHead(502); res.end(); }
   });
   server.listen(port, "::");
-  return { server, stats: () => ({ requests, reframed }) };
+  return { server, stats: () => ({ requests, reframed, rejected }) };
 }

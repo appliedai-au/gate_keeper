@@ -2,7 +2,7 @@
 import { gunzipSync } from "node:zlib";
 const { TrueForge } = globalThis.GK3_SDK ?? await import("@truefoundry/trueforge-sdk");
 // Model-agnostic: the same sealed tasks and locked agents rerun on any TrueFoundry model.
-const MODEL = process.env.GK3_MODEL || "truefoundry/deepseek-v4-flash-0731";
+const MODEL = process.env.GK3_MODEL || "tfy-direct/deepseek-v4-flash-0731"; // boot.mjs sets this to the proxied provider
 const PRICE = (process.env.GK3_PRICE_PER_MTOK || "0.3,1.2").split(",").map(Number);
 const CAP = Number(process.env.GK3_CAP_USD || "0.5"), TRIALS = Number(process.env.GK3_TRIALS || "1");
 const ARMS = (process.env.GK3_ARMS || "codex,qodo,gate_keeper").split(",");
