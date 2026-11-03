@@ -34,7 +34,7 @@ async function turn(label, instructions, prompt) {
     Number.isFinite(m?.totalInputTokens) ? (m.totalInputTokens * PRICE[0] + (m.totalOutputTokens || 0) * PRICE[1]) / 1e6 : reserve;
   reserved -= reserve; spent += cost;
   let text = typeof o?.content === "string" ? o.content : Array.isArray(o?.content) ? o.content.map((x) => x?.text || "").join("") : "";
-  let source = text ? "output" : "none";
+  let source = text ? "output" : "none", streamReasoningChars = 0; // reasoning is never scored: diagnostics only
   // Same fallback for every agent: if the final message is empty, rebuild the text from the turn's streamed deltas.
   if (!text && sid && st?.status === "done") {
     try {
@@ -43,11 +43,11 @@ async function turn(label, instructions, prompt) {
           if (ev?.type === "model.message.delta") { acc += ev.content || ""; rc += ev.reasoningContent || ""; }
           else if (ev?.type === "model.message" && typeof ev.content === "string") acc = acc || ev.content;
         }
-        if (acc) { text = acc; source = "deltas"; } else if (rc) { text = rc; source = "reasoning"; } }
+        if (acc) { text = acc; source = "deltas"; } else if (rc) { source = "reasoning-only"; streamReasoningChars = rc.length; } }
     } catch (e) { source = "fallback-error:" + String(e?.message || e).slice(0, 80); }
   }
   const tools = (o?.toolCalls || []).map((x) => x?.function?.name ?? x?.name);
-  return { label, status: st?.status, finishReason: o?.finishReason ?? null, tools, text, source, outputNull: o == null, reasoningChars: (o?.reasoningContent || "").length, cost, seconds: Math.round((Date.now() - t0) / 100) / 10,
+  return { label, status: st?.status, finishReason: o?.finishReason ?? null, tools, text, source, outputNull: o == null, reasoningChars: (o?.reasoningContent || "").length || streamReasoningChars, cost, seconds: Math.round((Date.now() - t0) / 100) / 10,
     error: st?.error ? JSON.stringify(st.error).slice(0, 300) : null, tokens: m ? { in: m.totalInputTokens, out: m.totalOutputTokens, reasoning: m.totalReasoningTokens ?? null } : null };
 }
 // Harness-level and the same for every agent: take the last balanced {...} with a findings array, wherever it sits in the reply.
