@@ -14,9 +14,11 @@ let spent = 0, reserved = 0, calls = 0;
 // tool, and a call to it ends the turn with no answer (seen in practice run 2). Everything else stays stock.
 const RUNTIME = { askUserQuestions: { enabled: false } };
 const est = (chars, out) => ((chars / 3 + 3000) * PRICE[0] + out * PRICE[1]) / 1e6;
+// Budget guard only: tokens of output reserved per in-flight call (default maxTokens). Real cost comes from turn metrics.
+const RESERVE_OUT = Number(process.env.GK3_RESERVE_OUT || "0");
 async function turn(label, instructions, prompt, model = MODEL, tempOverride = null) {
   const { maxTokens } = P.params; const temperature = tempOverride ?? P.params.temperature;
-  const reserve = est(instructions.length + prompt.length, maxTokens);
+  const reserve = est(instructions.length + prompt.length, RESERVE_OUT || maxTokens);
   if (spent + reserved + reserve > CAP) return { label, status: "BUDGET_STOP", text: "" };
   reserved += reserve; calls++;
   const t0 = Date.now();
@@ -180,7 +182,66 @@ async function worker() {
 // Gate Keeper design search (GK3_MATRIX=1): one shared set of generations and judge calls per task and trial,
 // then 20 Gate Keeper configurations are formed from them and each is scored by the same score().
 // Cost per config = the generations it uses plus the full cost of any judge call it uses (an upper bound).
-if (process.env.GK3_MATRIX) {
+// Gate Keeper agent code search (GK3_PIPE=1), one model fixed (GK3_MODEL_B, e.g. glm-5.3-flash).
+// These are Gate Keeper's own steps, not harness scoring: every config is scored by the same score().
+// Steps: a deterministic merge of same/adjacent-line findings, focused passes, a second look, and quote anchoring.
+async function pipe() {
+  const GM = MODEL_B || MODEL, sys = P.agents.gate_keeper.system;
+  const FOCUS = [
+    "untrusted input (pass 2) and identity and access (pass 3)",
+    "state and concurrency (pass 4) and failure paths (pass 5)",
+    "boundaries (pass 1) and semantics (pass 6)",
+  ].map((x) => `\n\nThis pass: hunt only ${x}, plus any rule stated in the context that the code breaks. Other defect types are covered by other passes; leave them out.`);
+  const QSYS = sys + "\n\nExtra field: every finding also has `\"quote\"`: the code of the line it points at, copied character for character (without the line number).";
+  const toSpans = (r) => r.status === "done" ? (jsonFindings(r.text) || null)?.map((x) => { const l = Number(x?.line); return Number.isInteger(l) ? { start: l, end: l, comment: String(x?.comment || "").slice(0, 200), quote: typeof x?.quote === "string" ? x.quote : "" } : null; }).filter(Boolean) ?? null : null;
+  const merge = (fs) => { if (!fs) return null; const out = []; for (const f of [...fs].sort((a, b) => a.start - b.start)) { if (out.length && f.start - out[out.length - 1].start <= 1) continue; out.push(f); } return out; };
+  const norm = (x) => x.replace(/\s+/g, " ").trim();
+  function anchor(prompt, fs) {
+    if (!fs) return null; const code = new Map();
+    for (const m of prompt.matchAll(/^\s*(\d+) \| ?(.*)$/gm)) code.set(+m[1], norm(m[2]));
+    let moved = 0;
+    const out = fs.map((f) => { const q = norm(f.quote || ""); if (q.length < 4) return f;
+      if ((code.get(f.start) || "").includes(q) || q.includes(code.get(f.start) || "\u0000")) return f;
+      let best = null; for (const [n, c] of code) if (c.length >= 4 && (c.includes(q) || q.includes(c)) && (best === null || Math.abs(n - f.start) < Math.abs(best - f.start))) best = n;
+      if (best !== null && Math.abs(best - f.start) <= 8) { moved++; return { ...f, start: best, end: best }; } return f; });
+    return { out, moved };
+  }
+  const C = ["v10", "v10+merge", "focused x3", "v10+second look", "quote anchor", "quote anchor+merge", "v10+focused x3", "v10+second look+quote"];
+  const prow = [], q = [];
+  for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) q.push({ trial, task });
+  async function one({ trial, task }) {
+    const id = `p/${task.id}/t${trial}`, pr = task.prompts.gate_keeper;
+    const [base, qa, ...foc] = await Promise.all([turn(id + "/base", sys, pr, GM), turn(id + "/quote", QSYS, pr, GM), ...FOCUS.map((x, i) => turn(id + "/focus" + i, sys, pr + x, GM))]);
+    const fb = toSpans(base);
+    const seen = (fb || []).map((f) => `- line ${f.start}: ${f.comment}`).join("\n") || "- (none)";
+    const gap = await turn(id + "/gap", sys, pr + "\n\nA first review of this change already reported:\n" + seen + "\nReport only real defects it missed, on other lines. Do not repeat or rephrase its findings. If it missed nothing, reply with the checklist and {\"findings\":[]}.", GM);
+    const fq = toSpans(qa), ff = foc.map(toSpans), fg = toSpans(gap), aq = anchor(pr, fq);
+    const uni = (...xs) => xs.some(Boolean) ? xs.filter(Boolean).flat() : null;
+    const foundF = uni(...ff);
+    const sets = {
+      "v10": [fb, base.cost, base.seconds],
+      "v10+merge": [merge(fb), base.cost, base.seconds],
+      "focused x3": [merge(foundF), foc.reduce((a, r) => a + (r.cost || 0), 0), Math.max(...foc.map((r) => r.seconds || 0))],
+      "v10+second look": [merge(uni(fb, fg)), (base.cost || 0) + (gap.cost || 0), (base.seconds || 0) + (gap.seconds || 0)],
+      "quote anchor": [aq?.out ?? null, qa.cost, qa.seconds],
+      "quote anchor+merge": [merge(aq?.out ?? null), qa.cost, qa.seconds],
+      "v10+focused x3": [merge(uni(fb, foundF)), (base.cost || 0) + foc.reduce((a, r) => a + (r.cost || 0), 0), Math.max(base.seconds || 0, ...foc.map((r) => r.seconds || 0))],
+      "v10+second look+quote": [merge(uni(fb, fg, aq?.out ?? null)), (base.cost || 0) + (gap.cost || 0) + (qa.cost || 0), (base.seconds || 0) + (gap.seconds || 0)],
+    };
+    console.log("GK3_GEN " + id.slice(2) + " " + JSON.stringify({ base: fb?.map((f) => f.start), quote: fq?.map((f) => [f.start, f.quote.slice(0, 60)]), anchored: aq?.out.map((f) => f.start), moved: aq?.moved, focus: ff.map((x) => x?.map((f) => f.start)), gap: fg?.map((f) => f.start), st: [base, qa, gap, ...foc].map((r) => r.status) }));
+    for (const name of C) { const [fs, cost, seconds] = sets[name];
+      const row = { arm: name, task: task.id, trial, ...score(task.expected, fs, task.benign || []), cost, seconds }; prow.push(row); console.log("GK3_ROW " + JSON.stringify(row)); }
+  }
+  console.log("GK3_START " + JSON.stringify({ pipe: true, model: GM, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
+  await Promise.all(Array.from({ length: CONC }, async () => { while (q.length) await one(q.shift()); }));
+  const sum = C.map((name) => { const rs = prow.filter((r) => r.arm === name); const n = rs.length || 1;
+    const caught = rs.reduce((a, r) => a + r.caught, 0), fa = rs.reduce((a, r) => a + r.extra, 0);
+    return { name, caught, of: rs.reduce((a, r) => a + r.of, 0), fa, net: caught - fa, unparsed: rs.filter((r) => !r.parsed).length,
+      avgS: Math.round(10 * rs.reduce((a, r) => a + (r.seconds || 0), 0) / n) / 10, avgUsd: Math.round(1e6 * rs.reduce((a, r) => a + (r.cost || 0), 0) / n) / 1e6 }; }).sort((a, b) => b.net - a.net);
+  for (const x of sum) console.log("GK3_MATRIX " + JSON.stringify(x));
+  console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6 }));
+}
+if (process.env.GK3_PIPE) { await pipe(); } else if (process.env.GK3_MATRIX) {
   const M = { ds: MODEL, oss: "tfy-direct/gpt-oss-120b", glm: "tfy-direct/glm-5-3-flash", mimo: "tfy-direct/mimo-v2-6-flash" };
   const G = { ds: ["gk_v10", "ds"], ds2: ["gk_v10", "ds"], ds0: ["gk_v10", "ds", 0], ds8: ["gk_v8", "ds"], oss: ["gk_v10", "oss"], glm: ["gk_v10", "glm"], mimo: ["gk_v10", "mimo"] };
   const JM = ["ds", "oss", "glm"];
