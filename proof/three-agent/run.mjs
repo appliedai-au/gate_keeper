@@ -39,10 +39,14 @@ async function turn(label, instructions, prompt) {
   if (!text && sid && st?.status === "done") {
     try {
       if (tid) { let acc = "", rc = "";
+        const seen = [];
         for await (const ev of await tf.sessions.listTurnEvents(sid, tid)) {
+          if (ev?.type !== "model.message.delta") seen.push(ev?.type + (ev?.toolCalls?.length ? "[" + ev.toolCalls.map((c) => c?.function?.name ?? c?.name).join(",") + "]" : "") + (ev?.finishReason ? "(" + ev.finishReason + ")" : ""));
+          else if (ev?.toolCalls?.length) seen.push("delta-toolcall[" + ev.toolCalls.map((c) => c?.function?.name ?? c?.name ?? "?").join(",") + "]");
           if (ev?.type === "model.message.delta") { acc += ev.content || ""; rc += ev.reasoningContent || ""; }
           else if (ev?.type === "model.message" && typeof ev.content === "string") acc = acc || ev.content;
         }
+        console.log("GK3_EVENTS " + label + " " + JSON.stringify([...new Set(seen)].slice(0, 30)));
         if (acc) { text = acc; source = "deltas"; } else if (rc) { source = "reasoning-only"; streamReasoningChars = rc.length; } }
     } catch (e) { source = "fallback-error:" + String(e?.message || e).slice(0, 80); }
   }
