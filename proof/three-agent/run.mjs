@@ -274,6 +274,23 @@ async function four(arm, task, trial) {
     rows.push(row); console.log("GK3_ROW " + JSON.stringify(row)); }
   console.log("GK3_RAW gk_four/" + id + " cand=" + JSON.stringify((cand || []).map((f) => f.start)) + " final=" + JSON.stringify((final || []).map((f) => f.start)) + " rv=" + JSON.stringify(rv.map((r) => r.text.slice(-1500))));
 }
+// Gate Keeper consecutive chain (gk_chain): run 1 is the rule-bag review (same inputs and label as gk_bag, so cached).
+// Runs 2..GK3_CHAIN_N each see every finding so far and report only real defects not already listed.
+// Rows gk_chain_1..N score the merged union after each run, so each run's added catches and false alarms show directly.
+const CHAIN_ASK = `\n\nEarlier review passes already reported these findings:\n%LIST%\n\nDo another careful pass. Report ONLY real defects that are NOT already listed above (a different line or a different root cause). Do not repeat or rephrase listed findings. If you find nothing new, return {"findings":[]}. Same JSON format.`;
+async function chain(arm, task, trial) {
+  const N = Number(process.env.GK3_CHAIN_N || "4"), pr = task.prompts.gate_keeper, prep = BAG.prepare(P.agents.gate_keeper.system, pr, {}), id = `${task.id}/t${trial}`;
+  let all = [], ok = false, cost = 0, seconds = 0;
+  for (let k = 1; k <= N; k++) {
+    const list = all.length ? all.map((f) => `- line ${f.start}: ${f.comment}`).join("\n") : "(none)";
+    const r = k === 1 ? await turn(`gk_bag/${id}`, prep.system, prep.prompt) : await turn(`gk_chain/${id}/c${k}`, prep.system, prep.prompt + CHAIN_ASK.replace("%LIST%", list));
+    cost += r.cost || 0; seconds += r.seconds || 0;
+    const fs = r.status === "done" ? toF(jsonFindings(r.text)) : null;
+    if (fs) { ok = true; all = BAG.post(pr, [...all, ...fs], null).out; }
+    const row = { arm: `gk_chain_${k}`, task: task.id, trial, status: r.status, cached: !!r.cached, ...score(task.expected, ok ? all : null, task.benign || []), cost, seconds, calls: k, newThisRun: fs ? fs.length : null };
+    rows.push(row); console.log("GK3_ROW " + JSON.stringify(row));
+  }
+}
 const jobs = [];
 for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) for (const arm of ARMS) jobs.push({ trial, task, arm });
 const rows = [];
@@ -283,6 +300,7 @@ async function worker() {
     if (arm.endsWith("_vote")) { await vote(arm, task, trial); continue; }
     if (arm.endsWith("_duo")) { await duo(arm, task, trial); continue; }
     if (arm === "gk_four") { await four(arm, task, trial); continue; }
+    if (arm === "gk_chain") { await chain(arm, task, trial); continue; }
     if (arm.startsWith("gk_bag")) { await bag(arm, task, trial); continue; }
     const r = await turn(`${arm}/${task.id}/t${trial}`, P.agents[arm].system, task.prompts[arm]);
     let fs = r.status === "done" ? parse(arm, r.text) : null;
