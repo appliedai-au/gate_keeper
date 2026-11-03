@@ -8,10 +8,11 @@ const S = new URL("./", import.meta.url).pathname;
 const R = new URL("../../", import.meta.url).pathname;
 const sha = (v) => createHash("sha256").update(v).digest("hex");
 const [set, gkFile, out] = process.argv.slice(2);
+// set: "practice", or a folder path holding task JSON files (e.g. one sealed tranche).
 const files = set === "practice"
   ? [...readdirSync(R + "evals/tasks").map((f) => R + "evals/tasks/" + f), R + "proof/fixtures/four-rounds/05-ts-task-pagination.json",
      ...readdirSync(R + "proof/fixtures/native-hard").map((f) => R + "proof/fixtures/native-hard/" + f)].filter((f) => f.endsWith(".json")).sort()
-  : readdirSync(S + "test-tasks").filter((f) => f.endsWith(".json")).sort().map((f) => S + "three/test-tasks/" + f);
+  : readdirSync(set).filter((f) => f.endsWith(".json")).sort().map((f) => set.replace(/\/?$/, "/") + f);
 const tasks = files.map((f) => JSON.parse(readFileSync(f, "utf8")));
 const codex = readFileSync(S + "vendor/openai-codex/review-rubric.md", "utf8");
 if (sha(codex) !== "ec60e7f36a1d1c2679ce095c0205ecc56f7dd8fb57707a13ef362072390f219f") throw new Error("codex rubric changed");
@@ -19,7 +20,7 @@ const render = (cap) => JSON.parse(execFileSync("python3", [S + "render_qodo.py"
 const qodo = render(20), qodo3 = render(3);
 const gk = readFileSync(gkFile, "utf8");
 const payload = {
-  set, params: { temperature: 0.2, maxTokens: 8000 },
+  set: set === "practice" ? "practice" : set.split("/").filter(Boolean).pop(), params: { temperature: 0.2, maxTokens: 8000 },
   agents: { codex: { system: codex }, qodo: { system: qodo.system }, qodo_cap3: { system: qodo3.system }, gate_keeper: { system: gk } },
   tasks: tasks.map((t) => ({ id: t.id, expected: t.expected.map((e) => e.line),
     prompts: { codex: taskPrompt(t), gate_keeper: taskPrompt(t), qodo: qodo.users[t.id], qodo_cap3: qodo3.users[t.id] } })),
