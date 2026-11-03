@@ -285,9 +285,9 @@ async function chain(arm, task, trial) {
     const list = all.length ? all.map((f) => `- line ${f.start}: ${f.comment}`).join("\n") : "(none)";
     const r = k === 1 ? await turn(`gk_bag/${id}`, prep.system, prep.prompt) : await turn(`gk_chain/${id}/c${k}`, prep.system, prep.prompt + CHAIN_ASK.replace("%LIST%", list));
     cost += r.cost || 0; seconds += r.seconds || 0;
-    const fs = r.status === "done" ? toF(jsonFindings(r.text)) : null;
+    const fs = r.status === "done" ? toF(jsonFindings(r.text)) : null, before = all.length;
     if (fs) { ok = true; all = BAG.post(pr, [...all, ...fs], null).out; }
-    const row = { arm: `gk_chain_${k}`, task: task.id, trial, status: r.status, cached: !!r.cached, ...score(task.expected, ok ? all : null, task.benign || []), cost, seconds, calls: k, newThisRun: fs ? fs.length : null };
+    const row = { arm: `gk_chain_${k}`, task: task.id, trial, status: r.status, cached: !!r.cached, ...score(task.expected, ok ? all : null, task.benign || []), cost, seconds, calls: k, reported: fs ? fs.length : null, newThisRun: fs ? all.length - before : null };
     rows.push(row); console.log("GK3_ROW " + JSON.stringify(row));
   }
 }
