@@ -105,12 +105,29 @@ function score(expected, fs, benign = []) {
   }
   return { parsed: true, caught, of: expected.length, extra, neutral };
 }
+// Gate Keeper agent design, not harness scoring: an arm named "<agent>_vote" runs that agent twice in parallel
+// and keeps only findings both samples agree on (within one line). It is scored by the same score() as every arm.
+// Sample A is also logged as "<agent>_solo" so single and voted runs compare on identical outputs.
+async function vote(arm, task, trial) {
+  const base = arm.slice(0, -5);
+  const [a, b] = await Promise.all(["a", "b"].map((k) => turn(`${arm}/${task.id}/t${trial}/${k}`, P.agents[base].system, task.prompts[base])));
+  const fa = a.status === "done" ? parse(base, a.text) : null, fb = b.status === "done" ? parse(base, b.text) : null;
+  let fv = null;
+  if (fa && fb) { fv = []; for (const f of fa) if (fb.some((g) => g.start <= f.end + 1 && f.start <= g.end + 1) && !fv.some((h) => h.start === f.start)) fv.push(f); }
+  else fv = fa || fb;
+  for (const [name, r, fs, cost, seconds] of [[base + "_solo", a, fa, a.cost, a.seconds], [arm, a, fv, (a.cost || 0) + (b.cost || 0), Math.max(a.seconds || 0, b.seconds || 0)]]) {
+    const row = { arm: name, task: task.id, trial, status: r.status, ...score(task.expected, fs, task.benign || []), cost, seconds, error: r.error };
+    rows.push(row); console.log("GK3_ROW " + JSON.stringify(row));
+  }
+  console.log("GK3_RAW " + `${arm}/${task.id}/t${trial} a=` + JSON.stringify(fa) + " b=" + JSON.stringify(fb));
+}
 const jobs = [];
 for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) for (const arm of ARMS) jobs.push({ trial, task, arm });
 const rows = [];
 async function worker() {
   while (jobs.length) {
     const { trial, task, arm } = jobs.shift();
+    if (arm.endsWith("_vote")) { await vote(arm, task, trial); continue; }
     const r = await turn(`${arm}/${task.id}/t${trial}`, P.agents[arm].system, task.prompts[arm]);
     const sc = score(task.expected, r.status === "done" ? parse(arm, r.text) : null, task.benign || []);
     const row = { arm, task: task.id, trial, status: r.status, finish: r.finishReason, source: r.source, outputNull: r.outputNull, reasoningChars: r.reasoningChars, tools: r.tools, ...sc, cost: r.cost, seconds: r.seconds, tokens: r.tokens, error: r.error };
@@ -121,7 +138,7 @@ async function worker() {
 }
 console.log("GK3_START " + JSON.stringify({ runtime: RUNTIME, model: MODEL, set: P.set, arms: ARMS, trials: TRIALS, tasks: P.tasks.length, cap: CAP, params: P.params, sha256: P.sha256 }));
 await Promise.all(Array.from({ length: CONC }, worker));
-const summary = Object.fromEntries(ARMS.map((a) => { const rs = rows.filter((r) => r.arm === a); const n = rs.length || 1;
+const summary = Object.fromEntries([...new Set(rows.map((r) => r.arm))].map((a) => { const rs = rows.filter((r) => r.arm === a); const n = rs.length || 1;
   const caught = rs.reduce((s, r) => s + r.caught, 0), of = rs.reduce((s, r) => s + r.of, 0);
   return [a, { reviews: rs.length, recallPct: Math.round(1000 * caught / Math.max(1, of)) / 10, caught, of, falseAlarms: rs.reduce((s, r) => s + r.extra, 0),
     unparsed: rs.filter((r) => !r.parsed).length, avgSeconds: Math.round(10 * rs.reduce((s, r) => s + (r.seconds || 0), 0) / n) / 10,
