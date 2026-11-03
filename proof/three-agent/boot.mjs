@@ -5,6 +5,7 @@ const c = process.env.GK3_COMMIT, base = "https://raw.githubusercontent.com/appl
 const get = async (p) => { const r = await fetch(base + p); if (!r.ok) { console.error("GK3_FETCH_FAILED", p, r.status); process.exit(2); } return r.text(); };
 writeFileSync("/tmp/gk3-sse-proxy.mjs", await get("sse-proxy.mjs"));
 writeFileSync("/tmp/gk3-run.mjs", await get("run.mjs"));
+writeFileSync("/tmp/gk3-bag.mjs", await get("gk-bag.mjs"));
 process.env.GK3_PAYLOAD_B64 = (await get("payloads/" + process.env.GK3_PAYLOAD)).trim();
 globalThis.GK3_SDK ??= await import("@truefoundry/trueforge-sdk");
 const { startProxy } = await import("file:///tmp/gk3-sse-proxy.mjs");
@@ -15,7 +16,7 @@ const proxy = startProxy({ port: 8787, prefix });
 const privateHost = process.env.RAILWAY_PRIVATE_DOMAIN || "gk-native-runner.railway.internal";
 // Register whichever model is configured on the proxied provider, and always run through it.
 const m = (process.env.GK3_MODEL || "deepseek-v4-flash-0731").replace(/^[^/]+\//, "");
-process.env.GK3_MODEL = "tfy-direct/" + m;
+process.env.GK3_MODEL = "tfy-direct/" + m.replace(/\./g, "-");
 // Optional second model for Gate Keeper's two-model design, on the same proxied provider.
 const m2 = (process.env.GK3_MODEL_B || "").replace(/^[^/]+\//, "");
 if (m2) process.env.GK3_MODEL_B = "tfy-direct/" + m2.replace(/\./g, "-");

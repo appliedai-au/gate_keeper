@@ -17,8 +17,24 @@ const RUNTIME = { askUserQuestions: { enabled: false } };
 const est = (chars, out) => ((chars / 3 + 3000) * PRICE[0] + out * PRICE[1]) / 1e6;
 // Budget guard only: tokens of output reserved per in-flight call (default maxTokens). Real cost comes from turn metrics.
 const RESERVE_OUT = Number(process.env.GK3_RESERVE_OUT || "0");
+// Response cache (GK3_CACHE_DIR, a Railway volume): the same model, instructions, prompt, temperature, max tokens and
+// trial number return the stored reply, so runs 2, 3, 4 only pay for calls whose inputs changed. Same for every agent.
+// A cached row keeps the original call's cost and time, so per-review numbers stay comparable; only `spent` skips it.
+import { mkdirSync, readFileSync as rfs, writeFileSync as wfs, existsSync } from "node:fs";
+const CACHE = process.env.GK3_CACHE_DIR || "";
+if (CACHE) mkdirSync(CACHE, { recursive: true });
+let hits = 0;
+const cacheKey = (label, model, instructions, prompt, temperature, maxTokens) =>
+  createHash("sha256").update(JSON.stringify([model, temperature, maxTokens, instructions, prompt, (label.match(/\/t(\d+)(\/|$)/) || [])[1] || "1"])).digest("hex");
 async function turn(label, instructions, prompt, model = MODEL, tempOverride = null) {
   const { maxTokens } = P.params; const temperature = tempOverride ?? P.params.temperature;
+  const ck = CACHE ? CACHE + "/" + cacheKey(label, model, instructions, prompt, temperature, maxTokens) + ".json" : "";
+  if (ck && existsSync(ck)) { try { const c = JSON.parse(rfs(ck, "utf8")); hits++; return { ...c, label, cached: true }; } catch {} }
+  const r = await turnLive(label, instructions, prompt, model, temperature, maxTokens);
+  if (ck && r.status === "done" && r.text) { try { wfs(ck, JSON.stringify(r)); } catch {} }
+  return r;
+}
+async function turnLive(label, instructions, prompt, model, temperature, maxTokens) {
   const reserve = est(instructions.length + prompt.length, RESERVE_OUT || maxTokens);
   if (spent + reserved + reserve > CAP) return { label, status: "BUDGET_STOP", text: "" };
   reserved += reserve; calls++;
@@ -164,6 +180,23 @@ async function duo(arm, task, trial) {
   }
   console.log("GK3_RAW " + id + " a=" + JSON.stringify(A.map((f) => f.start)) + " b=" + JSON.stringify(B.map((f) => f.start)) + " final=" + JSON.stringify(final.map((f) => f.start)) + (b.status !== "done" ? " bErr=" + b.status + ":" + b.error : ""));
 }
+// Gate Keeper's rule bag (gk-bag.mjs): rule packs picked for this code, pattern hints, post-call filters and
+// fingerprints, still ONE model call per review. gk_bag = rules + hints; gk_bag_strict adds the Codex-style report bar.
+// Fingerprints come from GK3_FP_URL / payload P.fingerprints, built only from tasks outside the set being scored.
+const BAG = (process.env.GK3_BAG_PATH || ARMS.some((a) => a.startsWith("gk_bag"))) ? await import(process.env.GK3_BAG_PATH || "file:///tmp/gk3-bag.mjs") : null;
+const FP = P.fingerprints || null;
+async function bag(arm, task, trial) {
+  const strict = arm.includes("strict"), useFp = arm.includes("fp");
+  const pr = task.prompts.gate_keeper, prep = BAG.prepare(P.agents.gate_keeper.system, pr, { strict });
+  const r = await turn(`${arm}/${task.id}/t${trial}`, prep.system, prep.prompt);
+  const raw = r.status === "done" ? jsonFindings(r.text) : null;
+  const fs0 = raw ? raw.map((x) => { const l = Number(x?.line ?? x?.code_location?.line_range?.start); return Number.isInteger(l) ? { start: l, end: l, quote: String(x?.quote || ""), comment: String(x?.comment || x?.title || "").slice(0, 200) } : null; }).filter(Boolean) : null;
+  const p = BAG.post(pr, fs0, useFp ? FP : null);
+  const row = { arm, task: task.id, trial, status: r.status, cached: !!r.cached, ...score(task.expected, p.out, task.benign || []), cost: r.cost, seconds: r.seconds, tokens: r.tokens, error: r.error,
+    rules: prep.rules, hints: prep.hints, dropped: p.dropped, moved: p.moved, fpAdded: p.fpAdded, fpCut: p.fpCut };
+  rows.push(row); console.log("GK3_ROW " + JSON.stringify(row));
+  console.log("GK3_RAW " + `${arm}/${task.id}/t${trial} ` + JSON.stringify(r.text.slice(0, 6000)));
+}
 const jobs = [];
 for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) for (const arm of ARMS) jobs.push({ trial, task, arm });
 const rows = [];
@@ -172,9 +205,13 @@ async function worker() {
     const { trial, task, arm } = jobs.shift();
     if (arm.endsWith("_vote")) { await vote(arm, task, trial); continue; }
     if (arm.endsWith("_duo")) { await duo(arm, task, trial); continue; }
+    if (arm.startsWith("gk_bag")) { await bag(arm, task, trial); continue; }
     const r = await turn(`${arm}/${task.id}/t${trial}`, P.agents[arm].system, task.prompts[arm]);
-    const sc = score(task.expected, r.status === "done" ? parse(arm, r.text) : null, task.benign || []);
-    const row = { arm, task: task.id, trial, status: r.status, finish: r.finishReason, source: r.source, outputNull: r.outputNull, reasoningChars: r.reasoningChars, tools: r.tools, ...sc, cost: r.cost, seconds: r.seconds, tokens: r.tokens, error: r.error };
+    let fs = r.status === "done" ? parse(arm, r.text) : null;
+    // Gate Keeper's own code step (GK3_GK_MERGE=1): merge its findings on the same or next line. Gate Keeper only.
+    if (fs && arm === "gate_keeper" && process.env.GK3_GK_MERGE) { const out = []; for (const f of [...fs].sort((a, b) => a.start - b.start)) { if (out.length && f.start - out[out.length - 1].start <= 1) continue; out.push(f); } fs = out; }
+    const sc = score(task.expected, fs, task.benign || []);
+    const row = { arm, task: task.id, trial, status: r.status, cached: !!r.cached, finish: r.finishReason, source: r.source, outputNull: r.outputNull, reasoningChars: r.reasoningChars, tools: r.tools, ...sc, cost: r.cost, seconds: r.seconds, tokens: r.tokens, error: r.error };
     rows.push(row);
     console.log("GK3_ROW " + JSON.stringify(row));
     console.log("GK3_RAW " + `${arm}/${task.id}/t${trial} ` + JSON.stringify(r.text.slice(0, 6000)));
@@ -384,5 +421,5 @@ const summary = Object.fromEntries([...new Set(rows.map((r) => r.arm))].map((a) 
   return [a, { reviews: rs.length, recallPct: Math.round(1000 * caught / Math.max(1, of)) / 10, caught, of, falseAlarms: rs.reduce((s, r) => s + r.extra, 0),
     unparsed: rs.filter((r) => !r.parsed).length, avgSeconds: Math.round(10 * rs.reduce((s, r) => s + (r.seconds || 0), 0) / n) / 10,
     avgCostUsd: Math.round(1e6 * rs.reduce((s, r) => s + (r.cost || 0), 0) / n) / 1e6 }]; }));
-console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, summary }));
+console.log("GK3_SUMMARY " + JSON.stringify({ calls, cacheHits: hits, spentUsd: Math.round(spent * 1e6) / 1e6, summary }));
 }
