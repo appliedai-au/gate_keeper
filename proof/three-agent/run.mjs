@@ -490,6 +490,22 @@ Write at most two NEW general rules that would make it catch more of these misse
 - Do not repeat or reword a rule the instructions already have. Prefer the pattern behind the most misses.
 Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   const tally = (xs) => { const seen = new Map(); for (const x of xs) { const k = x.task + ":" + x.line; seen.set(k, { ...x, n: (seen.get(k)?.n || 0) + 1 }); } return [...seen.values()].sort((a, b) => b.n - a.n); };
+  // Training diagnostics are learner-only: never appended to a finding call.
+  const DELTA_LEARNING = !!process.env.GK3_DELTA_LEARNING;
+  const fitDelta = (before, after, field, direction) => {
+    const a = new Map(tally(before[field].filter((x) => isFit({ id: x.task }))).map((x) => [x.task + ":" + x.line, x]));
+    const b = new Map(tally(after[field].filter((x) => isFit({ id: x.task }))).map((x) => [x.task + ":" + x.line, x]));
+    const from = direction === "added" ? b : a, to = direction === "added" ? a : b;
+    return [...from].map(([k, x]) => ({ ...x, occurrencesChanged: x.n - (to.get(k)?.n || 0) }))
+      .filter((x) => x.occurrencesChanged > 0).sort((x, y) => y.occurrencesChanged - x.occurrencesChanged).slice(0, 6);
+  };
+  const regressionFeedback = (before, after) => ({
+    data: "t4-t5 fit only; learner diagnostics, never reviewer instructions",
+    lostRealBugs: fitDelta(before, after, "misses", "added"),
+    recoveredRealBugs: fitDelta(before, after, "misses", "removed"),
+    addedFalseAlarms: fitDelta(before, after, "fas", "added"),
+    removedFalseAlarms: fitDelta(before, after, "fas", "removed"),
+  });
   console.log("GK3_START " + JSON.stringify({ improve: true, structuredRules: STRUCTURED_RULES, learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
   const BASE = P.agents.gate_keeper.system;
   const bank = STRUCTURED_RULES ? loadRuleBank() : { accepted: [], harmful: [], unproven: [], history: [] };
@@ -527,11 +543,14 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     // Conditional-rule learning sees fit tasks only; t6 remains an internal training check.
     const fitOnly = (xs) => STRUCTURED_RULES ? xs.filter((x) => !x.task.startsWith("t6-")) : xs;
     const ms = tally(fitOnly(best.misses)).slice(0, 14), fs = tally(fitOnly(best.fas)).slice(0, 10);
-    const exampleIds = STRUCTURED_RULES ? [...new Set([...ms.slice(0, 3), ...fs.slice(0, 3)].map((x) => x.task))].slice(0, 4) : [];
+    const priorFeedback = DELTA_LEARNING ? [...bank.harmful, ...bank.unproven].filter((e) => e.fitFeedback).slice(-3) : [];
+    const regressionExamples = priorFeedback.flatMap((e) => [...e.fitFeedback.lostRealBugs, ...e.fitFeedback.addedFalseAlarms]);
+    const exampleIds = STRUCTURED_RULES ? [...new Set([...regressionExamples.slice(0, 2), ...ms.slice(0, 3), ...fs.slice(0, 3)].map((x) => x.task))].slice(0, 4) : [];
     const contexts = exampleIds.map((id) => P.tasks.find((t) => t.id === id)?.prompts.gate_keeper || "").map((x) => x.slice(0, 5000)).join("\n\n---\n\n");
     const ask = (STRUCTURED_RULES ? "Learning cycle " + r + " of " + ROUNDS + ". Produce a new supported distinction, not a previously rejected formulation.\n\n" : "") + (contexts ? "Fit-only example code and stated context (for checking guards, not memorizing identifiers):\n" + contexts + "\n\n" : "") + "Current instructions:\n" + rules + (STRUCTURED_RULES ? "\n\nNegative-learning records (exact formulations and measured context; not universal bug-category bans):\n" + JSON.stringify(bank.harmful.slice(-8).map((e) => ({ rules: e.rules, scope: e.scope, baseline: e.baseline, candidate: e.candidate }))) + "\n\nUnproven proposals (not classified as harmful):\n" + JSON.stringify(bank.unproven.slice(-4).map((e) => ({ rules: e.rules, scope: e.scope, reason: e.reason, baseline: e.baseline, candidate: e.candidate }))) : "") + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n") +
       "\n\nFalse alarms:\n" + fs.map((f) => `- [${f.n}x] line ${f.line}: \`${f.code}\` — reviewer said: ${f.comment}`).join("\n") + (rejected.length ? "\n\nRules already tried that did not help (do not propose these again):\n" + rejected.map((x) => "- " + x).join("\n") : "");
-    let rr = await turn(`i/improve-r${r}`, IMPROVER, ask, GM);
+    const feedbackAsk = DELTA_LEARNING ? ask + "\n\nMeasured changes caused by recent proposals (fit tasks only):\n" + JSON.stringify(priorFeedback.map((e) => ({ rules: e.rules, scope: e.scope, baseline: e.baseline, candidate: e.candidate, fitFeedback: e.fitFeedback }))) + "\nDiagnose why a previous instruction lost real bugs or introduced false alarms. Prefer a narrow positive inspection procedure over another broad reporting restriction. A named framework helper is not proof of a safety guarantee: require the actual stated implementation or documented behavior; do not invent guarantees. Keep task details out of the proposed reusable rule." : ask;
+    let rr = await turn(`i/improve-r${r}`, IMPROVER, feedbackAsk, GM);
     let rawRules = jsonFindings(rr.text, "rules") || [];
     const parseConditional = (xs) => xs.filter((x) => x && ["when", "evidence", "unless"].every((k) => typeof x[k] === "string" && x[k].trim().length >= 8))
       .filter((x) => [x.when, x.evidence, x.unless].join(" ").trim().split(/\s+/).length <= 160)
@@ -562,6 +581,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     if (STRUCTURED_RULES) {
       const status = ok ? "accepted-in-training" : (c.net < best.net || c.fitNet < best.fitNet || c.checkNet < best.checkNet) ? "harmful-in-tested-context" : "unproven";
       const e = { id: createHash("sha256").update(JSON.stringify(conditional)).digest("hex"), status, rules: nr, scope: conditional[0].scope, conditional, coveredTasks: P.tasks.filter((t) => appliesToCode(conditional[0].scope, t.prompts.gate_keeper)).length, netChange: c.net - best.net, fitChange: c.fitNet - best.fitNet, checkChange: c.checkNet - best.checkNet, model: GM, source: process.env.GK3_COMMIT, round: r, baseline: { net: best.net, fit: best.fitNet, check: best.checkNet }, candidate: { net: c.net, fit: c.fitNet, check: c.checkNet }, requiresFreshConfirmation: ok };
+      if (DELTA_LEARNING) e.fitFeedback = regressionFeedback(best, c);
       bank[ok ? "accepted" : status === "harmful-in-tested-context" ? "harmful" : "unproven"].push(e);
       bank.history.push({ kind: "scored-rule", ...e }); saveRuleBank(bank);
       console.log("GK3_BANK " + JSON.stringify(e));
