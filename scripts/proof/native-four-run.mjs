@@ -289,7 +289,7 @@ export async function runNativeFour({
     const reservation = budget.reserve(phase, phase + "/" + round + "/" + arm,
       instructions.length + prompt.length, maxTokens, MODEL);
     if (!reservation) fail("LOCAL_BUDGET_REFUSED");
-    let sessionId = null, turnId = null;
+    let sessionId = null, turnId = null, lastState = null;
     try {
       const spec = {
         model: { name: MODEL, params: { temperature: 0, maxTokens } },
@@ -317,6 +317,7 @@ export async function runNativeFour({
         await wait(1500);
         turn = (await tf.sessions.getTurn(sessionId, turnId))?.data;
       }
+      lastState = turn?.state ?? null;
       if (turn?.state?.status !== "done") fail("MODEL_TURN_DEADLINE");
       const metrics = turn.state.metrics ?? null;
       budget.settle(reservation, metrics);
@@ -335,18 +336,26 @@ export async function runNativeFour({
         text, metrics, instructionSha256: record.instructionSha256,
         promptSha256: record.promptSha256,
       };
-    } catch {
+    } catch (e) {
       // Best-effort stop a remote turn on every timeout/failure. The gateway
       // is the independent hard spend cap; this limits drift after abort.
       if (sessionId) { try { await tf.sessions.cancel(sessionId); } catch {} }
       if (reservation.open) budget.settle(reservation, null);
+      // Keep the specific held code (e.g. TOOL_CALL_FORBIDDEN) and the raw
+      // final output privately, so a tool-use void is distinguishable from a
+      // network or timeout failure.
+      const cause = String(e?.message || "").match(/^NATIVE_FOUR_HELD:([A-Z_]+)$/)?.[1] ?? "UNVERIFIED";
       try {
         await put("private/failures/" + phase + "-" + round + "-" + arm + ".json", {
-          sourceCommit, model: MODEL, sessionId, turnId,
+          sourceCommit, model: MODEL, sessionId, turnId, cause,
+          rawOutput: lastState?.output ?? null,
+          requiredActions: lastState?.requiredActions ?? null,
           reason: "CALL_OR_EVIDENCE_INCOMPLETE; NOT_SAFE_TO_RETRY",
         });
       } catch {}
-      fail("NATIVE_TURN_FAILED_OR_PRIVATE_TRACE_UNAVAILABLE_NO_RETRY");
+      const err = new Error("NATIVE_FOUR_HELD:NATIVE_TURN_FAILED_OR_PRIVATE_TRACE_UNAVAILABLE_NO_RETRY");
+      err.heldCause = cause;
+      throw err;
     }
   }
 
@@ -513,6 +522,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       isolatedScope ? "NATIVE_FOUR_HELD:" + isolatedScope[1] :
       "NATIVE_FOUR_HELD:UNVERIFIED_ERROR_NO_RETRY";
     console.error(code);
+    // Fixed enum code only (never raw output) so the public log names the cause.
+    if (typeof e?.heldCause === "string" && /^[A-Z_]+$/.test(e.heldCause))
+      console.error("NATIVE_FOUR_HELD_CAUSE:" + e.heldCause);
     process.exitCode = 3;
   }
 }

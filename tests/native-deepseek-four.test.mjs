@@ -326,13 +326,19 @@ test("a turn that ends in a tool call fails closed and is not retried", async ()
     metrics: { totalCostInUsd: 0.0001, totalTokens: 50 },
   } } });
   tf.sessions.cancel = async (id) => { cancelled.push(id); };
+  const writes = new Map();
   await assert.rejects(runNativeFour({
     tf, receipt: v.receipt, publicKeyPem: v.publicKeyPem,
     pinnedKeySha256: v.pinnedKeySha256, sourceCommit, runId, env,
     now: () => v.now, wait: async () => {},
-    claimOnce: async () => ({ created: true }), privateWrite: async () => {},
-  }), /NATIVE_TURN_FAILED_OR_PRIVATE_TRACE_UNAVAILABLE_NO_RETRY/);
+    claimOnce: async () => ({ created: true }),
+    privateWrite: async (k, val) => { writes.set(k, val); },
+  }), (e) => /NATIVE_TURN_FAILED_OR_PRIVATE_TRACE_UNAVAILABLE_NO_RETRY/.test(e.message) &&
+    e.heldCause === "TOOL_CALL_FORBIDDEN");
   assert.equal(cancelled.length, 1);
+  const failure = [...writes].find(([k]) => k.startsWith("private/failures/"))?.[1];
+  assert.equal(failure.cause, "TOOL_CALL_FORBIDDEN");
+  assert.equal(failure.rawOutput.toolCalls[0].function.name, "get_current_datetime");
 });
 
 test("assertNoToolUse accepts plain text and rejects tool calls or pending actions", () => {
