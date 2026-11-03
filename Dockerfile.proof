@@ -11,6 +11,8 @@ RUN npm ci --no-audit --no-fund \
 COPY agent ./agent
 COPY evals ./evals
 COPY scripts ./scripts
+# Runners import the signer pin and sponsor catalogue from config/.
+COPY config ./config
 COPY proof/fixtures ./proof/fixtures
 # The locked baseline and the published reports it points to (public, sanitised).
 COPY proof/baseline.json ./proof/baseline.json

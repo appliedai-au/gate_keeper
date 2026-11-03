@@ -37,9 +37,19 @@ Two agent methods run through the actual **TrueForge SDK session/turn API**, at 
 The runner claims a unique run ID atomically in private S3 before sending any native session requests. It saves raw instructions, prompts, outputs and turn/session references privately **immediately after each call**, then private scoring/lesson evidence. Any error becomes a **non-retryable unreconciled run**. Public logs report only sanitized aggregates; no private session identifiers, holdout keys, object paths or authentication tokens.
 
 
-### Team-capped personal token fallback (3 November 2026, pending owner approval)
+### Team-capped personal token fallback (3 November 2026, owner-approved)
 
 Tenant members cannot create virtual accounts in the shared `stranger-builds` tenant. The admission therefore also accepts a statement with `credentialKind: "personal-access-token"`. It must name the owner's token, an Applied_AI **team-scoped, Lifetime, Enforce** gateway rule of at most US$50 with at least US$5 remaining, and `localHardCapUsd: 5`. In that mode TrueFoundry enforces the team ceiling and the runner's `BudgetController` stops at US$5. Every result and the private `STARTED` evidence carry `budgetEnforcement: TEAM_GATEWAY_ENFORCE_PLUS_LOCAL_HARD_STOP`, so the US$5 is never described as gateway-enforced. The dedicated virtual-account path is unchanged and remains preferred.
+
+### First live attempt and runtime fixes (3 November 2026)
+
+Run `gk-native-deepseek-hard-four-20261103-a` passed admission (owner-signed statement, Applied_AI team rule read back at $0.0003 of $50). It then failed on its first native turn and is **INCONCLUSIVE**. About US$0.00015 was spent on one model call, and the run ID is consumed. There were three causes:
+
+1. **Stream parsing.** TrueForge 0.180 sent `anthropic-beta: fine-grained-tool-streaming` to the `truefoundry` provider. The gateway's DeepSeek stream then failed to parse (`AI_JSONParseError`). TrueForge 0.182.0 drops that header. The root `Dockerfile` now takes `TRUEFORGE_VERSION`, which accepts only 0.180.0 or 0.182.0 and defaults to 0.180.0. Only the isolated qualification service sets 0.182.0.
+2. **Tools.** TrueForge always registers its built-in `get_current_datetime` tool and offers no switch to remove it, and the model called it. Each session now gets a no-tools directive. Any turn that ends in a tool call or a pending action fails closed. The cause `TOOL_CALL_FORBIDDEN` and the raw output are kept in the private failure record, and the cause code alone is printed as `NATIVE_FOUR_HELD_CAUSE`. and `iterationLimit: 1` means no tool result can reach the model. "No tools" therefore means *no approved tools, and any tool use voids the run*. It does not mean the platform built-in is absent.
+3. **Packaging.** `Dockerfile.proof` did not copy `config/`, so the runner could not import the signer pin. It now does.
+
+A retry needs a new run ID, a new owner-signed statement bound to the fixed commit, and a fresh budget read-back.
 
 ### Owner-approved spending limits (2 November 2026)
 

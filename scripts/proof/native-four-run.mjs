@@ -219,6 +219,20 @@ const CONFIG = {
   dynamicSubAgents: { enabled: false },
   iterationLimit: 1,
 };
+// TrueForge always registers its built-in `get_current_datetime` tool and
+// offers no switch to remove it. The study approves no tools, so every
+// session is told not to call one, and any turn whose final message is a tool
+// call (or leaves a pending action) fails closed. With iterationLimit 1 no
+// tool result can ever reach the model.
+export const NO_TOOLS_DIRECTIVE =
+  "## Tools\nNo tools are approved for this study. Do not call any tool, including get_current_datetime. Answer directly in text.\n\n";
+export function assertNoToolUse(state) {
+  const out = state?.output;
+  if ((Array.isArray(out?.toolCalls) && out.toolCalls.length) ||
+      out?.finishReason === "tool_calls" ||
+      (Array.isArray(state?.requiredActions) && state.requiredActions.length))
+    fail("TOOL_CALL_FORBIDDEN");
+}
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /** Injectable TrueForge SDK runner; still enforces the signed admission even
@@ -270,11 +284,12 @@ export async function runNativeFour({
     writes++;
   };
 
-  async function nativeTurn({ arm, round, phase, instructions, prompt, maxTokens }) {
+  async function nativeTurn({ arm, round, phase, instructions: armText, prompt, maxTokens }) {
+    const instructions = NO_TOOLS_DIRECTIVE + armText;
     const reservation = budget.reserve(phase, phase + "/" + round + "/" + arm,
       instructions.length + prompt.length, maxTokens, MODEL);
     if (!reservation) fail("LOCAL_BUDGET_REFUSED");
-    let sessionId = null, turnId = null;
+    let sessionId = null, turnId = null, lastState = null;
     try {
       const spec = {
         model: { name: MODEL, params: { temperature: 0, maxTokens } },
@@ -302,9 +317,11 @@ export async function runNativeFour({
         await wait(1500);
         turn = (await tf.sessions.getTurn(sessionId, turnId))?.data;
       }
+      lastState = turn?.state ?? null;
       if (turn?.state?.status !== "done") fail("MODEL_TURN_DEADLINE");
       const metrics = turn.state.metrics ?? null;
       budget.settle(reservation, metrics);
+      assertNoToolUse(turn.state);
       const text = textOf(turn.state.output);
       if (!text) fail("EMPTY_MODEL_OUTPUT");
       const record = {
@@ -319,18 +336,26 @@ export async function runNativeFour({
         text, metrics, instructionSha256: record.instructionSha256,
         promptSha256: record.promptSha256,
       };
-    } catch {
+    } catch (e) {
       // Best-effort stop a remote turn on every timeout/failure. The gateway
       // is the independent hard spend cap; this limits drift after abort.
       if (sessionId) { try { await tf.sessions.cancel(sessionId); } catch {} }
       if (reservation.open) budget.settle(reservation, null);
+      // Keep the specific held code (e.g. TOOL_CALL_FORBIDDEN) and the raw
+      // final output privately, so a tool-use void is distinguishable from a
+      // network or timeout failure.
+      const cause = String(e?.message || "").match(/^NATIVE_FOUR_HELD:([A-Z_]+)$/)?.[1] ?? "UNVERIFIED";
       try {
         await put("private/failures/" + phase + "-" + round + "-" + arm + ".json", {
-          sourceCommit, model: MODEL, sessionId, turnId,
+          sourceCommit, model: MODEL, sessionId, turnId, cause,
+          rawOutput: lastState?.output ?? null,
+          requiredActions: lastState?.requiredActions ?? null,
           reason: "CALL_OR_EVIDENCE_INCOMPLETE; NOT_SAFE_TO_RETRY",
         });
       } catch {}
-      fail("NATIVE_TURN_FAILED_OR_PRIVATE_TRACE_UNAVAILABLE_NO_RETRY");
+      const err = new Error("NATIVE_FOUR_HELD:NATIVE_TURN_FAILED_OR_PRIVATE_TRACE_UNAVAILABLE_NO_RETRY");
+      err.heldCause = cause;
+      throw err;
     }
   }
 
@@ -497,6 +522,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       isolatedScope ? "NATIVE_FOUR_HELD:" + isolatedScope[1] :
       "NATIVE_FOUR_HELD:UNVERIFIED_ERROR_NO_RETRY";
     console.error(code);
+    // Fixed enum code only (never raw output) so the public log names the cause.
+    if (typeof e?.heldCause === "string" && /^[A-Z_]+$/.test(e.heldCause))
+      console.error("NATIVE_FOUR_HELD_CAUSE:" + e.heldCause);
     process.exitCode = 3;
   }
 }
