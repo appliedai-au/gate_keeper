@@ -402,12 +402,16 @@ async function improve() {
   const isFit = (t) => !t.id.startsWith("t6-");
   async function evalRules(tag, sys, focused = false) {
     const q = []; for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) q.push({ trial, task });
-    const res = { tag, fit: 0, val: 0, caught: 0, fa: 0, cost: 0, sec: 0, n: 0, unparsed: 0, misses: [], fas: [] };
+    const res = { tag, fit: 0, val: 0, caught: 0, fa: 0, cost: 0, sec: 0, n: 0, unparsed: 0, misses: [], fas: [], rows: [] };
     async function one({ trial, task }) {
       const id = `i/${tag}/${task.id}/t${trial}`, pr = task.prompts.gate_keeper;
       let rs, fs;
       if (BAGMODE) { // the rule-bag Gate Keeper: rule packs + hints before the call, code checks after. Base rules reuse gk_bag's cached replies.
-        const prep = BAG.prepare(sys, pr, {}), base = sys === BASE;
+        // A gated rule set (array) adds each rule only where its code trigger fires; elsewhere the call is the base call (cached).
+        let s0 = sys, on = [];
+        if (Array.isArray(sys)) { on = BAG.gate(pr, sys); s0 = on.length ? withRules(on.map((r) => r.rule)) : BASE; }
+        const prep = BAG.prepare(s0, pr, {}), base = s0 === BASE;
+        if (on.length) prep.prompt += "\n\nLines a learned rule's trigger matched (check them against that rule; many are fine): " + on.map((r) => r.lines.map((l) => "L" + l).join(", ")).join("; ") + ".";
         rs = [await turn(base ? `gk_bag/${task.id}/t${trial}` : id, prep.system, prep.prompt)];
         const raw = rs[0].status === "done" ? toF(jsonFindings(rs[0].text)) : null;
         fs = raw ? BAG.post(pr, raw, null).out : null;
@@ -423,6 +427,7 @@ async function improve() {
         const parts = rs.map(toSpans); fs = parts.some(Boolean) ? merge(parts.filter(Boolean).flat()) : null;
       }
       const sc = score(task.expected, fs, task.benign || []), code = codeOf(task);
+      res.rows.push({ k: `${task.id}/t${trial}`, fit: isFit(task), net: sc.caught - sc.extra });
       res.caught += sc.caught; res.fa += sc.extra; res[isFit(task) ? "fit" : "val"] += sc.caught - sc.extra; res.n++; if (!sc.parsed) res.unparsed++;
       res.cost += rs.reduce((a, r) => a + (r.cost || 0), 0); res.sec += BAGMODE ? rs.reduce((a, r) => a + (r.seconds || 0), 0) : Math.max(...rs.map((r) => r.seconds || 0));
       if (fs) { for (const w of task.why) if (!fs.some((f) => Math.abs(f.start - w.line) <= 1)) res.misses.push({ task: task.id, line: w.line, code: code.get(w.line) || "", why: w.why });
@@ -431,7 +436,7 @@ async function improve() {
     }
     await Promise.all(Array.from({ length: CONC }, async () => { while (q.length) await one(q.shift()); }));
     const out = { tag, net: res.caught - res.fa, caught: res.caught, of: P.tasks.reduce((a, t) => a + t.expected.length, 0) * TRIALS, fa: res.fa, fitNet: res.fit, checkNet: res.val, unparsed: res.unparsed, avgS: Math.round(10 * res.sec / res.n) / 10, avgUsd: Math.round(1e6 * res.cost / res.n) / 1e6 };
-    console.log("GK3_EVAL " + JSON.stringify(out)); return { ...out, misses: res.misses, fas: res.fas };
+    console.log("GK3_EVAL " + JSON.stringify(out)); return { ...out, misses: res.misses, fas: res.fas, rows: res.rows };
   }
   const IMPROVER = `You maintain the instructions of an automated code reviewer. You get its current instructions, the planted bugs it missed on training reviews (with the reason each is a bug), and its false alarms.
 Write at most two NEW general rules that would make it catch more of these misses or raise fewer of these false alarms on code it has never seen.
@@ -444,6 +449,16 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   const withRules = (list) => BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n") + "\n\nExtra field:") : BASE + "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
   let rules = BASE, learned = [], rejected = [];
   let best = await evalRules(BAGMODE ? "round A (rule bag)" : "v12", rules);
+  // Paired sign-flip test on per-review net differences (same task, same trial), one split at a time.
+  const paired = (a, b, fit) => { const A = new Map(a.rows.filter((r) => r.fit === fit).map((r) => [r.k, r.net])); const d = b.rows.filter((r) => r.fit === fit && A.has(r.k)).map((r) => r.net - A.get(r.k));
+    const obs = d.reduce((x, y) => x + y, 0); let hit = 0, rnd = 12345; const R = 20000;
+    for (let i = 0; i < R; i++) { let t = 0; for (const x of d) { rnd = (rnd * 1103515245 + 12345) % 2147483648; t += rnd & 1024 ? x : -x; } if (t >= obs) hit++; }
+    return { diff: obs, reviews: d.length, changed: d.filter((x) => x).length, up: d.filter((x) => x > 0).length, down: d.filter((x) => x < 0).length, p: Math.round(1e4 * (hit + 1) / (R + 1)) / 1e4 }; };
+  if (BAGMODE && process.env.GK3_GATED) {
+    const g = await evalRules("round D gated", BAG.GATED);
+    const fired = P.tasks.map((t) => ({ task: t.id, rules: BAG.gate(t.prompts.gate_keeper).map((r) => r.id) })).filter((x) => x.rules.length);
+    console.log("GK3_GATED " + JSON.stringify({ base: { net: best.net, caught: best.caught, fa: best.fa, fit: best.fitNet, check: best.checkNet }, gated: { net: g.net, caught: g.caught, fa: g.fa, fit: g.fitNet, check: g.checkNet }, fit: paired(best, g, true), check: paired(best, g, false), fired: fired.length, of: P.tasks.length, firedOn: fired }));
+  }
   const fq = BAGMODE ? { net: null } : await evalRules("v12 focused x3", rules, true);
   for (let r = 1; r <= ROUNDS; r++) {
     const ms = tally(best.misses).slice(0, 14), fs = tally(best.fas).slice(0, 10);

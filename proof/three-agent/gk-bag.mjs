@@ -105,3 +105,21 @@ export function post(prompt, findings, fp = null) {
   const out = []; for (const f of [...fs].sort((a, b) => a.start - b.start)) { if (out.length && f.start - out[out.length - 1].start <= 1) continue; out.push(f); }
   return { out, dropped, moved, fpAdded, fpCut };
 }
+
+// Trigger-gated learned rules. Each rule has a code trigger (a line regex); the rule and the matching lines are shown to
+// the reviewer only on code where the trigger fires, so a rule cannot add false alarms on code it does not apply to.
+// Rule text follows: when <pattern>, check <X>; flag only if you can quote <evidence>; not when <exception>.
+export const GATED = [
+  { id: "ci-ident", source: "round D rule 1, gated by hand",
+    trigger: /\b(header|headers|email|e_mail|mail|domain|host|hostname|origin|scheme)\w*\b[^\n]*(===?|!==?|\.equals\(|\.get\(|\[\s*["'`]|\bin\b|startsWith|endsWith|contains\(|includes\()/i,
+    rule: "When code compares or looks up a protocol identifier (HTTP header name, email address, domain or host name), check the comparison is case-insensitive or normalised; flag only if you can quote the comparison line and no earlier line lowercases or normalises the value; not when comparing values the code itself already normalised or constants against constants." },
+  { id: "sec-transition", source: "round D rule 2, gated by hand",
+    trigger: /\b(set_?password|change_?password|reset_?password|update_?password|password\w*\s*=|passwd\w*\s*=|role\w*\s*=|is_?admin\s*=|permissions?\s*=|login\(|log_?in\(|sign_?in\(|authenticate\(|session\[|session\.\w+\s*=|regenerate|invalidate)/i,
+    rule: "When code changes a security state (login, password change or reset, role or permission change), check existing sessions or tokens are invalidated or regenerated and any secret comparison on that path is constant time; flag only if you can quote the line that saves the change and the function has no invalidation or regeneration; not when the context says sessions are stateless or the path is a trusted admin tool." },
+];
+
+export function gate(prompt, rules = GATED) {
+  const code = codeLines(prompt), on = [];
+  for (const r of rules) { const lines = [...code].filter(([, t]) => r.trigger.test(t)).map(([n]) => n); if (lines.length) on.push({ ...r, lines: lines.slice(0, 6) }); }
+  return on;
+}
