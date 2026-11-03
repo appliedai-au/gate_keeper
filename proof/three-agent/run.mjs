@@ -235,7 +235,14 @@ async function four(arm, task, trial) {
   }
   // Owen's grid, all from the same calls: find = run 1 only (f1) / either run (fu) / both runs (fb);
   // flag = no review (r0) / drop if >=1 reviewer flags it false (r1) / drop only if both flag it (r2); "m" = move to reviewer's fix line.
-  if (cand) {
+  // Variant "why": two more reviewers who also see the find runs' own reasoning (their checklists), same REVIEW rubric.
+  let rvW = [];
+  if (cand && cand.length && process.env.GK3_REVIEW_WHY) {
+    const why = [a, b].map((r, k) => { const t = r.text || ""; const j = t.lastIndexOf('{"findings"'); return `Find run ${k + 1} reasoning:\n` + (j > 0 ? t.slice(0, j) : t).slice(0, 3000); }).join("\n\n");
+    const list = cand.map((f, i) => `${i + 1}. line ${f.start}: ${f.comment}`).join("\n");
+    rvW = await Promise.all([1, 2].map((k) => turn(`gk_four/${id}/w${k}`, REVIEW, pr + "\n\n" + why + "\n\nCandidate findings:\n" + list)));
+  }
+  const grid = (rv, tag) => {
     const Vg = rv.map((r) => { const vs = r.status === "done" ? jsonFindings(r.text, "verdicts") : null; if (!vs) return null; const m = new Map(); for (const v of vs) m.set(Number(v?.id), v); return m; });
     const pa = fa ? BAG.post(pr, fa, null).out : [], pb = fb ? BAG.post(pr, fb, null).out : [];
     const inA = (c) => pa.some((f) => Math.abs(f.start - c.start) <= 1), inB = (c) => pb.some((f) => Math.abs(f.start - c.start) <= 1);
@@ -247,7 +254,8 @@ async function four(arm, task, trial) {
     const fsec = { f1: a.seconds || 0, fu: Math.max(a.seconds || 0, b.seconds || 0), fb: Math.max(a.seconds || 0, b.seconds || 0) };
     const rcost = rv.reduce((x, r) => x + (r.cost || 0), 0), rsec = Math.max(0, ...rv.map((r) => r.seconds || 0));
     for (const fk of ["f1", "fu", "fb"]) for (const rk of ["r0", "r1", "r2"]) for (const mv of rk === "r0" ? [""] : ["", "m"]) {
-      const name = `grid_${fk}_${rk}${mv}`; let out;
+      if (tag && rk === "r0") continue;
+      const name = `grid_${tag}${fk}_${rk}${mv}`; let out;
       if (rk !== "r0" && !usable.length) out = null;
       else { out = []; cand.forEach((c, i) => { if (!sel[fk](c)) return; const fl = rk === "r0" ? 0 : flags(i);
         if (rk === "r1" && fl >= 1) return; if (rk === "r2" && fl >= Math.min(2, usable.length)) return;
@@ -257,7 +265,8 @@ async function four(arm, task, trial) {
         cost: fcost[fk] + (rk === "r0" ? 0 : rcost), seconds: fsec[fk] + (rk === "r0" ? 0 : rsec), calls: (fk === "f1" ? 1 : 2) + (rk === "r0" ? 0 : rv.length) };
       rows.push(row); console.log("GK3_ROW " + JSON.stringify(row));
     }
-  }
+  };
+  if (cand) { grid(rv, ""); if (rvW.length) grid(rvW, "why_"); }
   const calls4 = [a, b, ...rv], cost = calls4.reduce((s, r) => s + (r.cost || 0), 0), seconds = Math.max(a.seconds || 0, b.seconds || 0) + Math.max(0, ...rv.map((r) => r.seconds || 0));
   for (const [name, fs, c, sec] of [["gk_four_find2", cand, (a.cost || 0) + (b.cost || 0), Math.max(a.seconds || 0, b.seconds || 0)], [arm, final, cost, seconds]]) {
     const row = { arm: name, task: task.id, trial, status: a.status, cached: !!a.cached, ...score(task.expected, fs, task.benign || []), cost: c, seconds: sec, calls: name === arm ? calls4.length : 2, ...(name === arm ? { reviewOk, reviewStatus: rv.map((r) => r.status) } : {}) };
