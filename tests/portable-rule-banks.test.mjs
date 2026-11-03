@@ -22,11 +22,11 @@ function run(bankFile, rule = proposal(), extra = {}) {
     let seq = 0; const sessions = new Map();
     globalThis.fetch = () => { throw new Error('network forbidden'); };
     globalThis.GK3_SDK = { TrueForge: class { sessions = {
-      create: async ({agent,metadata}) => { const id = String(++seq); sessions.set(id,{sys:agent.spec.instructions,label:metadata.label}); return {data:{id}}; },
+      create: async ({agent,metadata}) => { const id = String(++seq); sessions.set(id,{sys:agent.spec.instructions,label:metadata.label,temperature:agent.spec.model.params.temperature}); return {data:{id}}; },
       createTurn: async (id, {input}) => {
         const s = sessions.get(id); let text; const prompt = input.map(x => x.content).join('\\n');
-        if (s.label.startsWith('i/improve-')) { console.log('MOCK_LEARNER '+JSON.stringify({label:s.label,instructions:s.sys,prompt})); text = JSON.stringify({rules:[${JSON.stringify(rule)}],why:'Synthetic rule proposal'}); }
-        else { console.log('MOCK_REQUEST '+JSON.stringify({label:s.label,instructions:s.sys,prompt,good:s.sys.includes('TEST_GOOD_RULE'),bad:s.sys.includes('TEST_BAD_RULE')}));
+        if (s.label.startsWith('i/improve-')) { console.log('MOCK_LEARNER '+JSON.stringify({label:s.label,instructions:s.sys,prompt,temperature:s.temperature})); text = JSON.stringify({rules:[${JSON.stringify(rule)}],why:'Synthetic rule proposal'}); }
+        else { console.log('MOCK_REQUEST '+JSON.stringify({label:s.label,instructions:s.sys,prompt,temperature:s.temperature,good:s.sys.includes('TEST_GOOD_RULE'),bad:s.sys.includes('TEST_BAD_RULE')}));
           const fs = s.sys.includes('TEST_BAD_RULE') ? [] : [{line:10,quote:'danger()',comment:'Synthetic defect'}];
           if(s.sys.includes('TEST_GOOD_RULE')) fs.push({line:20,quote:'danger2()',comment:'Second synthetic defect'});
           if(s.sys.includes('TEST_BAD_RULE')) fs.push({line:99,quote:'safe()',comment:'Synthetic false alarm'});
@@ -154,4 +154,11 @@ test('an independent rule probe uses its own cache and never promotes the rule',
   assert.ok(c.netChange < 0);
   assert.equal(records(b, 'GK3_SUMMARY')[0].best.net, 2);
   assert.equal(JSON.parse(readFileSync(path, 'utf8')).accepted.length, 0);
+}));
+
+test('learner temperature changes leave every finding call at baseline temperature', () => fixture((path) => {
+  const r = run(path, proposal(), { GK3_LEARNER_TEMPERATURE: '0.7' });
+  success(r);
+  assert.ok(records(r, 'MOCK_LEARNER').every((x) => x.temperature === 0.7));
+  assert.ok(records(r, 'MOCK_REQUEST').every((x) => x.temperature === 0.2));
 }));

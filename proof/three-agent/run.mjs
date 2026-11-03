@@ -481,6 +481,8 @@ async function improve() {
     const out = { tag, net: res.caught - res.fa, caught: res.caught, of: P.tasks.reduce((a, t) => a + t.expected.length, 0) * TRIALS, fa: res.fa, fitNet: res.fit, checkNet: res.val, unparsed: res.unparsed, avgS: Math.round(10 * res.sec / res.n) / 10, avgUsd: Math.round(1e6 * res.cost / res.n) / 1e6 };
     console.log("GK3_EVAL " + JSON.stringify(out)); return { ...out, misses: res.misses, fas: res.fas, rows: res.rows };
   }
+  const LEARNER_TEMP = process.env.GK3_LEARNER_TEMPERATURE === undefined ? null : Number(process.env.GK3_LEARNER_TEMPERATURE);
+  if (LEARNER_TEMP !== null && (!Number.isFinite(LEARNER_TEMP) || LEARNER_TEMP < 0 || LEARNER_TEMP > 1)) throw new Error("invalid learner temperature");
   const STRUCTURED_IMPROVER = `You improve a code reviewer that uses two consecutive finding passes. You receive its current instructions, training misses with ground-truth explanations, false alarms, and rejected earlier rule attempts.
 Write exactly ONE new conditional reviewing rule that addresses the most repeated underlying decision error, rather than a list of bug topics.
 Choose the narrowest justified scope: general, language, or stack. A language-specific behavior must not be asserted for other languages. Stack rules must name a framework visible in the supplied code/context. Language ids: python, js (JavaScript/TypeScript), go, jvm, c, rust, cs, php, ruby.
@@ -517,7 +519,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     addedFalseAlarms: fitDelta(before, after, "fas", "added"),
     removedFalseAlarms: fitDelta(before, after, "fas", "removed"),
   });
-  console.log("GK3_START " + JSON.stringify({ improve: true, structuredRules: STRUCTURED_RULES, learnedRulePlacement: process.env.GK3_LEARN_PASS2_ONLY ? "second finding pass only" : "both finding passes", learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
+  console.log("GK3_START " + JSON.stringify({ improve: true, structuredRules: STRUCTURED_RULES, learnerTemperature: LEARNER_TEMP ?? P.params.temperature, learnedRulePlacement: process.env.GK3_LEARN_PASS2_ONLY ? "second finding pass only" : "both finding passes", learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
   const BASE = P.agents.gate_keeper.system;
   const bank = STRUCTURED_RULES ? loadRuleBank() : { accepted: [], harmful: [], unproven: [], history: [] };
   const records = new Map(bank.accepted.flatMap((e) => (e.rules || []).map((rule) => [rule, e.scope || { kind: "general" }])));
@@ -580,12 +582,12 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     const ask = (STRUCTURED_RULES ? "Learning cycle " + r + " of " + ROUNDS + ". Produce a new supported distinction, not a previously rejected formulation.\n\n" : "") + (contexts ? "Fit-only example code and stated context (for checking guards, not memorizing identifiers):\n" + contexts + "\n\n" : "") + "Current instructions:\n" + rules + (STRUCTURED_RULES ? "\n\nNegative-learning records (exact formulations and measured context; not universal bug-category bans):\n" + JSON.stringify(bank.harmful.slice(-8).map((e) => ({ rules: e.rules, scope: e.scope, baseline: e.baseline, candidate: e.candidate }))) + "\n\nUnproven proposals (not classified as harmful):\n" + JSON.stringify(bank.unproven.slice(-4).map((e) => ({ rules: e.rules, scope: e.scope, reason: e.reason, baseline: e.baseline, candidate: e.candidate }))) : "") + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n") +
       "\n\nFalse alarms:\n" + fs.map((f) => `- [${f.n}x] line ${f.line}: \`${f.code}\` — reviewer said: ${f.comment}`).join("\n") + (rejected.length ? "\n\nRules already tried that did not help (do not propose these again):\n" + rejected.map((x) => "- " + x).join("\n") : "");
     const feedbackAsk = DELTA_LEARNING ? ask + "\n\nMeasured changes caused by recent proposals (fit tasks only):\n" + JSON.stringify(priorFeedback.map((e) => ({ rules: e.rules, scope: e.scope, baseline: e.baseline, candidate: e.candidate, fitFeedback: e.fitFeedback }))) + "\nDiagnose why a previous instruction lost real bugs or introduced false alarms. Prefer a narrow positive inspection procedure over another broad reporting restriction. A named framework helper is not proof of a safety guarantee: require the actual stated implementation or documented behavior; do not invent guarantees. Keep task details out of the proposed reusable rule." : ask;
-    let rr = await turn(`i/improve-r${r}`, IMPROVER, feedbackAsk, GM);
+    let rr = await turn(`i/improve-r${r}`, IMPROVER, feedbackAsk, GM, LEARNER_TEMP);
     let rawRules = jsonFindings(rr.text, "rules") || [];
     const parseConditional = (xs) => xs.filter((x) => x && ["when", "evidence", "unless"].every((k) => typeof x[k] === "string" && x[k].trim().length >= 8))
       .filter((x) => [x.when, x.evidence, x.unless].join(" ").trim().split(/\s+/).length <= 160)
       .filter((x) => !P.tasks.some((t) => JSON.stringify(x).includes(t.id)))
-      .map((x) => ({ ...x, scope: x.scope || { kind: "general", languages: [], frameworks: [] } }))
+      .map((x) => ({ ...x, scope: { ...(x.scope || { kind: "general", languages: [], frameworks: [] }), ...(x.codeTokens && !x.scope?.codeTokens ? { codeTokens: x.codeTokens } : {}) } }))
       .filter((x) => ["general", "language", "stack"].includes(x.scope.kind) && (!x.scope.languages || Array.isArray(x.scope.languages) && x.scope.languages.every((v) => typeof v === "string")) && (!x.scope.frameworks || Array.isArray(x.scope.frameworks) && x.scope.frameworks.every((v) => typeof v === "string")))
       .filter((x) => x.scope.kind !== "language" || x.scope.languages?.length)
       .filter((x) => x.scope.kind !== "stack" || x.scope.frameworks?.length)
@@ -594,7 +596,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     // A malformed proposal gets one formatting repair within the same learning cycle.
     if (STRUCTURED_RULES && rawRules.length && !conditional.length) {
       console.log("GK3_RULE_REPAIR " + JSON.stringify({ round: r, proposed: rawRules }));
-      rr = await turn(`i/improve-r${r}/repair`, IMPROVER, "Repair this proposal to the required JSON schema. Keep the condition/evidence/exception but shorten to at most90words; no task names. Required fields: scope, when, evidence, unless.\n" + JSON.stringify(rawRules), GM);
+      rr = await turn(`i/improve-r${r}/repair`, IMPROVER, "Repair this proposal to the required JSON schema. Keep the condition/evidence/exception but shorten to at most90words; no task names. Required fields: scope, when, evidence, unless.\n" + JSON.stringify(rawRules), GM, LEARNER_TEMP);
       rawRules = jsonFindings(rr.text, "rules") || []; conditional = parseConditional(rawRules);
     }
     const nr = STRUCTURED_RULES
