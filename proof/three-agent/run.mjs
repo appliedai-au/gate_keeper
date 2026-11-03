@@ -233,6 +233,31 @@ async function four(arm, task, trial) {
       final.push({ ...f, start: line, end: line }); });
     final = BAG.post(pr, final.map(({ quote, ...f }) => f), null).out; }
   }
+  // Owen's grid, all from the same calls: find = run 1 only (f1) / either run (fu) / both runs (fb);
+  // flag = no review (r0) / drop if >=1 reviewer flags it false (r1) / drop only if both flag it (r2); "m" = move to reviewer's fix line.
+  if (cand) {
+    const Vg = rv.map((r) => { const vs = r.status === "done" ? jsonFindings(r.text, "verdicts") : null; if (!vs) return null; const m = new Map(); for (const v of vs) m.set(Number(v?.id), v); return m; });
+    const pa = fa ? BAG.post(pr, fa, null).out : [], pb = fb ? BAG.post(pr, fb, null).out : [];
+    const inA = (c) => pa.some((f) => Math.abs(f.start - c.start) <= 1), inB = (c) => pb.some((f) => Math.abs(f.start - c.start) <= 1);
+    const sel = { f1: inA, fu: () => true, fb: (c) => inA(c) && inB(c) };
+    const usable = Vg.filter(Boolean);
+    const flags = (i) => usable.filter((m) => m.get(i + 1)?.real === false).length;
+    const fixLine = (i, c) => { for (const m of usable) { const v = m.get(i + 1); const l = Number(v?.line); if (v?.real !== false && Number.isInteger(l) && Math.abs(l - c.start) <= 8) return l; } return c.start; };
+    const fcost = { f1: a.cost || 0, fu: (a.cost || 0) + (b.cost || 0), fb: (a.cost || 0) + (b.cost || 0) };
+    const fsec = { f1: a.seconds || 0, fu: Math.max(a.seconds || 0, b.seconds || 0), fb: Math.max(a.seconds || 0, b.seconds || 0) };
+    const rcost = rv.reduce((x, r) => x + (r.cost || 0), 0), rsec = Math.max(0, ...rv.map((r) => r.seconds || 0));
+    for (const fk of ["f1", "fu", "fb"]) for (const rk of ["r0", "r1", "r2"]) for (const mv of rk === "r0" ? [""] : ["", "m"]) {
+      const name = `grid_${fk}_${rk}${mv}`; let out;
+      if (rk !== "r0" && !usable.length) out = null;
+      else { out = []; cand.forEach((c, i) => { if (!sel[fk](c)) return; const fl = rk === "r0" ? 0 : flags(i);
+        if (rk === "r1" && fl >= 1) return; if (rk === "r2" && fl >= Math.min(2, usable.length)) return;
+        const l = mv ? fixLine(i, c) : c.start; out.push({ start: l, end: l }); });
+        out = BAG.post(pr, out, null).out; }
+      const row = { arm: name, task: task.id, trial, status: a.status, ...score(task.expected, out, task.benign || []),
+        cost: fcost[fk] + (rk === "r0" ? 0 : rcost), seconds: fsec[fk] + (rk === "r0" ? 0 : rsec), calls: (fk === "f1" ? 1 : 2) + (rk === "r0" ? 0 : rv.length) };
+      rows.push(row); console.log("GK3_ROW " + JSON.stringify(row));
+    }
+  }
   const calls4 = [a, b, ...rv], cost = calls4.reduce((s, r) => s + (r.cost || 0), 0), seconds = Math.max(a.seconds || 0, b.seconds || 0) + Math.max(0, ...rv.map((r) => r.seconds || 0));
   for (const [name, fs, c, sec] of [["gk_four_find2", cand, (a.cost || 0) + (b.cost || 0), Math.max(a.seconds || 0, b.seconds || 0)], [arm, final, cost, seconds]]) {
     const row = { arm: name, task: task.id, trial, status: a.status, cached: !!a.cached, ...score(task.expected, fs, task.benign || []), cost: c, seconds: sec, calls: name === arm ? calls4.length : 2, ...(name === arm ? { reviewOk, reviewStatus: rv.map((r) => r.status) } : {}) };
