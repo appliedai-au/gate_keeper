@@ -407,17 +407,24 @@ async function improve() {
       const id = `i/${tag}/${task.id}/t${trial}`, pr = task.prompts.gate_keeper;
       let rs, fs;
       if (BAGMODE) { // the rule-bag Gate Keeper: rule packs + hints before the call, code checks after. Base rules reuse gk_bag's cached replies.
-        const prep = BAG.prepare(sys, pr, {});
-        rs = [await turn(sys === BASE ? `gk_bag/${task.id}/t${trial}` : id, prep.system, prep.prompt)];
+        const prep = BAG.prepare(sys, pr, {}), base = sys === BASE;
+        rs = [await turn(base ? `gk_bag/${task.id}/t${trial}` : id, prep.system, prep.prompt)];
         const raw = rs[0].status === "done" ? toF(jsonFindings(rs[0].text)) : null;
         fs = raw ? BAG.post(pr, raw, null).out : null;
+        // GK3_IMPROVE_CHAIN=2: a second, consecutive run sees run 1's findings and reports only new ones (same as gk_chain).
+        for (let k = 2; k <= Number(process.env.GK3_IMPROVE_CHAIN || "1"); k++) {
+          const list = (fs || []).length ? fs.map((f) => `- line ${f.start}: ${f.comment}`).join("\n") : "(none)";
+          const r2 = await turn(base ? `gk_chain/${task.id}/t${trial}/c${k}` : `${id}/c${k}`, prep.system, prep.prompt + CHAIN_ASK.replace("%LIST%", list));
+          rs.push(r2); const more = r2.status === "done" ? toF(jsonFindings(r2.text)) : null;
+          if (more) fs = BAG.post(pr, [...(fs || []), ...more], null).out;
+        }
       } else {
         rs = focused ? await Promise.all(FOCUS.map((x, i) => turn(id + "/f" + i, sys, pr + x, GM))) : [await turn(id, sys, pr, GM)];
         const parts = rs.map(toSpans); fs = parts.some(Boolean) ? merge(parts.filter(Boolean).flat()) : null;
       }
       const sc = score(task.expected, fs, task.benign || []), code = codeOf(task);
       res.caught += sc.caught; res.fa += sc.extra; res[isFit(task) ? "fit" : "val"] += sc.caught - sc.extra; res.n++; if (!sc.parsed) res.unparsed++;
-      res.cost += rs.reduce((a, r) => a + (r.cost || 0), 0); res.sec += Math.max(...rs.map((r) => r.seconds || 0));
+      res.cost += rs.reduce((a, r) => a + (r.cost || 0), 0); res.sec += BAGMODE ? rs.reduce((a, r) => a + (r.seconds || 0), 0) : Math.max(...rs.map((r) => r.seconds || 0));
       if (fs) { for (const w of task.why) if (!fs.some((f) => Math.abs(f.start - w.line) <= 1)) res.misses.push({ task: task.id, line: w.line, code: code.get(w.line) || "", why: w.why });
         for (const f of fs) if (!task.expected.some((l) => Math.abs(l - f.start) <= 1) && !(task.benign || []).some((l) => Math.abs(l - f.start) <= 1)) res.fas.push({ task: task.id, line: f.start, code: code.get(f.start) || "", comment: f.comment }); }
       console.log("GK3_ROW " + JSON.stringify({ arm: tag, task: task.id, trial, ...sc }));
