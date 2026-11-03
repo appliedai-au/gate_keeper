@@ -129,7 +129,7 @@ test('literal selectors inspect code, not contextual mentions, and preserve unma
   success(r);
   assert.ok(records(r, 'MOCK_REQUEST').every((x) => !x.good));
   const bank = JSON.parse(readFileSync(path, 'utf8'));
-  assert.equal(bank.unproven[0].coveredTasks, 0);
+  assert.equal(bank.unproven[0].status, 'unscored-no-fit-coverage');
   assert.equal(bank.accepted.length, 0);
   assert.equal(records(r, 'GK3_SUMMARY')[0].best.net, 2);
 }));
@@ -141,4 +141,17 @@ test('literal code selectors activate when all tokens occur in code', () => fixt
   assert.ok(records(r, 'MOCK_REQUEST').some((x) => x.label.endsWith('/c2') && x.good));
   assert.equal(JSON.parse(readFileSync(path, 'utf8')).accepted[0].coveredTasks, 2);
   assert.equal(records(r, 'GK3_SUMMARY')[0].best.net, 4);
+}));
+
+test('an independent rule probe uses its own cache and never promotes the rule', () => fixture((path) => {
+  const a = run(path, proposal('general', true)); success(a);
+  const id = JSON.parse(readFileSync(path, 'utf8')).harmful[0].id;
+  const b = run(path, proposal(), { GK3_ROUNDS: '0', GK3_PROBE_RULE_ID: id, GK3_PROBE_CACHE_TAG: 'synthetic-pair', GK3_CACHE_DIR: path + '-cache' });
+  success(b);
+  const c = records(b, 'GK3_CONFIRMATION')[0];
+  assert.equal(c.ruleId, id);
+  assert.equal(c.promoted, false);
+  assert.ok(c.netChange < 0);
+  assert.equal(records(b, 'GK3_SUMMARY')[0].best.net, 2);
+  assert.equal(JSON.parse(readFileSync(path, 'utf8')).accepted.length, 0);
 }));

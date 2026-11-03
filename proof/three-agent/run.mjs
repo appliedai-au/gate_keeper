@@ -549,6 +549,25 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     const fired = P.tasks.map((t) => ({ task: t.id, rules: BAG.gate(t.prompts.gate_keeper).map((r) => r.id) })).filter((x) => x.rules.length);
     console.log("GK3_GATED " + JSON.stringify({ base: { net: best.net, caught: best.caught, fa: best.fa, fit: best.fitNet, check: best.checkNet }, gated: { net: g.net, caught: g.caught, fa: g.fa, fit: g.fitNet, check: g.checkNet }, fit: paired(best, g, true), check: paired(best, g, false), fired: fired.length, of: P.tasks.length, firedOn: fired }));
   }
+  // A named unproven rule can receive an independent paired repeat without promotion.
+  if (STRUCTURED_RULES && process.env.GK3_PROBE_RULE_ID) {
+    const e = [...bank.unproven, ...bank.harmful, ...bank.accepted].find((x) => x.id === process.env.GK3_PROBE_RULE_ID);
+    if (!e?.rules?.length || !CACHE || !process.env.GK3_PROBE_CACHE_TAG) throw new Error("probe requires existing rule, cache and unique confirmation tag");
+    for (const rule of e.rules) records.set(rule, e.scope || { kind: "general" });
+    const oldCache = CACHE;
+    try {
+      CACHE = oldCache + "/confirmation-" + process.env.GK3_PROBE_CACHE_TAG.replace(/[^a-zA-Z0-9_-]/g, "_");
+      mkdirSync(CACHE, { recursive: true });
+      const freshBase = await evalRules("fresh confirmation baseline", BASE);
+      const freshCandidate = await evalRules("fresh confirmation candidate", { learnedRules: e.rules });
+      const result = { kind: "independent-rule-confirmation", ruleId: e.id, source: process.env.GK3_COMMIT, model: GM,
+        cacheTag: process.env.GK3_PROBE_CACHE_TAG, baseline: { net: freshBase.net, caught: freshBase.caught, fa: freshBase.fa, fit: freshBase.fitNet, check: freshBase.checkNet, unparsed: freshBase.unparsed },
+        candidate: { net: freshCandidate.net, caught: freshCandidate.caught, fa: freshCandidate.fa, fit: freshCandidate.fitNet, check: freshCandidate.checkNet, unparsed: freshCandidate.unparsed },
+        netChange: freshCandidate.net - freshBase.net, promoted: false };
+      bank.history.push(result); saveRuleBank(bank);
+      console.log("GK3_CONFIRMATION " + JSON.stringify(result));
+    } finally { CACHE = oldCache; }
+  }
   const fq = BAGMODE ? { net: null } : await evalRules("v12 focused x3", rules, true);
   for (let r = 1; r <= ROUNDS; r++) {
     // Conditional-rule learning sees fit tasks only; t6 remains an internal training check.
@@ -588,6 +607,13 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     }
     if (STRUCTURED_RULES) for (let i = 0; i < nr.length; i++) records.set(nr[i], conditional[i].scope);
     const candRules = STRUCTURED_RULES ? { learnedRules: [...learned, ...nr] } : withRules([...learned, ...nr]);
+    if (STRUCTURED_RULES && process.env.GK3_CODE_SELECTORS && !P.tasks.filter(isFit).some((t) => appliesToCode(conditional[0].scope, t.prompts.gate_keeper))) {
+      const reason = "All selector tokens must co-occur in one supplied fit-task code example. These selectors match none; do not mix alternative APIs or languages in an ALL selector.";
+      bank.unproven.push({ id: createHash("sha256").update(JSON.stringify(conditional)).digest("hex"), status: "unscored-no-fit-coverage", rules: nr, scope: conditional[0].scope, reason, model: GM, source: process.env.GK3_COMMIT });
+      saveRuleBank(bank);
+      console.log("GK3_IMPROVE " + JSON.stringify({ round: r, error: reason, proposed: conditional }));
+      continue;
+    }
     const c = await evalRules(BAGMODE ? `round ${"BCDEFG"[r - 1]}` : `r${r}`, candRules);
     const ok = c.net - best.net >= GAIN && c.fitNet >= best.fitNet && c.checkNet >= best.checkNet && c.unparsed <= best.unparsed;
     if (STRUCTURED_RULES) {
