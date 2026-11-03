@@ -8,7 +8,14 @@ const PRICE = (process.env.GK3_PRICE_PER_MTOK || "0.3,1.2").split(",").map(Numbe
 const CAP = Number(process.env.GK3_CAP_USD || "0.5"), TRIALS = Number(process.env.GK3_TRIALS || "1");
 const ARMS = (process.env.GK3_ARMS || "codex,qodo,gate_keeper").split(",");
 const CONC = Number(process.env.GK3_CONCURRENCY || "3");
+// Explicit agent behavior: leave historical plain runs unchanged unless requested.
+const GK_MERGE = process.env.GK3_GK_MERGE === "1";
+if (!Number.isFinite(CAP) || CAP < 0) throw new Error("GK3_CAP_USD must be finite and non-negative");
+if (process.env.GK3_GK_MERGE && !GK_MERGE) throw new Error("GK3_GK_MERGE must be 1 or unset");
 const P = JSON.parse(gunzipSync(Buffer.from(process.env.GK3_PAYLOAD_B64, "base64")).toString("utf8"));
+const EXPECT_GK_SHA = process.env.GK3_EXPECT_GK_SHA256;
+if (EXPECT_GK_SHA && createHash("sha256").update(P.agents.gate_keeper.system).digest("hex") !== EXPECT_GK_SHA)
+  throw new Error("Gate Keeper prompt does not match GK3_EXPECT_GK_SHA256");
 const tf = new TrueForge({ baseUrl: process.env.TRUEFORGE_BASE_URL, token: process.env.TRUEFORGE_TOKEN, timeoutInSeconds: 60 });
 let spent = 0, reserved = 0, calls = 0;
 // Same for every agent. Reviews are non-interactive: no one can answer TrueForge's built-in ask_user_question
@@ -95,6 +102,17 @@ function parse(arm, text) {
     const l = Number(x?.line); return Number.isInteger(l) ? { start: l, end: l } : null;
   }).filter(Boolean);
 }
+// Gate Keeper post-processing, shared by plain comparison, pipeline and improve.
+// Preserve the existing rule: compare each start to the last retained start (no chain merge).
+function merge(fs) {
+  if (!fs) return null;
+  const out = [];
+  for (const f of [...fs].sort((a, b) => a.start - b.start)) {
+    if (out.length && f.start - out[out.length - 1].start <= 1) continue;
+    out.push(f);
+  }
+  return out;
+}
 // A finding catches a planted bug when the bug's line is inside its range, plus or minus 1.
 // Findings on a task's "benign" lines (defensible but unplanted) count neither way.
 function score(expected, fs, benign = []) {
@@ -173,7 +191,9 @@ async function worker() {
     if (arm.endsWith("_vote")) { await vote(arm, task, trial); continue; }
     if (arm.endsWith("_duo")) { await duo(arm, task, trial); continue; }
     const r = await turn(`${arm}/${task.id}/t${trial}`, P.agents[arm].system, task.prompts[arm]);
-    const sc = score(task.expected, r.status === "done" ? parse(arm, r.text) : null, task.benign || []);
+    const parsed = r.status === "done" ? parse(arm, r.text) : null;
+    const fs = GK_MERGE && arm === "gate_keeper" ? merge(parsed) : parsed;
+    const sc = score(task.expected, fs, task.benign || []);
     const row = { arm, task: task.id, trial, status: r.status, finish: r.finishReason, source: r.source, outputNull: r.outputNull, reasoningChars: r.reasoningChars, tools: r.tools, ...sc, cost: r.cost, seconds: r.seconds, tokens: r.tokens, error: r.error };
     rows.push(row);
     console.log("GK3_ROW " + JSON.stringify(row));
@@ -195,7 +215,6 @@ async function pipe() {
   ].map((x) => `\n\nThis pass: hunt only ${x}, plus any rule stated in the context that the code breaks. Other defect types are covered by other passes; leave them out.`);
   const QSYS = sys + "\n\nExtra field: every finding also has `\"quote\"`: the code of the line it points at, copied character for character (without the line number).";
   const toSpans = (r) => r.status === "done" ? (jsonFindings(r.text) || null)?.map((x) => { const l = Number(x?.line); return Number.isInteger(l) ? { start: l, end: l, comment: String(x?.comment || "").slice(0, 200), quote: typeof x?.quote === "string" ? x.quote : "" } : null; }).filter(Boolean) ?? null : null;
-  const merge = (fs) => { if (!fs) return null; const out = []; for (const f of [...fs].sort((a, b) => a.start - b.start)) { if (out.length && f.start - out[out.length - 1].start <= 1) continue; out.push(f); } return out; };
   const norm = (x) => x.replace(/\s+/g, " ").trim();
   function anchor(prompt, fs) {
     if (!fs) return null; const code = new Map();
@@ -261,7 +280,6 @@ async function improve() {
   const FOCUS = ["untrusted input (pass 2) and identity and access (pass 3)", "state and concurrency (pass 4) and failure paths (pass 5)", "boundaries (pass 1) and semantics (pass 6)"]
     .map((x) => `\n\nThis pass: hunt only ${x}, plus any rule stated in the context that the code breaks. Other defect types are covered by other passes; leave them out.`);
   const toSpans = (r) => r.status === "done" ? (jsonFindings(r.text) || null)?.map((x) => { const l = Number(x?.line); return Number.isInteger(l) ? { start: l, end: l, comment: String(x?.comment || "").slice(0, 200) } : null; }).filter(Boolean) ?? null : null;
-  const merge = (fs) => { if (!fs) return null; const out = []; for (const f of [...fs].sort((a, b) => a.start - b.start)) { if (out.length && f.start - out[out.length - 1].start <= 1) continue; out.push(f); } return out; };
   const codeOf = (t) => { const m = new Map(); for (const x of t.prompts.gate_keeper.matchAll(/^\s*(\d+) \| ?(.*)$/gm)) m.set(+x[1], x[2].trim()); return m; };
   const isFit = (t) => !t.id.startsWith("t6-");
   async function evalRules(tag, sys, focused = false) {
@@ -377,7 +395,7 @@ Reply with only this JSON: {"verdicts":[{"line":12,"real":true,"trigger":"<= 15 
   for (const x of sum) console.log("GK3_MATRIX " + JSON.stringify(x));
   console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6 }));
 } else {
-console.log("GK3_START " + JSON.stringify({ runtime: RUNTIME, model: MODEL, set: P.set, arms: ARMS, trials: TRIALS, tasks: P.tasks.length, cap: CAP, params: P.params, sha256: P.sha256 }));
+console.log("GK3_START " + JSON.stringify({ runtime: RUNTIME, model: MODEL, set: P.set, arms: ARMS, gateKeeperMerge: GK_MERGE, gateKeeperSha256: createHash("sha256").update(P.agents.gate_keeper?.system || "").digest("hex"), commit: process.env.GK3_COMMIT || null, trials: TRIALS, tasks: P.tasks.length, cap: CAP, params: P.params, sha256: P.sha256 }));
 await Promise.all(Array.from({ length: CONC }, worker));
 const summary = Object.fromEntries([...new Set(rows.map((r) => r.arm))].map((a) => { const rs = rows.filter((r) => r.arm === a); const n = rs.length || 1;
   const caught = rs.reduce((s, r) => s + r.caught, 0), of = rs.reduce((s, r) => s + r.of, 0);

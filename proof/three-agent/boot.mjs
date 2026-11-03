@@ -15,7 +15,7 @@ const proxy = startProxy({ port: 8787, prefix });
 const privateHost = process.env.RAILWAY_PRIVATE_DOMAIN || "gk-native-runner.railway.internal";
 // Register whichever model is configured on the proxied provider, and always run through it.
 const m = (process.env.GK3_MODEL || "deepseek-v4-flash-0731").replace(/^[^/]+\//, "");
-process.env.GK3_MODEL = "tfy-direct/" + m;
+process.env.GK3_MODEL = "tfy-direct/" + m.replace(/\./g, "-");
 // Optional second model for Gate Keeper's two-model design, on the same proxied provider.
 const m2 = (process.env.GK3_MODEL_B || "").replace(/^[^/]+\//, "");
 if (m2) process.env.GK3_MODEL_B = "tfy-direct/" + m2.replace(/\./g, "-");
