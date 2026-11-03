@@ -88,7 +88,7 @@ export function prepare(baseSystem, prompt, { strict = false, maxHints = 14 } = 
   return { system: sys, prompt: user, lang, rules: rules.length, hints: list.length };
 }
 
-const EMPTY = /^\s*(\/\/.*|#.*|\/\*.*|\*.*|--.*|[{}()[\];,]*|import\b.*|from\s+\S+\s+import\b.*|package\b.*|using\s+[\w.]+;|use\s+[\w:]+;|#include.*|<\?php)?\s*$/;
+const EMPTY = /^\s*(\/\/.*|#(?:\s.*|!.*)?|\/\*.*|\*(?:\s.*|\/.*)?|--\s.*|[{}()[\];,]*|import\b.*|from\s+\S+\s+import\b.*|package\b.*|using\s+[\w.]+;|use\s+[\w:]+;|#include.*|<\?php)?\s*$/;
 export function post(prompt, findings, fp = null) {
   if (!findings) return { out: null, dropped: 0, moved: 0, fpAdded: 0, fpCut: 0 };
   const code = codeLines(prompt), N = (s) => s.replace(/\s+/g, " ").trim();

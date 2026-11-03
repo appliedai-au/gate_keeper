@@ -24,8 +24,12 @@ import { mkdirSync, readFileSync as rfs, writeFileSync as wfs, existsSync } from
 let CACHE = process.env.GK3_CACHE_DIR || "";
 if (CACHE) { try { mkdirSync(CACHE, { recursive: true }); wfs(CACHE + "/.probe", "1"); } catch (e) { console.log("GK3_CACHE_OFF " + String(e?.code || e)); CACHE = ""; } }
 let hits = 0;
-const cacheKey = (label, model, instructions, prompt, temperature, maxTokens) =>
-  createHash("sha256").update(JSON.stringify([model, temperature, maxTokens, instructions, prompt, (label.match(/\/t(\d+)(\/|$)/) || [])[1] || "1"])).digest("hex");
+// Key = inputs + trial + any per-sample suffix after /t<n> (vote's a/b samples stay distinct).
+const cacheKey = (label, model, instructions, prompt, temperature, maxTokens) => {
+  const m = label.match(/\/t(\d+)((?:\/.*)?)$/) || [], k = [model, temperature, maxTokens, instructions, prompt, m[1] || "1"];
+  if (m[2]) k.push(m[2]);
+  return createHash("sha256").update(JSON.stringify(k)).digest("hex");
+};
 async function turn(label, instructions, prompt, model = MODEL, tempOverride = null) {
   const { maxTokens } = P.params; const temperature = tempOverride ?? P.params.temperature;
   const ck = CACHE ? CACHE + "/" + cacheKey(label, model, instructions, prompt, temperature, maxTokens) + ".json" : "";
