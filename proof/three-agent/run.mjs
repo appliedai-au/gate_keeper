@@ -1,7 +1,9 @@
 // Three-agent review test on stock TrueForge -> DeepSeek via TrueFoundry. Equal limits for every agent.
 import { gunzipSync } from "node:zlib";
-const { TrueForge } = await import("@truefoundry/trueforge-sdk");
-const MODEL = "truefoundry/deepseek-v4-flash-0731", PRICE = [0.3, 1.2];
+const { TrueForge } = globalThis.GK3_SDK ?? await import("@truefoundry/trueforge-sdk");
+// Model-agnostic: the same sealed tasks and locked agents rerun on any TrueFoundry model.
+const MODEL = process.env.GK3_MODEL || "truefoundry/deepseek-v4-flash-0731";
+const PRICE = (process.env.GK3_PRICE_PER_MTOK || "0.3,1.2").split(",").map(Number);
 const CAP = Number(process.env.GK3_CAP_USD || "0.5"), TRIALS = Number(process.env.GK3_TRIALS || "1");
 const ARMS = (process.env.GK3_ARMS || "codex,qodo,gate_keeper").split(",");
 const CONC = Number(process.env.GK3_CONCURRENCY || "3");
@@ -82,7 +84,7 @@ async function worker() {
     console.log("GK3_RAW " + `${arm}/${task.id}/t${trial} ` + JSON.stringify(r.text.slice(0, 6000)));
   }
 }
-console.log("GK3_START " + JSON.stringify({ set: P.set, arms: ARMS, trials: TRIALS, tasks: P.tasks.length, cap: CAP, params: P.params, sha256: P.sha256 }));
+console.log("GK3_START " + JSON.stringify({ model: MODEL, set: P.set, arms: ARMS, trials: TRIALS, tasks: P.tasks.length, cap: CAP, params: P.params, sha256: P.sha256 }));
 await Promise.all(Array.from({ length: CONC }, worker));
 const summary = Object.fromEntries(ARMS.map((a) => { const rs = rows.filter((r) => r.arm === a); const n = rs.length || 1;
   const caught = rs.reduce((s, r) => s + r.caught, 0), of = rs.reduce((s, r) => s + r.of, 0);
