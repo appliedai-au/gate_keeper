@@ -216,7 +216,7 @@ async function four(arm, task, trial) {
   const pr = task.prompts.gate_keeper, prep = BAG.prepare(P.agents.gate_keeper.system, pr, {}), id = `${task.id}/t${trial}`;
   const [a, b] = await Promise.all([turn(`gk_bag/${id}`, prep.system, prep.prompt), turn(`gk_four/${id}/f2`, prep.system, prep.prompt)]);
   const fa = a.status === "done" ? toF(jsonFindings(a.text)) : null, fb = b.status === "done" ? toF(jsonFindings(b.text)) : null;
-  const cand = (fa || fb) ? BAG.post(pr, [...(fa || []), ...(fb || [])], null).out : null;
+  let cand = (fa || fb) ? BAG.post(pr, [...(fa || []), ...(fb || [])], null).out : null;
   let final = cand, rv = [], reviewOk = null;
   if (cand && cand.length) {
     const list = cand.map((f, i) => `${i + 1}. line ${f.start}: ${f.comment}`).join("\n");
@@ -246,6 +246,7 @@ async function four(arm, task, trial) {
     const Vg = rv.map((r) => { const vs = r.status === "done" ? jsonFindings(r.text, "verdicts") : null; if (!vs) return null; const m = new Map(); for (const v of vs) m.set(Number(v?.id), v); return m; });
     const pa = fa ? BAG.post(pr, fa, null).out : [], pb = fb ? BAG.post(pr, fb, null).out : [];
     const inA = (c) => pa.some((f) => Math.abs(f.start - c.start) <= 1), inB = (c) => pb.some((f) => Math.abs(f.start - c.start) <= 1);
+    const need = { f1: !!fa, fu: !!(fa || fb), fb: !!(fa && fb) };
     const sel = { f1: inA, fu: () => true, fb: (c) => inA(c) && inB(c) };
     const usable = Vg.filter(Boolean);
     const flags = (i) => usable.filter((m) => m.get(i + 1)?.real === false).length;
@@ -256,7 +257,7 @@ async function four(arm, task, trial) {
     for (const fk of ["f1", "fu", "fb"]) for (const rk of ["r0", "r1", "r2"]) for (const mv of rk === "r0" ? [""] : ["", "m"]) {
       if (tag && rk === "r0") continue;
       const name = `grid_${tag}${fk}_${rk}${mv}`; let out;
-      if (rk !== "r0" && !usable.length) out = null;
+      if (!need[fk] || (rk !== "r0" && cand.length && !usable.length)) out = null;
       else { out = []; cand.forEach((c, i) => { if (!sel[fk](c)) return; const fl = rk === "r0" ? 0 : flags(i);
         if (rk === "r1" && fl >= 1) return; if (rk === "r2" && fl >= Math.min(2, usable.length)) return;
         const l = mv ? fixLine(i, c) : c.start; out.push({ start: l, end: l }); });
@@ -266,7 +267,7 @@ async function four(arm, task, trial) {
       rows.push(row); console.log("GK3_ROW " + JSON.stringify(row));
     }
   };
-  if (cand) { grid(rv, ""); if (rvW.length) grid(rvW, "why_"); }
+  cand = cand || []; grid(rv, ""); if (process.env.GK3_REVIEW_WHY) grid(rvW, "why_");
   const calls4 = [a, b, ...rv], cost = calls4.reduce((s, r) => s + (r.cost || 0), 0), seconds = Math.max(a.seconds || 0, b.seconds || 0) + Math.max(0, ...rv.map((r) => r.seconds || 0));
   for (const [name, fs, c, sec] of [["gk_four_find2", cand, (a.cost || 0) + (b.cost || 0), Math.max(a.seconds || 0, b.seconds || 0)], [arm, final, cost, seconds]]) {
     const row = { arm: name, task: task.id, trial, status: a.status, cached: !!a.cached, ...score(task.expected, fs, task.benign || []), cost: c, seconds: sec, calls: name === arm ? calls4.length : 2, ...(name === arm ? { reviewOk, reviewStatus: rv.map((r) => r.status) } : {}) };
