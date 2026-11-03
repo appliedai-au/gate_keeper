@@ -12,7 +12,7 @@ const P = JSON.parse(gunzipSync(Buffer.from(process.env.GK3_PAYLOAD_B64, "base64
 // Focused 10-cycle training: retain ONLY planted defects of one declared type. Other genuine
 // planted defects become neutral, not false alarms. The untouched t7 holdout is never loaded.
 const FAULT_TYPE = process.env.GK3_FAULT_TYPE || "";
-const FAULT_PATTERNS = { "concurrency-atomicity": /\\b(concurren\\w*|race|racing|atomic\\w*|interleav\\w*|lock\\w*|mutex|critical section|lost update|double[- ](charge|spend|write)|simultaneous|transaction\\w*|check.then.act|read.then.write|idempoten\\w*)\\b/i };
+const FAULT_PATTERNS = { "concurrency-atomicity": /\b(concurren\w*|race|racing|atomic\w*|interleav\w*|lock\w*|mutex|critical section|lost update|double[- ](charge|spend|write)|simultaneous|transaction\w*|check.then.act|read.then.write|idempoten\w*)\b/i };
 if (FAULT_TYPE) {
   const pattern = FAULT_PATTERNS[FAULT_TYPE];
   if (!pattern || !P.tasks.every((t) => /^t[456]-/.test(t.id))) throw new Error("GK3_FAULT_SCOPE_INVALID_OR_HOLDOUT");
