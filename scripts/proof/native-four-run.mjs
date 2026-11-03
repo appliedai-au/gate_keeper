@@ -219,6 +219,20 @@ const CONFIG = {
   dynamicSubAgents: { enabled: false },
   iterationLimit: 1,
 };
+// TrueForge always registers its built-in `get_current_datetime` tool and
+// offers no switch to remove it. The study approves no tools, so every
+// session is told not to call one, and any turn whose final message is a tool
+// call (or leaves a pending action) fails closed. With iterationLimit 1 no
+// tool result can ever reach the model.
+export const NO_TOOLS_DIRECTIVE =
+  "## Tools\nNo tools are approved for this study. Do not call any tool, including get_current_datetime. Answer directly in text.\n\n";
+export function assertNoToolUse(state) {
+  const out = state?.output;
+  if ((Array.isArray(out?.toolCalls) && out.toolCalls.length) ||
+      out?.finishReason === "tool_calls" ||
+      (Array.isArray(state?.requiredActions) && state.requiredActions.length))
+    fail("TOOL_CALL_FORBIDDEN");
+}
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /** Injectable TrueForge SDK runner; still enforces the signed admission even
@@ -270,7 +284,8 @@ export async function runNativeFour({
     writes++;
   };
 
-  async function nativeTurn({ arm, round, phase, instructions, prompt, maxTokens }) {
+  async function nativeTurn({ arm, round, phase, instructions: armText, prompt, maxTokens }) {
+    const instructions = NO_TOOLS_DIRECTIVE + armText;
     const reservation = budget.reserve(phase, phase + "/" + round + "/" + arm,
       instructions.length + prompt.length, maxTokens, MODEL);
     if (!reservation) fail("LOCAL_BUDGET_REFUSED");
@@ -305,6 +320,7 @@ export async function runNativeFour({
       if (turn?.state?.status !== "done") fail("MODEL_TURN_DEADLINE");
       const metrics = turn.state.metrics ?? null;
       budget.settle(reservation, metrics);
+      assertNoToolUse(turn.state);
       const text = textOf(turn.state.output);
       if (!text) fail("EMPTY_MODEL_OUTPUT");
       const record = {
