@@ -187,7 +187,7 @@ async function duo(arm, task, trial) {
 // Gate Keeper's rule bag (gk-bag.mjs): rule packs picked for this code, pattern hints, post-call filters and
 // fingerprints, still ONE model call per review. gk_bag = rules + hints; gk_bag_strict adds the Codex-style report bar.
 // Fingerprints come from GK3_FP_URL / payload P.fingerprints, built only from tasks outside the set being scored.
-const BAG = (process.env.GK3_BAG_PATH || ARMS.some((a) => a.startsWith("gk_"))) ? await import(process.env.GK3_BAG_PATH || "file:///tmp/gk3-bag.mjs") : null;
+const BAG = (process.env.GK3_BAG_PATH || (ARMS.some((a) => a.startsWith("gk_")) || process.env.GK3_IMPROVE_BAG)) ? await import(process.env.GK3_BAG_PATH || "file:///tmp/gk3-bag.mjs") : null;
 const FP = P.fingerprints || null;
 async function bag(arm, task, trial) {
   const strict = arm.includes("strict"), useFp = arm.includes("fp");
@@ -389,6 +389,9 @@ async function pipe() {
 // Each round: review the training tasks with the current rules (quote + code merge), show the improver the missed
 // bugs (with their reasons) and the false alarms, take at most two new general rules, re-run, and keep them only
 // if net rises by GK3_MIN_GAIN or more and neither split (t4-t5 fit, t6 check) gets worse. Scored by the same score().
+// GK3_IMPROVE_BAG=1: the same loop on the rule-bag Gate Keeper. Round A = current rules; after each round Gate Keeper
+// writes up to two new rules from its misses and false alarms, and round B, C, ... run with them (kept only past noise).
+const BAGMODE = !!process.env.GK3_IMPROVE_BAG;
 async function improve() {
   const GM = MODEL_B || MODEL, ROUNDS = Number(process.env.GK3_ROUNDS || "3"), GAIN = Number(process.env.GK3_MIN_GAIN || "8");
   const FOCUS = ["untrusted input (pass 2) and identity and access (pass 3)", "state and concurrency (pass 4) and failure paths (pass 5)", "boundaries (pass 1) and semantics (pass 6)"]
@@ -402,8 +405,16 @@ async function improve() {
     const res = { tag, fit: 0, val: 0, caught: 0, fa: 0, cost: 0, sec: 0, n: 0, unparsed: 0, misses: [], fas: [] };
     async function one({ trial, task }) {
       const id = `i/${tag}/${task.id}/t${trial}`, pr = task.prompts.gate_keeper;
-      const rs = focused ? await Promise.all(FOCUS.map((x, i) => turn(id + "/f" + i, sys, pr + x, GM))) : [await turn(id, sys, pr, GM)];
-      const parts = rs.map(toSpans), fs = parts.some(Boolean) ? merge(parts.filter(Boolean).flat()) : null;
+      let rs, fs;
+      if (BAGMODE) { // the rule-bag Gate Keeper: rule packs + hints before the call, code checks after. Base rules reuse gk_bag's cached replies.
+        const prep = BAG.prepare(sys, pr, {});
+        rs = [await turn(sys === BASE ? `gk_bag/${task.id}/t${trial}` : id, prep.system, prep.prompt)];
+        const raw = rs[0].status === "done" ? toF(jsonFindings(rs[0].text)) : null;
+        fs = raw ? BAG.post(pr, raw, null).out : null;
+      } else {
+        rs = focused ? await Promise.all(FOCUS.map((x, i) => turn(id + "/f" + i, sys, pr + x, GM))) : [await turn(id, sys, pr, GM)];
+        const parts = rs.map(toSpans); fs = parts.some(Boolean) ? merge(parts.filter(Boolean).flat()) : null;
+      }
       const sc = score(task.expected, fs, task.benign || []), code = codeOf(task);
       res.caught += sc.caught; res.fa += sc.extra; res[isFit(task) ? "fit" : "val"] += sc.caught - sc.extra; res.n++; if (!sc.parsed) res.unparsed++;
       res.cost += rs.reduce((a, r) => a + (r.cost || 0), 0); res.sec += Math.max(...rs.map((r) => r.seconds || 0));
@@ -425,8 +436,8 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   const BASE = P.agents.gate_keeper.system;
   const withRules = (list) => BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n") + "\n\nExtra field:") : BASE + "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
   let rules = BASE, learned = [], rejected = [];
-  let best = await evalRules("v12", rules);
-  const fq = await evalRules("v12 focused x3", rules, true);
+  let best = await evalRules(BAGMODE ? "round A (rule bag)" : "v12", rules);
+  const fq = BAGMODE ? { net: null } : await evalRules("v12 focused x3", rules, true);
   for (let r = 1; r <= ROUNDS; r++) {
     const ms = tally(best.misses).slice(0, 14), fs = tally(best.fas).slice(0, 10);
     const ask = "Current instructions:\n" + rules + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n") +
@@ -435,14 +446,14 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     const nr = (jsonFindings(rr.text, "rules") || []).filter((x) => typeof x === "string" && x.length > 10).slice(0, 2).map((x) => x.trim().slice(0, 300));
     if (!nr.length) { console.log("GK3_IMPROVE " + JSON.stringify({ round: r, error: "no rules", status: rr.status })); continue; }
     const candRules = withRules([...learned, ...nr]);
-    const c = await evalRules(`r${r}`, candRules);
+    const c = await evalRules(BAGMODE ? `round ${"BCDEFG"[r - 1]}` : `r${r}`, candRules);
     const ok = c.net - best.net >= GAIN && c.fitNet >= best.fitNet && c.checkNet >= best.checkNet;
     console.log("GK3_IMPROVE " + JSON.stringify({ round: r, rules: nr, why: (() => { try { return JSON.parse(rr.text.slice(rr.text.indexOf("{"), rr.text.lastIndexOf("}") + 1)).why; } catch { return null; } })(), base: { net: best.net, fit: best.fitNet, check: best.checkNet }, cand: { net: c.net, fit: c.fitNet, check: c.checkNet }, accepted: ok }));
     if (ok) { rules = candRules; learned = [...learned, ...nr]; best = c; } else rejected.push(...nr);
   }
   console.log("GK3_RULES " + JSON.stringify({ learned, sha256: createHash("sha256").update(rules).digest("hex") }));
   console.log("GK3_FINAL " + JSON.stringify(rules));
-  console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, best: { net: best.net, caught: best.caught, fa: best.fa }, focused: { net: fq.net, caught: fq.caught, fa: fq.fa, avgUsd: fq.avgUsd } }));
+  console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, best: { net: best.net, caught: best.caught, fa: best.fa }, focused: { net: fq.net, caught: fq.caught, fa: fq.fa, avgUsd: fq.avgUsd }, learned }));
 }
 if (process.env.GK3_IMPROVE) { await improve(); } else if (process.env.GK3_PIPE) { await pipe(); } else if (process.env.GK3_MATRIX) {
   const M = { ds: MODEL, oss: "tfy-direct/gpt-oss-120b", glm: "tfy-direct/glm-5-3-flash", mimo: "tfy-direct/mimo-v2-6-flash" };
