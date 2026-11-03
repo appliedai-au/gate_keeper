@@ -14,7 +14,7 @@ let spent = 0, reserved = 0, calls = 0;
 // tool, and a call to it ends the turn with no answer (seen in practice run 2). Everything else stays stock.
 const RUNTIME = { askUserQuestions: { enabled: false } };
 const est = (chars, out) => ((chars / 3 + 3000) * PRICE[0] + out * PRICE[1]) / 1e6;
-async function turn(label, instructions, prompt) {
+async function turn(label, instructions, prompt, model = MODEL) {
   const { temperature, maxTokens } = P.params;
   const reserve = est(instructions.length + prompt.length, maxTokens);
   if (spent + reserved + reserve > CAP) return { label, status: "BUDGET_STOP", text: "" };
@@ -22,7 +22,7 @@ async function turn(label, instructions, prompt) {
   const t0 = Date.now();
   let sid = null, st = null, tid = null;
   try {
-    const s = await tf.sessions.create({ agent: { spec: { model: { name: MODEL, params: { temperature, maxTokens } }, instructions, config: RUNTIME } },
+    const s = await tf.sessions.create({ agent: { spec: { model: { name: model, params: { temperature, maxTokens } }, instructions, config: RUNTIME } },
       metadata: { purpose: "gk-three-agent-" + P.set, label } });
     sid = s.data.id;
     let t = (await tf.sessions.createTurn(sid, { input: [{ type: "user.message", content: prompt }], previousTurnId: "none" }, { maxRetries: 0 })).data;
@@ -58,7 +58,7 @@ async function turn(label, instructions, prompt) {
     error: (st?.error || st?.message) ? JSON.stringify(st.error || st.message).slice(0, 300) : null, tokens: m ? { in: m.totalInputTokens, out: m.totalOutputTokens, reasoning: m.totalReasoningTokens ?? null } : null };
 }
 // Harness-level and the same for every agent: take the last balanced {...} with a findings array, wherever it sits in the reply.
-function jsonFindings(text) {
+function jsonFindings(text, key = "findings") {
   let best = null;
   for (let a = text.indexOf("{"); a >= 0; a = text.indexOf("{", a + 1)) {
     let d = 0, q = false, esc = false;
@@ -66,7 +66,7 @@ function jsonFindings(text) {
       const ch = text[i];
       if (q) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') q = false; continue; }
       if (ch === '"') q = true; else if (ch === "{") d++; else if (ch === "}" && --d === 0) {
-        try { const j = JSON.parse(text.slice(a, i + 1)); if (Array.isArray(j?.findings)) best = j.findings; } catch {}
+        try { const j = JSON.parse(text.slice(a, i + 1)); if (Array.isArray(j?.[key])) best = j[key]; } catch {}
         break;
       }
     }
@@ -121,6 +121,46 @@ async function vote(arm, task, trial) {
   }
   console.log("GK3_RAW " + `${arm}/${task.id}/t${trial} a=` + JSON.stringify(fa) + " b=" + JSON.stringify(fb));
 }
+// Gate Keeper agent design (two models), not harness scoring. "<agent>_duo" runs the agent's instructions on
+// model A (GK3_MODEL) and model B (GK3_MODEL_B) in parallel. A finding both report (within one line) is kept.
+// A finding only one reports goes to the other model as judge, and is kept only if the judge confirms it.
+// Every variant is scored by the same score(); the single-model and agree-only variants are logged for comparison.
+const MODEL_B = process.env.GK3_MODEL_B || "";
+const JUDGE = `You check another reviewer's findings on one change. For each finding, decide if it is a real defect a careful senior engineer would block the merge for.
+A finding is real only if you can name, from the code and context shown, the realistic input or state that triggers it and the wrong result. Style, speculation and hypotheticals are not real.
+Reply with only this JSON: {"verdicts":[{"line":12,"real":true,"trigger":"<= 15 words"}]}, one entry per finding, same line numbers.`;
+const near = (f, g) => g.start <= f.end + 1 && f.start <= g.end + 1;
+const asSpan = (x) => { const l = Number(x?.line); return Number.isInteger(l) ? { start: l, end: l, comment: String(x?.comment || "").slice(0, 300) } : null; };
+async function judge(label, task, base, model, items) {
+  if (!items.length) return { kept: [], cost: 0, seconds: 0 };
+  const list = items.map((f) => `- line ${f.start}: ${f.comment}`).join("\n");
+  const r = await turn(label, JUDGE, task.prompts[base] + "\n\nFindings to check:\n" + list, model);
+  const v = r.status === "done" ? (jsonFindings(r.text, "verdicts") || []) : [];
+  const ok = new Set(v.filter((x) => x?.real === true).map((x) => Number(x.line)));
+  console.log("GK3_JUDGE " + label + " " + JSON.stringify(v.map((x) => [x?.line, x?.real])));
+  return { kept: items.filter((f) => ok.has(f.start)), cost: r.cost || 0, seconds: r.seconds || 0 };
+}
+async function duo(arm, task, trial) {
+  const base = arm.slice(0, -4), sys = P.agents[base].system, pr = task.prompts[base], id = `${arm}/${task.id}/t${trial}`;
+  const [a, b] = await Promise.all([turn(id + "/a", sys, pr, MODEL), turn(id + "/b", sys, pr, MODEL_B)]);
+  const fa = a.status === "done" ? (jsonFindings(a.text) || null)?.map(asSpan).filter(Boolean) ?? null : null;
+  const fb = b.status === "done" ? (jsonFindings(b.text) || null)?.map(asSpan).filter(Boolean) ?? null : null;
+  const A = fa || [], B = fb || [];
+  const agree = A.filter((f) => B.some((g) => near(f, g)));
+  const onlyA = A.filter((f) => !B.some((g) => near(f, g))), onlyB = B.filter((g) => !A.some((f) => near(f, g)));
+  const [ja, jb] = await Promise.all([judge(id + "/judge-a-by-b", task, base, MODEL_B, onlyA), judge(id + "/judge-b-by-a", task, base, MODEL, onlyB)]);
+  const dedupe = (xs) => xs.filter((f, i) => !xs.slice(0, i).some((g) => near(f, g) && g.start === f.start));
+  const final = dedupe([...agree, ...ja.kept, ...jb.kept]);
+  const sec = Math.max(a.seconds || 0, b.seconds || 0) + Math.max(ja.seconds, jb.seconds);
+  const out = [[base + "_a", fa, a.cost, a.seconds, a], [base + "_b", fb, b.cost, b.seconds, b],
+    [base + "_agree", fa && fb ? agree : (fa || fb), (a.cost || 0) + (b.cost || 0), Math.max(a.seconds || 0, b.seconds || 0), a],
+    [arm, (fa || fb) ? final : null, (a.cost || 0) + (b.cost || 0) + ja.cost + jb.cost, sec, a]];
+  for (const [name, fs, cost, seconds, r] of out) {
+    const row = { arm: name, task: task.id, trial, status: r.status, ...score(task.expected, fs, task.benign || []), cost, seconds, error: r.error };
+    rows.push(row); console.log("GK3_ROW " + JSON.stringify(row));
+  }
+  console.log("GK3_RAW " + id + " a=" + JSON.stringify(A.map((f) => f.start)) + " b=" + JSON.stringify(B.map((f) => f.start)) + " final=" + JSON.stringify(final.map((f) => f.start)) + (b.status !== "done" ? " bErr=" + b.status + ":" + b.error : ""));
+}
 const jobs = [];
 for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) for (const arm of ARMS) jobs.push({ trial, task, arm });
 const rows = [];
@@ -128,6 +168,7 @@ async function worker() {
   while (jobs.length) {
     const { trial, task, arm } = jobs.shift();
     if (arm.endsWith("_vote")) { await vote(arm, task, trial); continue; }
+    if (arm.endsWith("_duo")) { await duo(arm, task, trial); continue; }
     const r = await turn(`${arm}/${task.id}/t${trial}`, P.agents[arm].system, task.prompts[arm]);
     const sc = score(task.expected, r.status === "done" ? parse(arm, r.text) : null, task.benign || []);
     const row = { arm, task: task.id, trial, status: r.status, finish: r.finishReason, source: r.source, outputNull: r.outputNull, reasoningChars: r.reasoningChars, tools: r.tools, ...sc, cost: r.cost, seconds: r.seconds, tokens: r.tokens, error: r.error };
