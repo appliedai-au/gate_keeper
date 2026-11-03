@@ -55,7 +55,7 @@ async function turn(label, instructions, prompt) {
   }
   const tools = (o?.toolCalls || []).map((x) => x?.function?.name ?? x?.name);
   return { label, status: st?.status, finishReason: o?.finishReason ?? null, tools, text, source, outputNull: o == null, reasoningChars: (o?.reasoningContent || "").length || streamReasoningChars, cost, seconds: Math.round((Date.now() - t0) / 100) / 10,
-    error: st?.error ? JSON.stringify(st.error).slice(0, 300) : null, tokens: m ? { in: m.totalInputTokens, out: m.totalOutputTokens, reasoning: m.totalReasoningTokens ?? null } : null };
+    error: (st?.error || st?.message) ? JSON.stringify(st.error || st.message).slice(0, 300) : null, tokens: m ? { in: m.totalInputTokens, out: m.totalOutputTokens, reasoning: m.totalReasoningTokens ?? null } : null };
 }
 // Harness-level and the same for every agent: take the last balanced {...} with a findings array, wherever it sits in the reply.
 function jsonFindings(text) {
