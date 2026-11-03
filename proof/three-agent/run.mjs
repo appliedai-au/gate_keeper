@@ -414,7 +414,13 @@ function saveRuleBank(b) {
   wfs(tmp, JSON.stringify(b)); renameSync(tmp, RULE_BANK_FILE);
 }
 function appliesToCode(scope, prompt) {
-  if (!scope || scope.kind === "general") return true;
+  if (!scope) return true;
+  // Optional literal code selectors narrow attention without executing model-written patterns.
+  if (process.env.GK3_CODE_SELECTORS && scope.codeTokens?.length) {
+    const code = [...prompt.matchAll(/^\s*\d+ \| ?(.*)$/gm)].map((m) => m[1]).join("\n");
+    if (!scope.codeTokens.every((token) => code.includes(token))) return false;
+  }
+  if (scope.kind === "general") return true;
   const lang = BAG.language(prompt), langs = scope.languages || [], frameworks = scope.frameworks || [];
   if (scope.kind === "language" && !langs.length) return false;
   if (langs.length && !langs.includes(lang)) return false;
@@ -488,7 +494,8 @@ Study false alarms as carefully as missed bugs. Prefer a decision procedure that
 The rule must generalize to unseen changes: no task names, filenames, product/function/variable names, literal constants or line numbers copied from examples. No new category-specific rule unless its evidence and safe exception are both explicit.
 Keep the combined rule under 90 words. If no useful new distinction is supported, return an empty rules array and explain why.
 Reply only with JSON: {"rules":[{"scope":{"kind":"general|language|stack","languages":[],"frameworks":[]},"when":"...","evidence":"...","unless":"..."}],"diagnosis":"the decision error causing misses or false alarms","why":"how the condition, proof and exception fix that error"}.`;
-  const IMPROVER = STRUCTURED_RULES ? STRUCTURED_IMPROVER : `You maintain the instructions of an automated code reviewer. You get its current instructions, the planted bugs it missed on training reviews (with the reason each is a bug), and its false alarms.
+  const selectorInstruction = process.env.GK3_CODE_SELECTORS ? "\nInclude scope.codeTokens: one to four literal API names, language keywords or operator fragments ALL present in applicable code, so this rule is only shown when relevant. Use stable library/API or syntax tokens, never task names, user-defined identifiers, copied strings or numeric constants. A selector routes attention; it does not prove a defect. Keep the condition, evidence and safe exception. Do not add reporting-location heuristics just to match training labels." : "";
+  const IMPROVER = STRUCTURED_RULES ? STRUCTURED_IMPROVER + selectorInstruction : `You maintain the instructions of an automated code reviewer. You get its current instructions, the planted bugs it missed on training reviews (with the reason each is a bug), and its false alarms.
 Write at most two NEW general rules that would make it catch more of these misses or raise fewer of these false alarms on code it has never seen.
 - Each rule is one sentence of at most 40 words, about a kind of defect or a reviewing habit, never about one task: no file, function, variable or product names from the examples.
 - Do not repeat or reword a rule the instructions already have. Prefer the pattern behind the most misses.
@@ -562,7 +569,8 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
       .map((x) => ({ ...x, scope: x.scope || { kind: "general", languages: [], frameworks: [] } }))
       .filter((x) => ["general", "language", "stack"].includes(x.scope.kind) && (!x.scope.languages || Array.isArray(x.scope.languages) && x.scope.languages.every((v) => typeof v === "string")) && (!x.scope.frameworks || Array.isArray(x.scope.frameworks) && x.scope.frameworks.every((v) => typeof v === "string")))
       .filter((x) => x.scope.kind !== "language" || x.scope.languages?.length)
-      .filter((x) => x.scope.kind !== "stack" || x.scope.frameworks?.length).slice(0, 1);
+      .filter((x) => x.scope.kind !== "stack" || x.scope.frameworks?.length)
+      .filter((x) => !process.env.GK3_CODE_SELECTORS || Array.isArray(x.scope.codeTokens) && x.scope.codeTokens.length >= 1 && x.scope.codeTokens.length <= 4 && x.scope.codeTokens.every((t) => typeof t === "string" && t.trim().length >= 2 && t.length <= 60 && !t.includes("\n"))).slice(0, 1);
     let conditional = parseConditional(rawRules);
     // A malformed proposal gets one formatting repair within the same learning cycle.
     if (STRUCTURED_RULES && rawRules.length && !conditional.length) {

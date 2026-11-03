@@ -121,3 +121,24 @@ test('second-pass-only learning preserves every first finding prompt', () => fix
   assert.ok(second.some((x) => x.good));
   assert.equal(records(r, 'GK3_SUMMARY')[0].best.net, 4);
 }));
+
+test('literal selectors inspect code, not contextual mentions, and preserve unmatched reviews', () => fixture((path) => {
+  const rule = proposal();
+  rule.scope.codeTokens = ['Context: synthetic'];
+  const r = run(path, rule, { GK3_CODE_SELECTORS: '1', GK3_LEARN_PASS2_ONLY: '1' });
+  success(r);
+  assert.ok(records(r, 'MOCK_REQUEST').every((x) => !x.good));
+  const bank = JSON.parse(readFileSync(path, 'utf8'));
+  assert.equal(bank.unproven[0].coveredTasks, 0);
+  assert.equal(bank.accepted.length, 0);
+  assert.equal(records(r, 'GK3_SUMMARY')[0].best.net, 2);
+}));
+test('literal code selectors activate when all tokens occur in code', () => fixture((path) => {
+  const rule = proposal();
+  rule.scope.codeTokens = ['danger()', 'danger2()'];
+  const r = run(path, rule, { GK3_CODE_SELECTORS: '1', GK3_LEARN_PASS2_ONLY: '1' });
+  success(r);
+  assert.ok(records(r, 'MOCK_REQUEST').some((x) => x.label.endsWith('/c2') && x.good));
+  assert.equal(JSON.parse(readFileSync(path, 'utf8')).accepted[0].coveredTasks, 2);
+  assert.equal(records(r, 'GK3_SUMMARY')[0].best.net, 4);
+}));
