@@ -223,7 +223,7 @@ Reply with only this JSON: {"verdicts":[{"line":12,"real":true,"trigger":"<= 15 
           out = []; const need = how === "duo" ? 2 : 2;
           for (let i = 0; i < fs.length; i++) for (const f of fs[i]) { if (out.some((g) => near(f, g))) continue;
             if (count(f) >= need) { out.push(f); continue; }
-            const judge = how === "duo" ? G[use[1 - i]][1] : (G[use[i]][1] === "ds" ? "oss" : "ds");
+            let judge = how === "duo" ? G[use[1 - i]][1] : (G[use[i]][1] === "ds" ? "oss" : "ds"); if (!JM.includes(judge)) judge = G[use[i]][1] === "oss" ? "ds" : "oss";
             if (!judges.includes(judge)) judges.push(judge);
             if (jv[judge].ok.has(f.start)) out.push(f); }
         } else if (how.startsWith("check:") || how.startsWith("union:")) {
