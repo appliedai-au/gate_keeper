@@ -105,3 +105,19 @@ test('delta learning feeds fit-only regressions into the next learner, never rev
   }
   assert.equal(records(r, 'GK3_SUMMARY')[0].best.net, 2);
 }));
+
+test('second-pass-only learning preserves every first finding prompt', () => fixture((path) => {
+  const r = run(path, proposal(), { GK3_LEARN_PASS2_ONLY: '1' });
+  success(r);
+  const requests = records(r, 'MOCK_REQUEST');
+  const first = requests.filter((x) => !x.label.endsWith('/c2'));
+  const second = requests.filter((x) => x.label.endsWith('/c2'));
+  assert.ok(first.length > 0 && second.length > 0);
+  assert.ok(first.every((x) => x.label.startsWith('gk_bag/') && !x.good && !x.bad));
+  for (const task of ['t4-synthetic', 't6-synthetic']) {
+    const sameTask = first.filter((x) => x.label.includes(task));
+    assert.equal(new Set(sameTask.map((x) => x.instructions + x.prompt)).size, 1);
+  }
+  assert.ok(second.some((x) => x.good));
+  assert.equal(records(r, 'GK3_SUMMARY')[0].best.net, 4);
+}));

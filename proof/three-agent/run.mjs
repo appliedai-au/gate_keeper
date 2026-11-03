@@ -445,7 +445,11 @@ async function improve() {
         if (Array.isArray(sys)) { on = BAG.gate(pr, sys); s0 = on.length ? withRules(on.map((r) => r.rule)) : BASE; }
         const prep = BAG.prepare(s0, pr, {}), base = s0 === BASE;
         if (on.length) prep.prompt += "\n\nLines a learned rule's trigger matched (check them against that rule; many are fine): " + on.map((r) => r.lines.map((l) => "L" + l).join(", ")).join("; ") + ".";
-        rs = [await turn(base ? `gk_bag/${task.id}/t${trial}` : id, prep.system, prep.prompt)];
+        // Optional learning placement: keep the original first finding call exactly intact.
+        // The second call still sees that first call's findings and the applicable learned rules.
+        const keepFirst = !!process.env.GK3_LEARN_PASS2_ONLY && Number(process.env.GK3_IMPROVE_CHAIN || "1") >= 2;
+        const firstPrep = keepFirst ? BAG.prepare(BASE, pr, {}) : prep;
+        rs = [await turn(base || keepFirst ? `gk_bag/${task.id}/t${trial}` : id, firstPrep.system, firstPrep.prompt)];
         const raw = rs[0].status === "done" ? toF(jsonFindings(rs[0].text)) : null;
         fs = raw ? BAG.post(pr, raw, null).out : null;
         // GK3_IMPROVE_CHAIN=2: a second, consecutive run sees run 1's findings and reports only new ones (same as gk_chain).
@@ -506,7 +510,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     addedFalseAlarms: fitDelta(before, after, "fas", "added"),
     removedFalseAlarms: fitDelta(before, after, "fas", "removed"),
   });
-  console.log("GK3_START " + JSON.stringify({ improve: true, structuredRules: STRUCTURED_RULES, learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
+  console.log("GK3_START " + JSON.stringify({ improve: true, structuredRules: STRUCTURED_RULES, learnedRulePlacement: process.env.GK3_LEARN_PASS2_ONLY ? "second finding pass only" : "both finding passes", learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
   const BASE = P.agents.gate_keeper.system;
   const bank = STRUCTURED_RULES ? loadRuleBank() : { accepted: [], harmful: [], unproven: [], history: [] };
   const records = new Map(bank.accepted.flatMap((e) => (e.rules || []).map((rule) => [rule, e.scope || { kind: "general" }])));
