@@ -21,8 +21,8 @@ const RESERVE_OUT = Number(process.env.GK3_RESERVE_OUT || "0");
 // trial number return the stored reply, so runs 2, 3, 4 only pay for calls whose inputs changed. Same for every agent.
 // A cached row keeps the original call's cost and time, so per-review numbers stay comparable; only `spent` skips it.
 import { mkdirSync, readFileSync as rfs, writeFileSync as wfs, existsSync } from "node:fs";
-const CACHE = process.env.GK3_CACHE_DIR || "";
-if (CACHE) mkdirSync(CACHE, { recursive: true });
+let CACHE = process.env.GK3_CACHE_DIR || "";
+if (CACHE) { try { mkdirSync(CACHE, { recursive: true }); wfs(CACHE + "/.probe", "1"); } catch (e) { console.log("GK3_CACHE_OFF " + String(e?.code || e)); CACHE = ""; } }
 let hits = 0;
 const cacheKey = (label, model, instructions, prompt, temperature, maxTokens) =>
   createHash("sha256").update(JSON.stringify([model, temperature, maxTokens, instructions, prompt, (label.match(/\/t(\d+)(\/|$)/) || [])[1] || "1"])).digest("hex");
