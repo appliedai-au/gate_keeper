@@ -3,9 +3,9 @@
 This is an internal training dry run. It is not recorded, so nothing here is written up or signed. Gate Keeper is compared with the unchanged OpenAI Codex review rubric and Qodo PR-Agent (cap 20) on stock TrueForge, with models served through TrueFoundry. Owen's goal is to improve the agent, not to compare LLMs.
 
 ## State of the repo
-- **PR #40** (`fix/native-four-runtime-tools`): the no-tools directive, failing closed on tool calls, and the TrueForge 0.182.0 allow-list. Its description was corrected on 3 Nov: 0.182.0 alone does **not** fix the DeepSeek stream error. What fixes it is the SSE reframing proxy in this folder (`sse-proxy.mjs`, custom provider `tfy-direct`).
-- **PR #41** (`study/three-agent-review`): this harness (`run.mjs`, `boot.mjs`, `sse-proxy.mjs`, `mkimprove.mjs`), the Gate Keeper prompt versions v2–v12, and the training payloads. Gitar's one open finding is the tranche-6 contamination. It is addressed in `HOLDOUTS.md` and in the payload names (`train-t4-t5-t6burned-*`), but Gitar keeps restating it against the old file name. It can be dismissed.
-- Merging is Owen's click. The agent's merge call was refused twice by the session's safety check.
+- **PR #40** (`fix/native-four-runtime-tools`) is **merged** into main (squash 5841ca5, 3 Nov). It holds the no-tools directive, failing closed on tool calls, and the TrueForge 0.182.0 allow-list. Its description was corrected on 3 Nov: 0.182.0 alone does **not** fix the DeepSeek stream error. What fixes it is the SSE reframing proxy in this folder (`sse-proxy.mjs`, custom provider `tfy-direct`).
+- **PR #41** (`study/three-agent-review`) is **still open**. It holds this harness (`run.mjs`, `boot.mjs`, `sse-proxy.mjs`, `mkimprove.mjs`), the Gate Keeper prompt versions v2–v12, and the training payloads. Gitar's one open finding is the tranche-6 contamination. It is addressed in `HOLDOUTS.md` and in the payload names (`train-t4-t5-t6burned-*`), but Gitar keeps restating it against the old file name. It can be dismissed.
+- #41 needs Owen's merge click: the agent's merge call was refused by the session's safety check while Gitar's finding is still open. Dismiss Gitar's finding, mark the PR ready, and merge it.
 
 ## Frozen default
 - **Model:** `glm-5.3-flash` through TrueFoundry (`tfy-managed/glm-5.3-flash`, registered in TrueForge as `glm-5-3-flash`). Owen picked it on 3 Nov.
