@@ -22,7 +22,7 @@ const gk = readFileSync(gkFile, "utf8");
 const payload = {
   set: set === "practice" ? "practice" : set.split("/").filter(Boolean).pop(), params: { temperature: 0.2, maxTokens: 8000 },
   agents: { codex: { system: codex }, qodo: { system: qodo.system }, qodo_cap3: { system: qodo3.system }, gate_keeper: { system: gk } },
-  tasks: tasks.map((t) => ({ id: t.id, expected: t.expected.map((e) => e.line),
+  tasks: tasks.map((t) => ({ id: t.id, expected: t.expected.map((e) => e.line), benign: Array.isArray(t.benign) ? t.benign : [],
     prompts: { codex: taskPrompt(t), gate_keeper: taskPrompt(t), qodo: qodo.users[t.id], qodo_cap3: qodo3.users[t.id] } })),
 };
 payload.sha256 = { codex: sha(codex), qodo_system: sha(qodo.system), qodo_cap3_system: sha(qodo3.system), gate_keeper: sha(gk), tasks: sha(JSON.stringify(payload.tasks)) };

@@ -64,11 +64,18 @@ function parse(arm, text) {
     const l = Number(x?.line); return Number.isInteger(l) ? { start: l, end: l } : null;
   }).filter(Boolean);
 }
-function score(expected, fs) {
-  if (!fs) return { parsed: false, caught: 0, of: expected.length, extra: 0 };
-  const open = [...expected]; let caught = 0, extra = 0;
-  for (const f of fs) { const i = open.findIndex((l) => l >= f.start - 1 && l <= f.end + 1); if (i >= 0) { open.splice(i, 1); caught++; } else extra++; }
-  return { parsed: true, caught, of: expected.length, extra };
+// A finding catches a planted bug when the bug's line is inside its range, plus or minus 1.
+// Findings on a task's "benign" lines (defensible but unplanted) count neither way.
+function score(expected, fs, benign = []) {
+  if (!fs) return { parsed: false, caught: 0, of: expected.length, extra: 0, neutral: 0 };
+  const open = [...expected]; let caught = 0, extra = 0, neutral = 0;
+  for (const f of fs) {
+    const i = open.findIndex((l) => l >= f.start - 1 && l <= f.end + 1);
+    if (i >= 0) { open.splice(i, 1); caught++; }
+    else if (benign.some((l) => l >= f.start - 1 && l <= f.end + 1)) neutral++;
+    else extra++;
+  }
+  return { parsed: true, caught, of: expected.length, extra, neutral };
 }
 const jobs = [];
 for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) for (const arm of ARMS) jobs.push({ trial, task, arm });
@@ -77,7 +84,7 @@ async function worker() {
   while (jobs.length) {
     const { trial, task, arm } = jobs.shift();
     const r = await turn(`${arm}/${task.id}/t${trial}`, P.agents[arm].system, task.prompts[arm]);
-    const sc = score(task.expected, r.status === "done" ? parse(arm, r.text) : null);
+    const sc = score(task.expected, r.status === "done" ? parse(arm, r.text) : null, task.benign || []);
     const row = { arm, task: task.id, trial, status: r.status, finish: r.finishReason, tools: r.tools, ...sc, cost: r.cost, seconds: r.seconds, tokens: r.tokens, error: r.error };
     rows.push(row);
     console.log("GK3_ROW " + JSON.stringify(row));
