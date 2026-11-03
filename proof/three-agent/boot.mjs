@@ -10,9 +10,9 @@ globalThis.GK3_SDK ??= await import("@truefoundry/trueforge-sdk");
 const { startProxy } = await import("file:///tmp/gk3-sse-proxy.mjs");
 const { randomBytes } = await import("node:crypto");
 const prefix = randomBytes(16).toString("hex");
-const proxy = startProxy({ port: Number(process.env.PORT || 8787), prefix });
-const publicHost = process.env.RAILWAY_PUBLIC_DOMAIN;
-if (!publicHost) { console.error("GK3_PUBLIC_DOMAIN_MISSING"); process.exit(2); }
+const proxy = startProxy({ port: 8787, prefix });
+// Private network only. TrueForge's SSRF guard must list this host in OUTBOUND_URL_ALLOWED_HOSTS.
+const privateHost = process.env.RAILWAY_PRIVATE_DOMAIN || "gk-native-runner.railway.internal";
 // Register whichever model is configured on the proxied provider, and always run through it.
 const m = (process.env.GK3_MODEL || "deepseek-v4-flash-0731").replace(/^[^/]+\//, "");
 process.env.GK3_MODEL = "tfy-direct/" + m;
@@ -20,7 +20,7 @@ const key = process.env.GK_TFY_PAT || "";
 if (key.length < 20) { console.error("GK3_PAT_MISSING"); process.exit(2); }
 const tf = new globalThis.GK3_SDK.TrueForge({ baseUrl: process.env.TRUEFORGE_BASE_URL, token: process.env.TRUEFORGE_TOKEN, timeoutInSeconds: 60 });
 await tf.settings.modelProviders.createOrUpdate({ manifest: { type: "custom", name: "tfy-direct",
-  baseUrl: "https://" + publicHost + "/" + prefix + "/api/llm", auth: { apiKey: key },
+  baseUrl: "http://" + privateHost + ":8787/" + prefix + "/api/llm", auth: { apiKey: key },
   models: [{ name: m, modelId: "tfy-managed/" + m, properties: {} }] } });
 console.log("GK3_BOOT " + c + " " + process.env.GK3_PAYLOAD + " model " + process.env.GK3_MODEL + " via sse-proxy");
 await import("file:///tmp/gk3-run.mjs");

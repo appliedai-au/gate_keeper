@@ -21,9 +21,9 @@ export function reframe() {
     flush(ctl) { buf += dec.decode(); if (buf.trim()) ctl.enqueue(enc.encode(buf + "\n\n")); },
   });
 }
-// prefix: a per-run random path segment. TrueForge refuses private hosts, so the proxy is
-// reached through a public Railway domain; requests without the prefix get 404. The proxy
-// never adds credentials: it forwards the caller's own Authorization header.
+// prefix: a per-run random path segment; requests without it get 404. Reached over Railway's
+// private network only. The proxy never adds credentials: it forwards the caller's own
+// Authorization header.
 export function startProxy({ port = 8787, upstream = "https://stranger-builds.truefoundry.cloud", prefix = "" } = {}) {
   let requests = 0, reframed = 0, rejected = 0;
   const server = http.createServer(async (req, res) => {
