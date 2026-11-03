@@ -438,6 +438,9 @@ async function improve() {
   const merge = (fs) => { if (!fs) return null; const out = []; for (const f of [...fs].sort((a, b) => a.start - b.start)) { if (out.length && f.start - out[out.length - 1].start <= 1) continue; out.push(f); } return out; };
   const codeOf = (t) => { const m = new Map(); for (const x of t.prompts.gate_keeper.matchAll(/^\s*(\d+) \| ?(.*)$/gm)) m.set(+x[1], x[2].trim()); return m; };
   const isFit = (t) => !t.id.startsWith("t6-");
+  const learnerExcluded = new Set((process.env.GK3_LEARN_EXCLUDE_TASKS || "").split(",").filter(Boolean));
+  if ([...learnerExcluded].some((id) => !P.tasks.some((t) => t.id === id))) throw new Error("unknown learner exclusion");
+  const canTeach = (x) => !x.task.startsWith("t6-") && !learnerExcluded.has(x.task);
   async function evalRules(tag, sys, focused = false) {
     const q = []; for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) q.push({ trial, task });
     const res = { tag, fit: 0, val: 0, caught: 0, fa: 0, cost: 0, sec: 0, n: 0, unparsed: 0, misses: [], fas: [], rows: [] };
@@ -506,8 +509,8 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   // Training diagnostics are learner-only: never appended to a finding call.
   const DELTA_LEARNING = !!process.env.GK3_DELTA_LEARNING;
   const fitDelta = (before, after, field, direction) => {
-    const a = new Map(tally(before[field].filter((x) => isFit({ id: x.task }))).map((x) => [x.task + ":" + x.line, x]));
-    const b = new Map(tally(after[field].filter((x) => isFit({ id: x.task }))).map((x) => [x.task + ":" + x.line, x]));
+    const a = new Map(tally(before[field].filter(canTeach)).map((x) => [x.task + ":" + x.line, x]));
+    const b = new Map(tally(after[field].filter(canTeach)).map((x) => [x.task + ":" + x.line, x]));
     const from = direction === "added" ? b : a, to = direction === "added" ? a : b;
     return [...from].map(([k, x]) => ({ ...x, occurrencesChanged: x.n - (to.get(k)?.n || 0) }))
       .filter((x) => x.occurrencesChanged > 0).sort((x, y) => y.occurrencesChanged - x.occurrencesChanged).slice(0, 6);
@@ -519,7 +522,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     addedFalseAlarms: fitDelta(before, after, "fas", "added"),
     removedFalseAlarms: fitDelta(before, after, "fas", "removed"),
   });
-  console.log("GK3_START " + JSON.stringify({ improve: true, structuredRules: STRUCTURED_RULES, learnerTemperature: LEARNER_TEMP ?? P.params.temperature, learnedRulePlacement: process.env.GK3_LEARN_PASS2_ONLY ? "second finding pass only" : "both finding passes", learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
+  console.log("GK3_START " + JSON.stringify({ improve: true, structuredRules: STRUCTURED_RULES, learnerTemperature: LEARNER_TEMP ?? P.params.temperature, learnedRulePlacement: process.env.GK3_LEARN_PASS2_ONLY ? "second finding pass only" : "both finding passes", learnerExcludedTasks: [...learnerExcluded], learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
   const BASE = P.agents.gate_keeper.system;
   const bank = STRUCTURED_RULES ? loadRuleBank() : { accepted: [], harmful: [], unproven: [], history: [] };
   const records = new Map(bank.accepted.flatMap((e) => (e.rules || []).map((rule) => [rule, e.scope || { kind: "general" }])));
@@ -573,9 +576,9 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   const fq = BAGMODE ? { net: null } : await evalRules("v12 focused x3", rules, true);
   for (let r = 1; r <= ROUNDS; r++) {
     // Conditional-rule learning sees fit tasks only; t6 remains an internal training check.
-    const fitOnly = (xs) => STRUCTURED_RULES ? xs.filter((x) => !x.task.startsWith("t6-")) : xs;
+    const fitOnly = (xs) => STRUCTURED_RULES ? xs.filter(canTeach) : xs;
     const ms = tally(fitOnly(best.misses)).slice(0, 14), fs = tally(fitOnly(best.fas)).slice(0, 10);
-    const priorFeedback = DELTA_LEARNING ? [...bank.harmful, ...bank.unproven].filter((e) => e.fitFeedback).slice(-3) : [];
+    const priorFeedback = DELTA_LEARNING ? [...bank.harmful, ...bank.unproven].filter((e) => e.fitFeedback).slice(-3).map((e) => ({ ...e, fitFeedback: { ...e.fitFeedback, ...Object.fromEntries(["lostRealBugs", "recoveredRealBugs", "addedFalseAlarms", "removedFalseAlarms"].map((k) => [k, (e.fitFeedback[k] || []).filter(canTeach)])) } })) : [];
     const regressionExamples = priorFeedback.flatMap((e) => [...e.fitFeedback.lostRealBugs, ...e.fitFeedback.addedFalseAlarms]);
     const exampleIds = STRUCTURED_RULES ? [...new Set([...regressionExamples.slice(0, 2), ...ms.slice(0, 3), ...fs.slice(0, 3)].map((x) => x.task))].slice(0, 4) : [];
     const contexts = exampleIds.map((id) => P.tasks.find((t) => t.id === id)?.prompts.gate_keeper || "").map((x) => x.slice(0, 5000)).join("\n\n---\n\n");
@@ -609,7 +612,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     }
     if (STRUCTURED_RULES) for (let i = 0; i < nr.length; i++) records.set(nr[i], conditional[i].scope);
     const candRules = STRUCTURED_RULES ? { learnedRules: [...learned, ...nr] } : withRules([...learned, ...nr]);
-    if (STRUCTURED_RULES && process.env.GK3_CODE_SELECTORS && !P.tasks.filter(isFit).some((t) => appliesToCode(conditional[0].scope, t.prompts.gate_keeper))) {
+    if (STRUCTURED_RULES && process.env.GK3_CODE_SELECTORS && !P.tasks.filter((t) => isFit(t) && !learnerExcluded.has(t.id)).some((t) => appliesToCode(conditional[0].scope, t.prompts.gate_keeper))) {
       const reason = "All selector tokens must co-occur in one supplied fit-task code example. These selectors match none; do not mix alternative APIs or languages in an ALL selector.";
       bank.unproven.push({ id: createHash("sha256").update(JSON.stringify(conditional)).digest("hex"), status: "unscored-no-fit-coverage", rules: nr, scope: conditional[0].scope, reason, model: GM, source: process.env.GK3_COMMIT });
       saveRuleBank(bank);

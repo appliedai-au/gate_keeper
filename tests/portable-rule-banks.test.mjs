@@ -162,3 +162,15 @@ test('learner temperature changes leave every finding call at baseline temperatu
   assert.ok(records(r, 'MOCK_LEARNER').every((x) => x.temperature === 0.7));
   assert.ok(records(r, 'MOCK_REQUEST').every((x) => x.temperature === 0.2));
 }));
+
+test('disputed task is excluded from learner truth but retained in benchmark scoring', () => fixture((path) => {
+  const r = run(path, proposal(), { GK3_LEARN_EXCLUDE_TASKS: 't4-synthetic' });
+  success(r);
+  const learners = records(r, 'MOCK_LEARNER');
+  assert.ok(learners.length > 0);
+  assert.ok(learners.every((x) => !x.prompt.includes('FIT_ONLY_TRUTH') && !x.prompt.includes('CHECK_ONLY_TRUTH')));
+  const rows = records(r, 'GK3_ROW');
+  assert.ok(rows.some((x) => x.task === 't4-synthetic'));
+  assert.ok(rows.some((x) => x.task === 't6-synthetic'));
+  assert.equal(records(r, 'GK3_SUMMARY')[0].best.net, 4);
+}));
