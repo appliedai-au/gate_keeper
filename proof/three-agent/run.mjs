@@ -557,7 +557,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   // A negative lesson is remembered but never activated as a reviewer rule.
   const priorProposals = [...bank.accepted, ...bank.harmful, ...bank.unproven];
   const seenIds = new Set(priorProposals.map((e) => e.id).filter(Boolean));
-  const normalizeRule = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\\s+/g, " ");
+  const normalizeRule = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
   const seenTexts = new Set(priorProposals.flatMap((e) => e.rules || []).map(normalizeRule));
   let rules = BASE, learned = [], rejected = [];
   if (STRUCTURED_RULES) saveRuleBank(bank);
