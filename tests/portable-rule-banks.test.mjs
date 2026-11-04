@@ -25,13 +25,21 @@ function run(bankFile, rule = proposal(), extra = {}) {
       create: async ({agent,metadata}) => { const id = String(++seq); sessions.set(id,{sys:agent.spec.instructions,label:metadata.label,temperature:agent.spec.model.params.temperature}); return {data:{id}}; },
       createTurn: async (id, {input}) => {
         const s = sessions.get(id); let text; const prompt = input.map(x => x.content).join('\\n');
+        const second = s.label.endsWith('/c2'), scenario = process.env.GK3_TEST_PASS_CASE || '';
+        const target = scenario.startsWith('first-') ? !second : scenario.startsWith('second-') ? second : false;
+        if (target && scenario.endsWith('-exception')) throw new Error('synthetic finding exception');
+        if (target && scenario.endsWith('-error')) return {data:{id:'turn',state:{status:'error',output:null,metrics:{totalCostInUsd:0,totalInputTokens:1,totalOutputTokens:1}}}};
+        if (target && scenario.endsWith('-invalid')) return {data:{id:'turn',state:{status:'done',output:{content:'invalid synthetic output'},metrics:{totalCostInUsd:0,totalInputTokens:1,totalOutputTokens:1}}}};
+        if (scenario === 'valid-empty' || (scenario === 'first-error-second-empty' && second)) return {data:{id:'turn',state:{status:'done',output:{content:'{"findings":[]}'},metrics:{totalCostInUsd:0,totalInputTokens:1,totalOutputTokens:1}}}};
+        if (scenario === 'first-error-second-empty' && !second) return {data:{id:'turn',state:{status:'error',output:null,metrics:{totalCostInUsd:0,totalInputTokens:1,totalOutputTokens:1}}}};
+
         if (s.label.startsWith('i/improve-')) { console.log('MOCK_LEARNER '+JSON.stringify({label:s.label,instructions:s.sys,prompt,temperature:s.temperature})); text = JSON.stringify({rules:[${JSON.stringify(rule)}],why:'Synthetic rule proposal'}); }
         else { console.log('MOCK_REQUEST '+JSON.stringify({label:s.label,instructions:s.sys,prompt,temperature:s.temperature,good:s.sys.includes('TEST_GOOD_RULE'),bad:s.sys.includes('TEST_BAD_RULE')}));
           const fs = s.sys.includes('TEST_BAD_RULE') ? [] : [{line:10,quote:'danger()',comment:'Synthetic defect'}];
           if(s.sys.includes('TEST_GOOD_RULE')) fs.push({line:20,quote:'danger2()',comment:'Second synthetic defect'});
           if(s.sys.includes('TEST_BAD_RULE')) fs.push({line:99,quote:'safe()',comment:'Synthetic false alarm'});
           text=JSON.stringify({findings:fs}); }
-        return {data:{id:'turn',state:{status:'done',output:{content:text},metrics:{totalCostInUsd:0,totalInputTokens:1,totalOutputTokens:1}}}};
+        return {data:{id:'turn',state:{status:'done',output:{content:text},metrics:{totalCostInUsd:!second ? Number(process.env.GK3_TEST_FIRST_COST || '0') : 0,totalInputTokens:1,totalOutputTokens:1}}}};
       }
     }; } };
     await import(${JSON.stringify(runUrl)});`;
@@ -205,5 +213,46 @@ test('invalid control repeat count fails before any model call', () => fixture((
     assert.notEqual(r.status, 0);
     assert.equal(records(r, 'MOCK_REQUEST').length, 0);
     assert.equal(records(r, 'MOCK_LEARNER').length, 0);
+  }
+}));
+
+test('controls reject any failed or malformed required pass even when the other pass parses', () => fixture((path) => {
+  for (const scenario of ['first-error', 'first-exception', 'first-invalid', 'second-error', 'second-invalid', 'first-error-second-empty']) {
+    const r = run(path, proposal(), { GK3_CONTROL_REPEATS: '3', GK3_TEST_PASS_CASE: scenario });
+    success(r);
+    const summary = records(r, 'GK3_SUMMARY')[0];
+    assert.equal(summary.complete, false, scenario);
+    assert.equal(summary.samples.length, 1, scenario);
+    assert.equal(summary.samples[0].incompleteFindingPasses, 2, scenario);
+    assert.equal(summary.samples[0].requiredFindingPasses, 4);
+    assert.equal(summary.samples[0].expectedReviews, 2);
+    assert.ok(summary.samples[0].rows.every((x) => !x.complete && x.passes.length === 2));
+    assert.equal(existsSync(path), false);
+  }
+}));
+test('two valid empty finding lists are complete controls', () => fixture((path) => {
+  const r = run(path, proposal(), { GK3_CONTROL_REPEATS: '2', GK3_TEST_PASS_CASE: 'valid-empty' });
+  success(r);
+  const summary = records(r, 'GK3_SUMMARY')[0];
+  assert.equal(summary.complete, true);
+  assert.equal(summary.samples.length, 2);
+  assert.ok(summary.samples.every((x) => x.incompleteFindingPasses === 0 && x.rows.every((r) => r.complete)));
+}));
+test('controls stop incomplete when the first pass consumes remaining budget', () => fixture((path) => {
+  const r = run(path, proposal(), { GK3_CONTROL_REPEATS: '2', GK3_CAP_USD: '10', GK3_TEST_FIRST_COST: '10' });
+  success(r);
+  const summary = records(r, 'GK3_SUMMARY')[0];
+  assert.equal(summary.complete, false);
+  assert.equal(summary.calls, 1);
+  assert.equal(summary.spentUsd, 10);
+  assert.ok(summary.samples[0].rows.some((x) => x.passes.some((p) => p.status === 'BUDGET_STOP')));
+}));
+test('controls refuse missing or invalid improve/bag/chain modes before any model call', () => fixture((path) => {
+  for (const override of [{GK3_IMPROVE:''}, {GK3_IMPROVE:'0'}, {GK3_IMPROVE_BAG:''}, {GK3_IMPROVE_BAG:'0'}, {GK3_IMPROVE_CHAIN:''}, {GK3_IMPROVE_CHAIN:'1'}, {GK3_IMPROVE_CHAIN:'3'}]) {
+    const r = run(path, proposal(), { GK3_CONTROL_REPEATS: '2', ...override });
+    assert.notEqual(r.status, 0);
+    assert.equal(records(r, 'MOCK_REQUEST').length, 0);
+    assert.equal(records(r, 'MOCK_LEARNER').length, 0);
+    assert.equal(existsSync(path), false);
   }
 }));

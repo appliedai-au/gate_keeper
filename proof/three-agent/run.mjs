@@ -37,6 +37,7 @@ const tf = new TrueForge({ baseUrl: process.env.TRUEFORGE_BASE_URL, token: proce
 let spent = 0, reserved = 0, calls = 0, budgetStops = 0;
 const CONTROL_REPEATS = Number(process.env.GK3_CONTROL_REPEATS || '0');
 if (!Number.isInteger(CONTROL_REPEATS) || CONTROL_REPEATS < 0 || CONTROL_REPEATS > 5 || CONTROL_REPEATS === 1) throw new Error('GK3_CONTROL_REPEATS must be 0 or 2..5');
+if (CONTROL_REPEATS && (process.env.GK3_IMPROVE !== "1" || process.env.GK3_IMPROVE_BAG !== "1" || Number(process.env.GK3_IMPROVE_CHAIN) !== 2)) throw new Error("controls require explicit improve=1, bag=1 and chain=2");
 // Same for every agent. Reviews are non-interactive: no one can answer TrueForge's built-in ask_user_question
 // tool, and a call to it ends the turn with no answer (seen in practice run 2). Everything else stays stock.
 const RUNTIME = { askUserQuestions: { enabled: false } };
@@ -468,7 +469,7 @@ async function improve() {
   async function evalRules(tag, sys, focused = false) {
     const callsBefore = calls, hitsBefore = hits, stopsBefore = budgetStops;
     const q = []; for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) q.push({ trial, task });
-    const res = { tag, fit: 0, val: 0, caught: 0, fa: 0, cost: 0, sec: 0, n: 0, unparsed: 0, misses: [], fas: [], rows: [] };
+    const res = { tag, fit: 0, val: 0, caught: 0, fa: 0, cost: 0, sec: 0, n: 0, unparsed: 0, incompleteFindingPasses: 0, misses: [], fas: [], rows: [] };
     async function one({ trial, task }) {
       const id = `i/${tag}/${task.id}/t${trial}`, pr = task.prompts.gate_keeper;
       let rs, fs;
@@ -498,7 +499,13 @@ async function improve() {
         const parts = rs.map(toSpans); fs = parts.some(Boolean) ? merge(parts.filter(Boolean).flat()) : null;
       }
       const sc = score(task.expected, fs, task.benign || []), code = codeOf(task);
-      res.rows.push({ k: `${task.id}/t${trial}`, fit: isFit(task), net: sc.caught - sc.extra });
+      const requiredFindingPasses = BAGMODE ? Number(process.env.GK3_IMPROVE_CHAIN || "1") : focused ? FOCUS.length : 1;
+      const passes = rs.map((r, i) => ({ pass: i + 1, status: r.status ?? "missing",
+        parsed: r.status === "done" && Array.isArray(jsonFindings(r.text)) }));
+      const missingOrInvalid = Math.max(0, requiredFindingPasses - passes.length) + passes.filter((p) => !p.parsed).length;
+      res.incompleteFindingPasses += missingOrInvalid;
+      res.rows.push({ k: `${task.id}/t${trial}`, fit: isFit(task), net: sc.caught - sc.extra,
+        requiredFindingPasses, passes, complete: missingOrInvalid === 0 });
       res.caught += sc.caught; res.fa += sc.extra; res[isFit(task) ? "fit" : "val"] += sc.caught - sc.extra; res.n++; if (!sc.parsed) res.unparsed++;
       res.cost += rs.reduce((a, r) => a + (r.cost || 0), 0); res.sec += BAGMODE ? rs.reduce((a, r) => a + (r.seconds || 0), 0) : Math.max(...rs.map((r) => r.seconds || 0));
       if (fs) { for (const w of task.why) if (!fs.some((f) => Math.abs(f.start - w.line) <= 1)) res.misses.push({ task: task.id, line: w.line, code: code.get(w.line) || "", why: w.why });
@@ -506,7 +513,7 @@ async function improve() {
       console.log("GK3_ROW " + JSON.stringify({ arm: tag, task: task.id, trial, ...sc }));
     }
     await Promise.all(Array.from({ length: CONC }, async () => { while (q.length) await one(q.shift()); }));
-    const out = { tag, net: res.caught - res.fa, caught: res.caught, of: P.tasks.reduce((a, t) => a + t.expected.length, 0) * TRIALS, fa: res.fa, fitNet: res.fit, checkNet: res.val, unparsed: res.unparsed, avgS: Math.round(10 * res.sec / res.n) / 10, avgUsd: Math.round(1e6 * res.cost / res.n) / 1e6 };
+    const out = { tag, net: res.caught - res.fa, caught: res.caught, of: P.tasks.reduce((a, t) => a + t.expected.length, 0) * TRIALS, fa: res.fa, fitNet: res.fit, checkNet: res.val, unparsed: res.unparsed, incompleteFindingPasses: res.incompleteFindingPasses, avgS: Math.round(10 * res.sec / res.n) / 10, avgUsd: Math.round(1e6 * res.cost / res.n) / 1e6 };
     console.log("GK3_EVAL_USAGE " + JSON.stringify({ tag, liveCalls: calls - callsBefore, cacheHits: hits - hitsBefore, budgetStops: budgetStops - stopsBefore }));
     console.log("GK3_EVAL " + JSON.stringify(out)); return { ...out, misses: res.misses, fas: res.fas, rows: res.rows };
   }
@@ -562,10 +569,11 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
         const stopsBefore = budgetStops;
         const result = await evalRules("unchanged baseline control " + i, BASE);
         const sample = { repeat: i, net: result.net, caught: result.caught, fa: result.fa, fit: result.fitNet,
-          check: result.checkNet, unparsed: result.unparsed, rows: result.rows };
+          check: result.checkNet, unparsed: result.unparsed, incompleteFindingPasses: result.incompleteFindingPasses,
+          expectedReviews: P.tasks.length * TRIALS, requiredFindingPasses: P.tasks.length * TRIALS * 2, rows: result.rows };
         samples.push(sample);
         console.log("GK3_CONTROL " + JSON.stringify(sample));
-        if (budgetStops > stopsBefore || result.unparsed) { complete = false; break; }
+        if (budgetStops > stopsBefore || result.unparsed || result.incompleteFindingPasses || result.rows.length !== P.tasks.length * TRIALS) { complete = false; break; }
       }
     } finally { CACHE = oldCache; }
     console.log("GK3_SUMMARY " + JSON.stringify({ mode: "unchanged-baseline-controls", calls, cacheHits: hits,
