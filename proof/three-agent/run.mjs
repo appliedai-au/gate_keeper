@@ -34,7 +34,11 @@ if (FAULT_TYPE) {
     scopeSha256: createHash("sha256").update(JSON.stringify(focused.map((t) => [t.id, t.expected]))).digest("hex") }));
 }
 const tf = new TrueForge({ baseUrl: process.env.TRUEFORGE_BASE_URL, token: process.env.TRUEFORGE_TOKEN, timeoutInSeconds: 60 });
-let spent = 0, reserved = 0, calls = 0;
+let spent = 0, reserved = 0, calls = 0, budgetStops = 0;
+const CONTROL_REPEATS = Number(process.env.GK3_CONTROL_REPEATS || '0');
+if (!Number.isInteger(CONTROL_REPEATS) || CONTROL_REPEATS < 0 || CONTROL_REPEATS > 5 || CONTROL_REPEATS === 1) throw new Error('GK3_CONTROL_REPEATS must be 0 or 2..5');
+if (CONTROL_REPEATS && (process.env.GK3_IMPROVE !== "1" || process.env.GK3_IMPROVE_BAG !== "1" || Number(process.env.GK3_IMPROVE_CHAIN) !== 2)) throw new Error("controls require explicit improve=1, bag=1 and chain=2");
+
 // Same for every agent. Reviews are non-interactive: no one can answer TrueForge's built-in ask_user_question
 // tool, and a call to it ends the turn with no answer (seen in practice run 2). Everything else stays stock.
 const RUNTIME = { askUserQuestions: { enabled: false } };
@@ -47,7 +51,14 @@ const RESERVE_OUT = Number(process.env.GK3_RESERVE_OUT || "0");
 import { mkdirSync, readFileSync as rfs, writeFileSync as wfs, existsSync, renameSync } from "node:fs";
 let CACHE = process.env.GK3_CACHE_DIR || "";
 if (CACHE) { try { mkdirSync(CACHE, { recursive: true }); wfs(CACHE + "/.probe", "1"); } catch (e) { console.log("GK3_CACHE_OFF " + String(e?.code || e)); CACHE = ""; } }
-let hits = 0;
+let hits = 0, REUSE = false;
+const responseMemory = new Map();
+console.log("GK3_CACHE_STATUS " + JSON.stringify({ configured: !!process.env.GK3_CACHE_DIR, usable: !!CACHE, screeningMemory: true, controlsFresh: CONTROL_REPEATS > 0 }));
+async function freshEvaluation(run) {
+  const oldCache = CACHE, oldReuse = REUSE;
+  try { CACHE = ""; REUSE = false; return await run(); }
+  finally { CACHE = oldCache; REUSE = oldReuse; }
+}
 // Key = inputs + trial + any per-sample suffix after /t<n> (vote's a/b samples stay distinct).
 const cacheKey = (label, model, instructions, prompt, temperature, maxTokens) => {
   const m = label.match(/\/t(\d+)((?:\/.*)?)$/) || [], k = [model, temperature, maxTokens, instructions, prompt, m[1] || "1"];
@@ -56,15 +67,25 @@ const cacheKey = (label, model, instructions, prompt, temperature, maxTokens) =>
 };
 async function turn(label, instructions, prompt, model = MODEL, tempOverride = null) {
   const { maxTokens } = P.params; const temperature = tempOverride ?? P.params.temperature;
-  const ck = CACHE ? CACHE + "/" + cacheKey(label, model, instructions, prompt, temperature, maxTokens) + ".json" : "";
-  if (ck && existsSync(ck)) { try { const c = JSON.parse(rfs(ck, "utf8")); hits++; return { ...c, label, cached: true }; } catch {} }
-  const r = await turnLive(label, instructions, prompt, model, temperature, maxTokens);
-  if (ck && r.status === "done" && r.text) { try { wfs(ck, JSON.stringify(r)); } catch {} }
-  return r;
+  const key = cacheKey(label, model, instructions, prompt, temperature, maxTokens);
+  const ck = CACHE ? CACHE + "/" + key + ".json" : "";
+  let response, origin = "live";
+  if (REUSE && responseMemory.has(key)) { response = responseMemory.get(key); origin = "memory"; }
+  else if (ck && existsSync(ck)) {
+    try { response = JSON.parse(rfs(ck, "utf8")); origin = "disk"; } catch {}
+  }
+  if (response) { hits++; response = { ...response, label, cached: true }; }
+  else {
+    response = await turnLive(label, instructions, prompt, model, temperature, maxTokens);
+    if (ck && response.status === "done" && response.text) { try { wfs(ck, JSON.stringify(response)); } catch {} }
+  }
+  if (REUSE && response.status === "done" && response.text) responseMemory.set(key, response);
+  console.log("GK3_RESPONSE " + JSON.stringify({ label, requestHash: key, origin, status: response.status }));
+  return response;
 }
 async function turnLive(label, instructions, prompt, model, temperature, maxTokens) {
   const reserve = est(instructions.length + prompt.length, RESERVE_OUT || maxTokens);
-  if (spent + reserved + reserve > CAP) return { label, status: "BUDGET_STOP", text: "" };
+  if (spent + reserved + reserve > CAP) { budgetStops++; return { label, status: "BUDGET_STOP", text: "" }; }
   reserved += reserve; calls++;
   const t0 = Date.now();
   let sid = null, st = null, tid = null;
@@ -455,6 +476,8 @@ function appliesToCode(scope, prompt) {
 }
 
 async function improve() {
+  if (!BAGMODE || !STRUCTURED_RULES || Number(process.env.GK3_IMPROVE_CHAIN) !== 2) throw new Error("controlled learning requires structured rule bag and exactly two finding passes");
+  if (process.env.GK3_REQUIRE_RULE_BANK === "1" && (!RULE_BANK_FILE || !existsSync(RULE_BANK_FILE))) throw new Error("required carried rule bank is missing");
   const GM = MODEL_B || MODEL, ROUNDS = Number(process.env.GK3_ROUNDS || "3"), GAIN = Number(process.env.GK3_MIN_GAIN ?? "1");
   const FOCUS = ["untrusted input (pass 2) and identity and access (pass 3)", "state and concurrency (pass 4) and failure paths (pass 5)", "boundaries (pass 1) and semantics (pass 6)"]
     .map((x) => `\n\nThis pass: hunt only ${x}, plus any rule stated in the context that the code breaks. Other defect types are covered by other passes; leave them out.`);
@@ -463,8 +486,9 @@ async function improve() {
   const codeOf = (t) => { const m = new Map(); for (const x of t.prompts.gate_keeper.matchAll(/^\s*(\d+) \| ?(.*)$/gm)) m.set(+x[1], x[2].trim()); return m; };
   const isFit = (t) => !t.id.startsWith("t6-");
   async function evalRules(tag, sys, focused = false) {
+    const callsBefore = calls, hitsBefore = hits, stopsBefore = budgetStops;
     const q = []; for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) q.push({ trial, task });
-    const res = { tag, fit: 0, val: 0, caught: 0, fa: 0, cost: 0, sec: 0, n: 0, unparsed: 0, misses: [], fas: [], rows: [] };
+    const res = { tag, fit: 0, val: 0, caught: 0, fa: 0, cost: 0, sec: 0, n: 0, unparsed: 0, incompleteFindingPasses: 0, misses: [], fas: [], rows: [] };
     async function one({ trial, task }) {
       const id = `i/${tag}/${task.id}/t${trial}`, pr = task.prompts.gate_keeper;
       let rs, fs;
@@ -494,7 +518,13 @@ async function improve() {
         const parts = rs.map(toSpans); fs = parts.some(Boolean) ? merge(parts.filter(Boolean).flat()) : null;
       }
       const sc = score(task.expected, fs, task.benign || []), code = codeOf(task);
-      res.rows.push({ k: `${task.id}/t${trial}`, fit: isFit(task), net: sc.caught - sc.extra });
+      const requiredFindingPasses = BAGMODE ? Number(process.env.GK3_IMPROVE_CHAIN || "1") : focused ? FOCUS.length : 1;
+      const passes = rs.map((r, i) => ({ pass: i + 1, status: r.status ?? "missing",
+        parsed: r.status === "done" && Array.isArray(jsonFindings(r.text)) }));
+      const missingOrInvalid = Math.max(0, requiredFindingPasses - passes.length) + passes.filter((p) => !p.parsed).length;
+      res.incompleteFindingPasses += missingOrInvalid;
+      res.rows.push({ k: `${task.id}/t${trial}`, fit: isFit(task), net: sc.caught - sc.extra,
+        requiredFindingPasses, passes, complete: missingOrInvalid === 0 });
       res.caught += sc.caught; res.fa += sc.extra; res[isFit(task) ? "fit" : "val"] += sc.caught - sc.extra; res.n++; if (!sc.parsed) res.unparsed++;
       res.cost += rs.reduce((a, r) => a + (r.cost || 0), 0); res.sec += BAGMODE ? rs.reduce((a, r) => a + (r.seconds || 0), 0) : Math.max(...rs.map((r) => r.seconds || 0));
       if (fs) { for (const w of task.why) if (!fs.some((f) => Math.abs(f.start - w.line) <= 1)) res.misses.push({ task: task.id, line: w.line, code: code.get(w.line) || "", why: w.why });
@@ -502,7 +532,9 @@ async function improve() {
       console.log("GK3_ROW " + JSON.stringify({ arm: tag, task: task.id, trial, ...sc }));
     }
     await Promise.all(Array.from({ length: CONC }, async () => { while (q.length) await one(q.shift()); }));
-    const out = { tag, net: res.caught - res.fa, caught: res.caught, of: P.tasks.reduce((a, t) => a + t.expected.length, 0) * TRIALS, fa: res.fa, fitNet: res.fit, checkNet: res.val, unparsed: res.unparsed, avgS: Math.round(10 * res.sec / res.n) / 10, avgUsd: Math.round(1e6 * res.cost / res.n) / 1e6 };
+    const out = { tag, net: res.caught - res.fa, caught: res.caught, of: P.tasks.reduce((a, t) => a + t.expected.length, 0) * TRIALS, fa: res.fa, fitNet: res.fit, checkNet: res.val, unparsed: res.unparsed, incompleteFindingPasses: res.incompleteFindingPasses, avgS: Math.round(10 * res.sec / res.n) / 10, avgUsd: Math.round(1e6 * res.cost / res.n) / 1e6 };
+    console.log("GK3_EVAL_USAGE " + JSON.stringify({ tag, liveCalls: calls - callsBefore, cacheHits: hits - hitsBefore, budgetStops: budgetStops - stopsBefore }));
+    out.complete = res.n === P.tasks.length * TRIALS && res.incompleteFindingPasses === 0 && res.unparsed === 0 && budgetStops === stopsBefore;
     console.log("GK3_EVAL " + JSON.stringify(out)); return { ...out, misses: res.misses, fas: res.fas, rows: res.rows };
   }
   const LEARNER_TEMP = process.env.GK3_LEARNER_TEMPERATURE === undefined ? null : Number(process.env.GK3_LEARNER_TEMPERATURE);
@@ -543,11 +575,39 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     addedFalseAlarms: fitDelta(before, after, "fas", "added"),
     removedFalseAlarms: fitDelta(before, after, "fas", "removed"),
   });
-  console.log("GK3_START " + JSON.stringify({ improve: true, structuredRules: STRUCTURED_RULES, learnerTemperature: LEARNER_TEMP ?? P.params.temperature, learnedRulePlacement: process.env.GK3_LEARN_PASS2_ONLY ? "second finding pass only" : "both finding passes", learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, faultType: FAULT_TYPE || "all", rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
+  console.log("GK3_START " + JSON.stringify({ improve: true, controlRepeats: CONTROL_REPEATS, confirmation: "three fresh paired repeats before activation", screeningReuse: "exact request memory and disk", structuredRules: STRUCTURED_RULES, learnerTemperature: LEARNER_TEMP ?? P.params.temperature, learnedRulePlacement: process.env.GK3_LEARN_PASS2_ONLY ? "second finding pass only" : "both finding passes", learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, faultType: FAULT_TYPE || "all", rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
   const BASE = P.agents.gate_keeper.system;
+  if (CONTROL_REPEATS) {
+    if (!BAGMODE || Number(process.env.GK3_IMPROVE_CHAIN || "1") !== 2) throw new Error("controls require the two-finding-pass rule-bag base");
+    const oldCache = CACHE, oldReuse = REUSE, samples = [];
+    let complete = true;
+    try {
+      CACHE = ""; REUSE = false;
+      for (let i = 1; i <= CONTROL_REPEATS; i++) {
+        const stopsBefore = budgetStops;
+        const result = await evalRules("unchanged baseline control " + i, BASE);
+        const sample = { repeat: i, net: result.net, caught: result.caught, fa: result.fa, fit: result.fitNet,
+          check: result.checkNet, unparsed: result.unparsed, incompleteFindingPasses: result.incompleteFindingPasses,
+          expectedReviews: P.tasks.length * TRIALS, requiredFindingPasses: P.tasks.length * TRIALS * 2, rows: result.rows };
+        samples.push(sample);
+        console.log("GK3_CONTROL " + JSON.stringify(sample));
+        if (budgetStops > stopsBefore || result.unparsed || result.incompleteFindingPasses || result.rows.length !== P.tasks.length * TRIALS) { complete = false; break; }
+      }
+    } finally { CACHE = oldCache; REUSE = oldReuse; }
+    console.log("GK3_CONTROL_SUMMARY " + JSON.stringify({ mode: "unchanged-baseline-controls", calls, cacheHits: hits,
+      spentUsd: Math.round(spent * 1e6) / 1e6, requestedRepeats: CONTROL_REPEATS, complete,
+      samples, bankChanged: false, learned: [] }));
+    if (!complete || process.env.GK3_CONTROL_THEN_LEARN !== "1") {
+      console.log("GK3_SUMMARY " + JSON.stringify({ mode: "controls-only", calls, spentUsd: Math.round(spent * 1e6) / 1e6, complete, learned: [] }));
+      return;
+    }
+  }
+  REUSE = true;
   const bank = STRUCTURED_RULES ? loadRuleBank() : { accepted: [], harmful: [], unproven: [], history: [] };
   if (STRUCTURED_RULES && process.env.GK3_PROBE_RULE_ID && bank.harmful.some((e) => e.id === process.env.GK3_PROBE_RULE_ID)) throw new Error("NEGATIVE_RULE_RETRY_FORBIDDEN");
-  const records = new Map(bank.accepted.flatMap((e) => (e.rules || []).map((rule) => [rule, e.scope || { kind: "general" }])));
+  console.log("GK3_BANK_LOADED " + JSON.stringify({ path: RULE_BANK_FILE, accepted: bank.accepted.length, harmful: bank.harmful.length, unproven: bank.unproven.length, revision: bank.revision }));
+  const activeEntries = bank.accepted.filter((e) => e.status === "confirmed-beneficial" && e.confirmation?.confirmed === true);
+  const records = new Map(activeEntries.flatMap((e) => (e.rules || []).map((rule) => [rule, e.scope || { kind: "general" }])));
   const withRules = (all, prompt = null) => {
     const list = prompt ? all.filter((r) => appliesToCode(records.get(r), prompt)) : all;
     if (!list.length) return BASE;
@@ -563,10 +623,14 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   if (STRUCTURED_RULES) saveRuleBank(bank);
   let best = await evalRules(BAGMODE ? "round A (rule bag)" : "v12", rules);
   const original = best;
-  const carried = [...new Set(bank.accepted.flatMap((e) => e.rules || []))];
+  if (!best.complete) {
+    console.log("GK3_SUMMARY " + JSON.stringify({ mode: "incomplete-baseline", calls, spentUsd: Math.round(spent * 1e6) / 1e6, complete: false, learned: [] }));
+    return;
+  }
+  const carried = [...new Set(activeEntries.flatMap((e) => e.rules || []))];
   if (STRUCTURED_RULES && carried.length) {
     const inherited = await evalRules("carried rule bags", { learnedRules: carried });
-    const safe = inherited.net >= original.net && inherited.fitNet >= original.fitNet && inherited.checkNet >= original.checkNet && inherited.unparsed <= original.unparsed;
+    const safe = inherited.complete && inherited.net >= original.net && inherited.fitNet >= original.fitNet && inherited.checkNet >= original.checkNet && inherited.unparsed <= original.unparsed;
     console.log("GK3_CARRIED " + JSON.stringify({ rules: carried.length, baseline: original.net, candidate: inherited.net, activated: safe }));
     bank.history.push({ kind: "carried-check", model: GM, source: process.env.GK3_COMMIT, baseline: original.net, candidate: inherited.net, activated: safe });
     if (safe) { learned = carried; rules = withRules(learned); best = inherited; }
@@ -602,7 +666,10 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     } finally { CACHE = oldCache; }
   }
   const fq = BAGMODE ? { net: null } : await evalRules("v12 focused x3", rules, true);
+  let attempts = 0, scoredCandidates = 0;
   for (let r = 1; r <= ROUNDS; r++) {
+    if (budgetStops) break;
+    attempts++;
     // Conditional-rule learning sees fit tasks only; t6 remains an internal training check.
     const fitOnly = (xs) => STRUCTURED_RULES ? xs.filter((x) => !x.task.startsWith("t6-")) : xs;
     const ms = tally(fitOnly(best.misses)).slice(0, 14), fs = tally(fitOnly(best.fas)).slice(0, 10);
@@ -610,7 +677,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     // their measurements, or their old fit feedback as learner or reviewer instructions.
     const exampleIds = STRUCTURED_RULES ? [...new Set([...ms.slice(0, 4), ...fs.slice(0, 4)].map((x) => x.task))].slice(0, 4) : [];
     const contexts = exampleIds.map((id) => P.tasks.find((t) => t.id === id)?.prompts.gate_keeper || "").map((x) => x.slice(0, 5000)).join("\n\n---\n\n");
-    const ask = (STRUCTURED_RULES ? "Learning cycle " + r + " of " + ROUNDS + ". Propose one new supported distinction.\n\n" : "")
+    const ask = (STRUCTURED_RULES ? "Learning cycle " + r + " of " + ROUNDS + ". Propose one new supported distinction. Consider this decision question only if supported by the supplied code: " + ["Can two actors both pass a guard before either commits?", "Does protection cover the entire read-modify-write interval?", "Can state return to the same value with a different version?", "Are ownership and lock identity shared by all competing paths?", "Can cancellation leave a partially applied shared-state transition?", "Does a retry duplicate an already committed effect?", "Is an invariant spread over separately atomic operations?", "Can a stale snapshot remain valid at the actual commit?", "Does reentrant work observe a half-updated invariant?", "Does the synchronization contract cover the relevant process boundary?"][r - 1] + "\n\n" : "")
       + (contexts ? "Fit-only example code and stated context (for checking guards, not memorizing identifiers):\n" + contexts + "\n\n" : "")
       + "Current instructions:\n" + rules
       + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n")
@@ -646,35 +713,24 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     const proposalId = STRUCTURED_RULES ? createHash("sha256").update(JSON.stringify(conditional)).digest("hex") : "";
     // Reject exact, near-text, and known failure-strategy restatements before paid scoring.
     // These bank comparisons never become model instructions; suppress a *rule*, not its fault class.
-    const stopWords = new Set("about above after also because before based both code concrete could each every evidence false finding findings from have into line lines must only other report reported result same should since that their then there these this those under when where which with without would".split(" "));
-    const words = (txt) => new Set(normalizeRule(txt).split(" ").filter((x) => x.length > 3 && !stopWords.has(x)).map((x) => x.replace(/(ing|tion|ed|s)$/, "")));
-    const strategy = (txt) => {
-      const x = normalizeRule(txt);
-      if (/\b(read|lookup|select|getter|fetched)\b/.test(x) && /\b(write|save|insert|update|branch|writeback)\b/.test(x)
-        && /\b(report|finding|line|location)\b/.test(x) && /\b(race|stale|concurrency|atomic)\b/.test(x)) return "race-read-write-line-relocation";
-      if (/\b(transactional|transaction)\b/.test(x) && /\b(self|proxy|outer)\b/.test(x)
-        && /\b(call|annotation|spring)\b/.test(x)) return "transaction-self-call";
-      return "";
+    const words = (txt) => new Set(normalizeRule(txt).split(" ").filter((x) => x.length > 3));
+    const overlap = (a, b) => {
+      const A = words(a), B = words(b);
+      return A.size >= 8 && B.size >= 8 && [...A].filter((x) => B.has(x)).length / Math.max(A.size, B.size) >= 0.85;
     };
-    const isRestatement = (next, prev) => {
-      // Compare the actual "when" trigger, not generic evidence/exception boilerplate.
-      const a = words(next.when), b = words(prev.when);
-      const overlap = [...a].filter((x) => b.has(x)).length;
-      if (a.size >= 8 && b.size >= 8 && overlap >= 6 && overlap / Math.min(a.size, b.size) >= 0.72) return true;
-      const sa = strategy(next.full), sb = strategy(prev.full);
-      return !!sa && sa === sb;
-    };
-    const previouslyRejected = bank.harmful.flatMap((e) =>
-      (e.conditional?.length ? e.conditional : (e.rules || []).map((r) => ({ when: r })))
-        .map((c) => ({ when: c.when || "", full: (e.rules || []).join(" ") })));
+    const placementAdvice = (txt) => /\b(?:report|place|locate|anchor|attach|flag)\b.{0,15}\b(?:at|on|to)\b.{0,35}\b(?:line|site|branch|write|consumer|producer|read|operation)\b/i.test(txt)
+      || /\b(?:reporting|finding)\s+(?:line|location|placement)\b/i.test(txt);
+    const procedure = (x) => [x.evidence || "", x.unless || ""].join(" ");
+    const previouslyRejected = [...bank.harmful, ...bank.unproven].flatMap((e) =>
+      e.conditional?.length ? e.conditional : (e.rules || []).map((rule) => ({ evidence: rule.replace(/Do not report when/gi, "") })));
     const repeatsRejectedStrategy = conditional.some((candidate) =>
-      previouslyRejected.some((prior) => isRestatement({
-        when: candidate.when,
-        full: `When ${candidate.when} Establish ${candidate.evidence} Do not report when ${candidate.unless}`
-      }, prior)));
+      previouslyRejected.some((prior) =>
+        (placementAdvice(candidate.evidence || "") && placementAdvice(prior.evidence || ""))
+        || (overlap(procedure(candidate), procedure(prior)) && overlap(candidate.when || "", prior.when || ""))));
     if (STRUCTURED_RULES && (seenIds.has(proposalId) || nr.some((x) => seenTexts.has(normalizeRule(x))) || repeatsRejectedStrategy)) {
       const duplicate = { kind: "duplicate-not-retried", round: r, faultType: FAULT_TYPE || "all", id: proposalId,
         model: GM, source: process.env.GK3_COMMIT, rules: nr, status: "not-scored" };
+      seenIds.add(proposalId); for (const x of nr) seenTexts.add(normalizeRule(x));
       bank.history.push(duplicate); saveRuleBank(bank);
       console.log("GK3_BANK_DUPLICATE " + JSON.stringify(duplicate));
       continue;
@@ -690,10 +746,42 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
       continue;
     }
     const c = await evalRules(BAGMODE ? `round ${r + 1}` : `r${r}`, candRules);
-    const ok = c.net - best.net >= GAIN && c.fitNet >= best.fitNet && c.checkNet >= best.checkNet && c.unparsed <= best.unparsed;
+    scoredCandidates++;
+    const screened = c.complete && c.net - best.net >= GAIN && c.fitNet >= best.fitNet && c.checkNet >= best.checkNet && c.unparsed <= best.unparsed;
+    let ok = false, confirmation = null;
+    if (screened) {
+      // Persist the screening result before fresh calls; it is not an active rule.
+      const provisional = { id: proposalId, status: "provisional-screen-positive", rules: nr, scope: conditional[0].scope,
+        conditional, model: GM, source: process.env.GK3_COMMIT, round: r, netChange: c.net - best.net, requiresFreshConfirmation: true };
+      bank.unproven.push(provisional); saveRuleBank(bank);
+      const pairs = [];
+      for (let repeat = 1; repeat <= 3; repeat++) {
+        const incumbent = { learnedRules: [...learned] };
+        let a, b;
+        await freshEvaluation(async () => {
+          if (repeat % 2) { a = await evalRules("confirm " + r + "/" + repeat + " baseline", incumbent); b = await evalRules("confirm " + r + "/" + repeat + " candidate", candRules); }
+          else { b = await evalRules("confirm " + r + "/" + repeat + " candidate", candRules); a = await evalRules("confirm " + r + "/" + repeat + " baseline", incumbent); }
+        });
+        const pair = { repeat, complete: a.complete && b.complete, baseline: a, candidate: b,
+          netChange: b.net - a.net, fitChange: b.fitNet - a.fitNet, checkChange: b.checkNet - a.checkNet };
+        pairs.push(pair);
+        console.log("GK3_CONFIRMATION_PAIR " + JSON.stringify(pair));
+        if (!pair.complete) break;
+      }
+      const netChange = pairs.reduce((n, p) => n + p.netChange, 0), fitChange = pairs.reduce((n, p) => n + p.fitChange, 0),
+        checkChange = pairs.reduce((n, p) => n + p.checkChange, 0);
+      ok = pairs.length === 3 && pairs.every((p) => p.complete && p.netChange >= 0) && netChange / 3 >= GAIN && fitChange >= 0 && checkChange >= 0;
+      confirmation = { confirmed: ok, repeats: pairs.length, netChange, fitChange, checkChange, pairs,
+        criterion: "three fresh paired repeats; no negative pair; mean gain >= minimum; neither split aggregate worse; every pass complete",
+        uncertainty: "training-set evidence only, not sealed-holdout or generalization proof" };
+      // Preserve provisional evidence in history, and store one final determination below.
+      bank.history.push({ kind: "screen-positive", ...provisional });
+      bank.unproven = bank.unproven.filter((e) => e !== provisional);
+      console.log("GK3_CONFIRMATION " + JSON.stringify({ id: proposalId, ...confirmation }));
+    }
     if (STRUCTURED_RULES) {
-      const status = ok ? "accepted-in-training" : (c.net < best.net || c.fitNet < best.fitNet || c.checkNet < best.checkNet) ? "harmful-in-tested-context" : "unproven";
-      const e = { id: proposalId, status, verdict: ok ? "positive" : c.net < best.net || c.fitNet < best.fitNet || c.checkNet < best.checkNet ? "negative" : "unproven", faultType: FAULT_TYPE || "all", rules: nr, scope: conditional[0].scope, conditional, coveredTasks: P.tasks.filter((t) => appliesToCode(conditional[0].scope, t.prompts.gate_keeper)).length, netChange: c.net - best.net, caughtChange: c.caught - best.caught, falseAlarmChange: c.fa - best.fa, fitChange: c.fitNet - best.fitNet, checkChange: c.checkNet - best.checkNet, model: GM, source: process.env.GK3_COMMIT, round: r, baseline: { net: best.net, caught: best.caught, falseAlarms: best.fa, fit: best.fitNet, check: best.checkNet, unparsed: best.unparsed }, candidate: { net: c.net, caught: c.caught, falseAlarms: c.fa, fit: c.fitNet, check: c.checkNet, unparsed: c.unparsed }, requiresFreshConfirmation: ok };
+      const status = ok ? "confirmed-beneficial" : !c.complete ? "incomplete-unscored" : screened ? "unconfirmed-screen-positive" : (c.net < best.net || c.fitNet < best.fitNet || c.checkNet < best.checkNet) ? "harmful-in-tested-context" : "unproven";
+      const e = { id: proposalId, status, verdict: ok ? "positive" : status === "harmful-in-tested-context" ? "negative" : "unproven", faultType: FAULT_TYPE || "all", rules: nr, scope: conditional[0].scope, conditional, coveredTasks: P.tasks.filter((t) => appliesToCode(conditional[0].scope, t.prompts.gate_keeper)).length, netChange: c.net - best.net, caughtChange: c.caught - best.caught, falseAlarmChange: c.fa - best.fa, fitChange: c.fitNet - best.fitNet, checkChange: c.checkNet - best.checkNet, model: GM, source: process.env.GK3_COMMIT, round: r, baseline: { net: best.net, caught: best.caught, falseAlarms: best.fa, fit: best.fitNet, check: best.checkNet, unparsed: best.unparsed }, candidate: { net: c.net, caught: c.caught, falseAlarms: c.fa, fit: c.fitNet, check: c.checkNet, unparsed: c.unparsed }, requiresFreshConfirmation: screened && !ok, confirmation };
       if (DELTA_LEARNING) e.fitFeedback = regressionFeedback(best, c);
       bank[ok ? "accepted" : status === "harmful-in-tested-context" ? "harmful" : "unproven"].push(e);
       bank.history.push({ kind: "scored-rule", ...e }); saveRuleBank(bank);
@@ -701,11 +789,12 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     }
     console.log("GK3_IMPROVE " + JSON.stringify({ round: r, rules: nr, ...(STRUCTURED_RULES ? { conditional, learnerStatus: rr.status } : {}), why: (() => { try { return JSON.parse(rr.text.slice(rr.text.indexOf("{"), rr.text.lastIndexOf("}") + 1)).why; } catch { return null; } })(), base: { net: best.net, fit: best.fitNet, check: best.checkNet }, cand: { net: c.net, fit: c.fitNet, check: c.checkNet }, accepted: ok }));
     if (ok) { learned = [...learned, ...nr]; rules = withRules(learned); best = c; } else rejected.push(...nr);
+    if (budgetStops) break;
   }
   console.log("GK3_RULES " + JSON.stringify({ learned, sha256: createHash("sha256").update(rules).digest("hex") }));
   console.log("GK3_FINAL " + JSON.stringify(rules));
   if (STRUCTURED_RULES) console.log("GK3_BANK_SUMMARY " + JSON.stringify({ path: RULE_BANK_FILE || null, accepted: bank.accepted.length, harmful: bank.harmful.length, unproven: bank.unproven.length }));
-  console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, best: { net: best.net, caught: best.caught, fa: best.fa }, focused: { net: fq.net, caught: fq.caught, fa: fq.fa, avgUsd: fq.avgUsd }, learned }));
+  console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, attempts, scoredCandidates, requestedCycles: ROUNDS, complete: attempts === ROUNDS && budgetStops === 0, budgetStops, best: { net: best.net, caught: best.caught, fa: best.fa }, focused: { net: fq.net, caught: fq.caught, fa: fq.fa, avgUsd: fq.avgUsd }, learned }));
 }
 if (process.env.GK3_IMPROVE) { await improve(); } else if (process.env.GK3_PIPE) { await pipe(); } else if (process.env.GK3_MATRIX) {
   const M = { ds: MODEL, oss: "tfy-direct/gpt-oss-120b", glm: "tfy-direct/glm-5-3-flash", mimo: "tfy-direct/mimo-v2-6-flash" };
