@@ -13,7 +13,7 @@
  * Canonical JSON preserves values, not the original wire serialization: retain
  * byte-sensitive signed receipts as their original serialized string as well.
  */
-import { canonical, copy, digest, hash, identifier, integer, record, requireThat, text } from './contracts.mjs';
+import { POLICY, canonical, copy, digest, hash, identifier, integer, record, requireThat, text } from './contracts.mjs';
 
 const SCHEMA = 'gk-learning-v2-operation-archive-v1';
 const MAX_EVENT_BYTES = 32 * 1024 * 1024 - 1024;
@@ -55,7 +55,7 @@ function operationInput(operation, request) {
   integer(request.requiredCalls, 'request required calls', 1, 1_000_000);
   integer(operation.maxCalls, 'operation maximum calls', 1, 1_000_000);
   requireThat(operation.maxCalls === request.requiredCalls, 'archive exact call count binding');
-  integer(operation.reservationMicros, 'operation reservation', 1, 20_000_000);
+  integer(operation.reservationMicros, 'operation reservation', 1, POLICY.programmeCeilingMicros);
   requireThat(operation.settled === false && operation.consumed === false &&
     operation.observedFreshCalls === 0 && operation.evidenceComplete === false, 'archive operation is not fresh');
   requireThat(operation.requestDigest === digest(request), 'archive request digest mismatch');
