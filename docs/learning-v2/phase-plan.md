@@ -245,7 +245,7 @@ and [confirmation, pairing, and stopping requirements](https://github.com/applie
 
 ### Budget and provider
 
-All inference goes through TrueFoundry. The **US$20 cumulative programme ceiling**
+All inference goes through TrueFoundry. The **US$50 total cumulative programme ceiling (including existing spending and reservations)**
 covers all participating jobs and workers; it is not a fresh allowance for v2.
 An independently authorized budget boundary must account for prior spend,
 outstanding reservations, actual usage, unresolved calls, and release or
