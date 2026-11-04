@@ -8,12 +8,13 @@ const mounted = '40 30 0:2 / ' + mount + ' rw - ext4 /dev/x rw';
 const root = { uid: 0, gid: 0, mode: 0o40755, isDirectory: () => true, isSymbolicLink: () => false };
 const ready = { ...root, uid: 1000, gid: 1000, mode: 0o40700 };
 const badLink = { ...root, isDirectory: () => false, isSymbolicLink: () => true };
-function fixture({ leaf = root, contents = [], mountinfo = mounted, ancestor = root } = {}) {
+function fixture({ leaf = root, contents = [], mountinfo = mounted, ancestor = root,
+  lostFound = { ...root, mode: 0o40700 }, lostContents = [] } = {}) {
   const calls = [];
   let current = leaf;
   const startup = createVolumeStartup({
-    stat: path => path === mount ? current : ancestor,
-    list: () => contents,
+    stat: path => path === mount ? current : path.endsWith('/lost+found') ? lostFound : ancestor,
+    list: path => path.endsWith('/lost+found') ? lostContents : contents,
     read: () => mountinfo,
     prepare: () => { calls.push('prepare'); current = ready; },
   });
@@ -53,6 +54,25 @@ test('unsafe leaf, ancestor, and root-owned nonempty evidence refuse', () => {
     assert.deepEqual(f.calls, []);
   }
 });
+
+test('new ext4 mount with pristine lost+found prepares successfully', () => {
+  const f = fixture({ contents: ['lost+found'] });
+  assert.equal(f.invoke().prepared, true);
+  assert.deepEqual(f.calls, ['prepare']);
+});
+
+test('lost+found with unexpected data, owner or entries refuses', () => {
+  for (const opts of [
+    { contents: ['lost+found'], lostContents: ['untrusted'] },
+    { contents: ['lost+found'], lostFound: { ...root, mode: 0o40755 } },
+    { contents: ['lost+found', 'controller'] },
+  ]) {
+    const f = fixture(opts);
+    assert.throws(() => f.invoke(), /GK_V2_STARTUP_REFUSED/);
+    assert.deepEqual(f.calls, []);
+  }
+});
+
 test('opt-in image leaves normal production startup unchanged', () => {
   const ordinary = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8');
   const host = readFileSync(new URL('../Dockerfile.v2-host', import.meta.url), 'utf8');
