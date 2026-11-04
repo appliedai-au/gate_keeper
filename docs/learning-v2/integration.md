@@ -4,6 +4,8 @@ Status: core, concrete adapter and persistent host source implemented, awaiting
 owned-runner integration and the full managed remote gate.
 This document describes the committed contract; it is not a run receipt.
 The [phase plan](phase-plan.md) records the rollout and outstanding owners.
+The [app status source record](phase-4-app-status.md) adds a prepared read-only
+interface in parallel; its route and Base44 assets are not installed or qualified.
 
 ## Source layout
 
@@ -22,6 +24,9 @@ The [phase plan](phase-plan.md) records the rollout and outstanding owners.
 | `scripts/learning-v2/operation-archive.mjs` | Private create-once operation/call observations, ordered stages and immutable artifacts |
 | `scripts/learning-v2/legacy-renderer.mjs` | Existing two-pass prompt chain and finding-conversion/merge order |
 | `scripts/learning-v2/compat/gk-bag-3091.mjs` | Byte-identical pure BAG helper from the existing control branch |
+| `scripts/learning-v2/status-endpoint.mjs` | Fixed owner/experiment/source read capability with scoped token authentication; no HTTP listener or write capability |
+| `integrations/base44/shared/learning-status-contract.js` | Strict bounded public status schema shared with backend and browser |
+| `integrations/base44/shared/learning-status-backend.js` | Single-owner Base44 bridge to one fixed status path; sanitized errors and no credential forwarding to the browser |
 
 The modules use Node built-ins, the existing `learning-trust.mjs` signature
 verifier and a host-supplied SDK client. There is no new package, SDK upgrade,
@@ -29,6 +34,15 @@ service or CLI. The [Phase 2 adapter record](phase-2-adapter.md) details the
 proposed runtime configuration changes; the [host record](phase-2-host.md)
 describes the persistent composition and original-receipt recovery contract.
 The current `proof/three-agent/run.mjs` is not changed by this source slice.
+
+The prepared read endpoint accepts only `() => host.status()` after its
+configured owner/experiment/source grant is authenticated. It never calls
+`inspect()`, selects a directory, opens a replacement host, dispatches work or
+performs recovery. The Base44 bridge separately authenticates the signed-in
+administrator and checks the configured owner before using its machine
+credential. Its shared read token is distinct from the broad proxy Basic
+credential. Mounting, credential provisioning and actual app module packaging
+remain owned integration steps, followed by the complete managed qualification.
 
 ## Host integration sequence
 

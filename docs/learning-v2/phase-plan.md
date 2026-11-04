@@ -23,6 +23,10 @@ implemented interfaces, explicit runtime changes and current gate dependency.
 The [baseline recovery closeout](phase-2-baseline-recovery.md) records the later
 review correction: authenticated baseline non-admission is durable in both
 controller and dispatch state, with a safe public failure code.
+The [app status increment](phase-4-app-status.md) prepares the Phase 4 read-only
+interface in parallel: a strict public contract, owner-bound HTTP capability,
+Base44 backend alternatives and a Learning panel in the existing app assets.
+The route is not mounted and those assets are not installed in the live app.
 There are no schedule or accuracy forecasts in this plan.
 
 | Phase | Current status | Next required evidence |
@@ -32,7 +36,7 @@ There are no schedule or accuracy forecasts in this plan.
 | 2a: concrete adapter and operation archive | Source delivered; parent source review approved | Full managed qualification |
 | 2b: persistent host, owned-runner integration and gate | Host and admission-recovery source implemented; live integration pending | Reconciled runner, real authorities/gateway, durable volume, registered target and complete exact-source receipt |
 | 3: controls and ten-attempt pilot | Not started | Qualified source, BASE controls and reconciled cumulative budget |
-| 4: app read model and rollout | Not started | Qualified state integration and separate activation authorization |
+| 4: app read model and rollout | Read-only source prepared; live integration and rollout pending | Mount the qualified read capability, bind the owner, verify the existing app runtime and qualify the installed view; separate activation authorization |
 | 5: broader memory and skills | Deferred | Separate design and evaluation for each expansion |
 
 ## Source baseline and ownership
@@ -79,6 +83,7 @@ existing `tests/` discovery path. Their responsibilities are:
 | Concrete TrueForge adapter | Schedule the frozen two-pass plan, retain provider observations and obtain independent receipts |
 | Operation archive and compatibility renderer | Persist call intent before dispatch and preserve existing finding preparation/merge behavior |
 | Persistent host and dispatch ledger | Compose stable private stores, persist intent before gateway admission and reconcile original receipts without automatic retry |
+| Read-only app status boundary | Validate a bounded public projection, authenticate one configured owner and fixed experiment/source, and display recorded state without acquiring learning-write capabilities |
 | Version activation | Produce an immutable confirmed version and require separate authorization for activation or rollback |
 
 Implement these responsibilities as modules in the existing application. The
@@ -397,9 +402,23 @@ baseline, confirmed incumbent, attempts, unscored reasons, provisional versus
 confirmed status, activation history, evidence links, and cost state. Keep
 tenant-private evidence behind the existing access boundary. The app does not
 infer acceptance from a score or mutate the journal through display logic.
-The source projection now distinguishes unplanned, planned, complete and failed
-baselines with fixed public failure codes. Endpoint/UI integration and rollout
-remain pending; private baseline diagnostics and signed receipts are excluded.
+The source projection distinguishes unplanned, planned, complete and failed
+baselines with fixed public failure codes. The prepared read-only increment
+adds a capability-only HTTP handler, strict shared projection, owner-bound
+Base44 bridge and a Learning section in the existing app page. It accepts no
+browser-selected experiment, path, owner or source. Displayed dispatch stages
+are durable observations, not a claim that a remote worker is currently alive.
+Observed spend and reservations do not establish a remaining allowance.
+
+This source work proceeds while Phase 2 qualification is blocked; it does not
+advance Phase 2 or Phase 3. The existing packaged TrueForge entrypoint does not
+mount the new route. The live app's source, function convention and auth layout
+still require inspection before integration. A missing route, owner binding,
+credential or valid state returns unavailable, without demonstration counts.
+Private baseline diagnostics and signed receipts are excluded. Detailed
+activation history and private evidence links remain later integration work;
+this view exposes only the public activation count and version identities.
+See [Phase 4 app status source](phase-4-app-status.md) and its source manifest.
 
 Use separately authorized version selection for a bounded rollout. Observe
 operational failures and the agreed quality measures; rollback selects an
