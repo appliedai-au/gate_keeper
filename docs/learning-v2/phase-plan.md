@@ -13,10 +13,22 @@ on 4 November 2026. That instruction authorizes the additive source work. It
 does not establish an operational runner, a passed gate, a model improvement,
 or authority to deploy or merge.
 
-The initial delivery is Phase 1 source for the learning core and its regression
-cases. It is **unqualified source**, with no local or remote execution claimed.
-Phases 2 through 5 below remain separate work with explicit exit criteria. There
-are no schedule or accuracy forecasts in this plan.
+The delivery now includes Phase 1 core source and the Phase 2 concrete TrueForge
+adapter, durable operation archive, compatibility renderer and regression
+source. It remains **unqualified source**, with no local or remote execution
+claimed. The [Phase 2 adapter record](phase-2-adapter.md) gives the implemented
+interfaces, explicit runtime changes and current gate dependency. There are no
+schedule or accuracy forecasts in this plan.
+
+| Phase | Current status | Next required evidence |
+| --- | --- | --- |
+| 0: source and ownership | Pinned for additive work | Refresh refs at integration |
+| 1: isolated learning core | Source delivered in PR #43 | Full managed qualification |
+| 2a: concrete adapter and recovery | Source implemented in this increment | Independent review and managed tests |
+| 2b: owned-runner integration and gate | Pending existing owners | Reconciled runner, real authorities/gateway, registered target and complete exact-source receipt |
+| 3: controls and ten-attempt pilot | Not started | Qualified source, BASE controls and reconciled cumulative budget |
+| 4: app read model and rollout | Not started | Qualified state integration and separate activation authorization |
+| 5: broader memory and skills | Deferred | Separate design and evaluation for each expansion |
 
 ## Source baseline and ownership
 
@@ -59,11 +71,14 @@ existing `tests/` discovery path. Their responsibilities are:
 | Evidence validation | Check exact task/trial/pass coverage, paired reuse, source/configuration bindings, and fresh confirmation evidence |
 | Private journal | Preserve immutable history with revisions, compare-and-swap writes, and a hash chain; reject competing or stale mutations |
 | Runtime admission and budget boundary | Require authenticated evidence and external authorization before runtime work; never obtain authority from a model's claim |
+| Concrete TrueForge adapter | Schedule the frozen two-pass plan, retain provider observations and obtain independent receipts |
+| Operation archive and compatibility renderer | Persist call intent before dispatch and preserve existing finding preparation/merge behavior |
 | Version activation | Produce an immutable confirmed version and require separate authorization for activation or rollback |
 
 Implement these responsibilities as modules in the existing application. The
-initial core does not call a live SDK, run a model, alter TrueForge configuration,
-or publish reviewer instructions.
+source now includes an injected SDK adapter; no live model call or runtime
+configuration change has been applied. The explicit proposed runtime settings
+are documented and require controls before qualification or attribution.
 
 Trust roles must be pinned in host configuration. A candidate cannot appoint its
 own novelty reviewer, evaluator, budget issuer, or activation authority. Signed
@@ -95,8 +110,10 @@ Keep the existing TrueForge/SDK selection and package lock. The current package
 declares `@truefoundry/trueforge-sdk` as `^0.180.0`; that range alone does not prove
 the deployed version. Capture the actual admitted version before qualification.
 An SDK, model, prompt-base, or sampling upgrade is a separate controlled change,
-not part of this migration. Broad cross-session memory remains disabled for the
-controlled comparison.
+not part of this migration. The proposed adapter additionally disables optional
+runtime capabilities and limits main-loop iterations; these declared settings
+require BASE controls and are not claimed to match legacy runtime behavior.
+Broad cross-session memory remains disabled for the controlled comparison.
 
 ## Required experiment contract
 
@@ -271,14 +288,25 @@ external interfaces, and an explicit list of uncommissioned integrations.
 Written tests are not passing tests. Initial source completion does not mark
 Phase 2 complete.
 
-### Phase 2 — Reconcile the existing runner and qualify the full source
+### Phase 2 — Complete the adapter, reconcile the runner and qualify the full source
+
+**2a source implemented:** the concrete scheduler now connects the controller's
+frozen phase plan to the pinned SDK interface, a durable operation archive and
+independent receipt transports. It preserves paired screening reuse and fresh
+confirmation ordering, captures raw turn evidence, and prevents a repeated
+operation/call claim after ambiguous dispatch. The compatibility helper matches
+the existing BAG blob. The PR review's stranded-reservation recovery defect is
+repaired. See the [adapter record](phase-2-adapter.md) and its separate manifest.
+
+**2b integration and qualification remain:**
 
 The existing reconciliation owner integrates the core at the runner's existing
 proposal/evaluation seam. Carry forward both 3091's control completeness and
 e054's host-only history isolation. Replace the overbroad novelty matcher and
 immediate screen-positive activation. Preserve the original baseline and all
 inherited regressions. Connect the current TrueForge boundary without changing
-model, SDK, sampler, task population, or scorer at the same time.
+model, SDK, sampler, task population, or scorer at the same time. Account for
+the separately declared runtime-capability changes in the control comparison.
 
 The trusted host adapter must produce actual source-bound receipts, exact
 request/reply reuse evidence, exclusive freshness claims, per-pass statuses,
@@ -308,7 +336,9 @@ Python tests. Fixture labels remain provisional until that qualification.
 review, and a retained full remote gate receipt binding head/base, product and
 effective trees, command/preset, provider/service/worker/allocation/native run,
 all step results and counts, log digests, reconciliation, and cleanup. No such
-v2 receipt is claimed by this initial delivery.
+v2 receipt is claimed by the current source delivery. The served Spekky build
+inspected on 4 November still lacks Gate Keeper's target and output profile;
+the adapter record names the exact inspected identities and remaining actions.
 
 Sources: [current qualification recipe](https://github.com/appliedai-au/gate_keeper/blob/20dcea65a22e680398d017191b91d04e32b4f883/Dockerfile.qualify),
 [native registration requirements](https://github.com/appliedai-au/Spekky-V1/issues/794#issuecomment-6619321938),
@@ -317,10 +347,12 @@ and [full-gate Python requirements](https://github.com/appliedai-au/Spekky-V1/is
 ### Phase 3 — Establish baseline equivalence and run one controlled pilot
 
 First compare v1 and v2 with learning disabled using the frozen original BASE,
-same model/configuration, population, scorer, prompts, and complete two-pass
-execution. Establish source-level behavioral parity with the full managed
-suite and assess model variation through the authorized unchanged-baseline
-controls. Do not interpret separately sampled differences as an engine gain.
+same BASE instructions, model, sampler, population, scorer and complete two-pass
+execution. Check valid-case rendering/merge compatibility in the full managed
+suite. Explicitly assess the declared runtime-capability changes through
+authorized BASE controls, separating that effect from model variation and
+learned procedures. Whole-runtime and malformed-input parity are not assumed.
+Do not interpret separately sampled differences as an engine gain.
 
 After the source gate, runner-owner acceptance, and cumulative accounting,
 admit one controlled ten-attempt pilot under the fixed protocol above. Keep the
@@ -398,6 +430,7 @@ must name its actual artifact or receipt. A prepared regression, signed empty
 envelope, historical deployment, or posted operator request is not a test pass,
 accepted task, newly available capability, or measured learning gain.
 
-The next milestone after the initial source is the exact reconciled adapter and
-full managed qualification in Phase 2. The existing owner/operator requirements
-remain explicit dependencies while the authorized source work proceeds.
+The next milestone is Phase 2b: compose the implemented adapter in the owned
+runner and retain full managed qualification for the exact reconciled source.
+The existing owner/operator requirements remain explicit dependencies while
+the authorized source work proceeds.

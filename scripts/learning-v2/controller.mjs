@@ -179,7 +179,8 @@ export class LearningController {
     return copy({ schema: 'gk-learning-v2-execution-request', ...identity(state), kind, attemptId, namespace,
       provider: POLICY.provider, memory: POLICY.memory, model: state.config.model,
       runtimeDigest: state.config.runtimeDigest, firstPassInstructionsDigest: state.config.firstPassInstructionsDigest,
-      policy: state.policy, originalVersionId: state.baseVersion.id, incumbentVersionId: state.activeVersionId,
+      policy: state.policy, authorityPins: state.trustPins,
+      originalVersionId: state.baseVersion.id, incumbentVersionId: state.activeVersionId,
       managedGateDigest: state.gate?.digest || null, requiredCalls, plan, prompts, learner });
   }
 
@@ -452,6 +453,10 @@ export class LearningController {
   async abandonAttempt(attemptId, reason) {
     return this.#change('attempt-unresolved', state => {
       const attempt = this.#attempt(state, attemptId, [...OPEN]);
+      // Closing the attempt first would remove the operation's recovery path:
+      // abandonOperation needs an open attempt to preserve settlement custody.
+      requireThat(!state.operations.some(item => item.attemptId === attemptId && !item.consumed),
+        'abandon the pending operation instead; it must remain settleable');
       attempt.status = 'unresolved';
       attempt.reason = text(reason, 'unresolved reason', 2000);
     });

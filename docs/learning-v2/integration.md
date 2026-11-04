@@ -1,6 +1,7 @@
 # Learning v2: implementation and runner contract
 
-Status: initial source implementation, awaiting the full managed remote gate.
+Status: core and concrete adapter source implemented, awaiting live composition
+and the full managed remote gate.
 This document describes the committed contract; it is not a run receipt.
 The [phase plan](phase-plan.md) records the rollout and outstanding owners.
 
@@ -14,9 +15,16 @@ The [phase plan](phase-plan.md) records the rollout and outstanding owners.
 | `scripts/learning-v2/journal.mjs` | Private durable records, compare-and-swap writes, restart state and fail-closed writer locks |
 | `scripts/learning-v2/prompts.mjs` | Allowed learner/finder projections and a small app status projection |
 | `scripts/learning-v2/runtime.mjs` | Ordered admission, durable intent, managed dispatch, evidence consumption and billing settlement |
+| `scripts/learning-v2/executor.mjs` | Concrete baseline/proposal/screen/confirmation scheduler and independent receipt verification |
+| `scripts/learning-v2/trueforge-turn.mjs` | Injected SDK transport with durable call intent, explicit fresh turns and complete observations |
+| `scripts/learning-v2/operation-archive.mjs` | Private create-once operation/call observations, ordered stages and immutable artifacts |
+| `scripts/learning-v2/legacy-renderer.mjs` | Existing two-pass prompt chain and finding-conversion/merge order |
+| `scripts/learning-v2/compat/gk-bag-3091.mjs` | Byte-identical pure BAG helper from the existing control branch |
 
-All six modules use Node built-ins and the existing `learning-trust.mjs`
-signature verifier. There is no new package, SDK upgrade, service or CLI.
+The modules use Node built-ins, the existing `learning-trust.mjs` signature
+verifier and a host-supplied SDK client. There is no new package, SDK upgrade,
+service or CLI. The [Phase 2 adapter record](phase-2-adapter.md) details the
+proposed runtime configuration changes and concrete host composition.
 The current `proof/three-agent/run.mjs` is not changed by this source slice.
 
 ## Host integration sequence
@@ -60,8 +68,10 @@ cannot be extended. Ten attempts is the experiment limit, not a target count of
 successful evaluations. Reopening the same journal resumes its existing state.
 
 `admit`, `execute` and `settle` are trusted host capabilities. They are never
-registered as model tools. No live implementation of them is included here.
-In particular, a local process signing its own model outputs does not become
+registered as model tools. `createLearningExecutor` supplies the concrete
+`execute` implementation. Real `admit`, `settle`, independent evaluation/novelty
+issuers and private durable archive locations remain the admitted host's
+responsibility. A local process signing its own model outputs does not become
 an independent evaluator or a global budget gateway.
 
 ### Admission and dispatch
@@ -69,7 +79,7 @@ an independent evaluator or a global budget gateway.
 `executionRequest(kind, attemptId)` produces a frozen host manifest. It includes
 the experiment/configuration identity, runtime identity, policy, baseline and
 incumbent identities, complete phase plan, prompt artifacts, required call
-count, and the safe proposer projection when applicable. Its digest is bound
+count, pinned authority identities, and the safe proposer projection when applicable. Its digest is bound
 to the gateway lease and every evaluation/novelty receipt.
 
 `dispatchManagedOperation` obtains admission, persists the operation, then calls
@@ -79,9 +89,10 @@ independent issuer verifies the actual execution against that request before
 including these fields in its signed receipts. Merely copying the requested
 identity onto unrelated measurements is not valid verification.
 
-The exact number of fresh model calls is:
+The protocol requires one inference for each scheduled fresh finding/proposal
+turn. The complete scheduled turn count is:
 
-| Phase | Fresh calls |
+| Phase | Fresh turns |
 | --- | --- |
 | Baseline | Two per task/trial case |
 | Proposal | One |
@@ -96,7 +107,10 @@ three-arm orders alternate `base/incumbent/candidate`,
 The lease must reserve the complete exact call count, with sufficient money
 inside the cumulative programme ceiling. The gateway must enforce the global
 limit across all jobs and reject the same logical phase across processes or
-volumes. Local state alone cannot enforce that property.
+volumes. The adapter's one-main-loop limit and observed-event checks cannot
+attest provider-internal calls or billing. The gateway must independently
+enforce the actual inference count and reconcile any additional or ambiguous
+usage; local state alone cannot enforce that property.
 
 ### Model-visible projections
 
@@ -133,7 +147,7 @@ out of normal learner/reviewer carry.
 | `model` | Fixed TrueFoundry-routed model identity |
 | `scope` | One fixed fault focus |
 | `baseInstructions` | Frozen original reviewer instructions |
-| `firstPassInstructionsDigest` | SHA-256 of the exact UTF-8 first-pass instruction bytes |
+| `firstPassInstructionsDigest` | SHA-256 of the frozen original BASE instruction bytes, before case-specific BAG preparation; complete prepared requests have per-call input digests |
 | `runtimeDigest` | SHA-256 of the canonical runtime manifest described below |
 | `gatePolicy` | Expected managed target/preset/output/effective-tree identities |
 | `cases` | Two to 128 task/trial cases, each with caseId, fit/check split, fault scope, expected bug count, two passes and learner visibility |
@@ -147,11 +161,14 @@ cannot admit a `holdout` split. No tranche-7 data belongs in this manifest.
 The host owns and retains these digest preimages with the private qualification
 packet. This core checks exact identity, not the truth of an opaque digest:
 
-- **Runtime manifest:** actual TrueForge server/SDK build identities, model
-  provider/route/version, all sampling and output limits, seed policy, tool and
-  output-schema configuration, first-pass instruction digest, new-root-turn
-  policy, memory off, and request-renderer/scorer identities. Include every
-  option that could alter a model-visible request or its interpretation.
+- **Runtime manifest and environment evidence:** the concrete client manifest
+  and exact canonical preimage are specified in the adapter record. It binds
+  server/SDK version selection, model parameters, explicit runtime flags,
+  session policy, renderer/BAG and case-input identity. Separately retain the
+  actual admitted build, provider route, effective capabilities/context and
+  memory-policy evidence; declared fields alone do not prove deployed values.
+  BASE/scorer/benchmark and the complete source are separately bound in the
+  configuration. The independent verifier checks the whole effective request.
 - **Preset digest:** the reviewed entire managed gate definition, including
   literal commands, versions, mandatory stages, protected policy/base identity,
   discovery rules, cleanup requirements, and conditional Python fixture gates.
@@ -175,9 +192,11 @@ references are included so a restart cannot silently substitute different memory
 
 `promptDigest` identifies the canonical prompt artifact: frozen baseline plus
 ordered procedures and their reviewed applicability maps. A call's
-`inputDigest` instead binds the exact model-visible request and effective
-runtime options, including instructions, messages/context, tools, schemas and
-generation limits. `outputDigest` binds exact raw output bytes. Scheduling IDs
+`inputDigest` instead binds the exact client model/input/configuration object
+described in the adapter record. Independent verification must also establish
+any server-added context or capabilities. `outputDigest` hashes the exact UTF-8
+text selected or concatenated from the final main-thread message, excluding
+response JSON and event envelopes. Scheduling IDs
 must not be mistaken for request content. The verifier must retain enough raw
 evidence to recompute both and to prove the source/provider turn identities.
 
@@ -250,12 +269,19 @@ remote call, prove that no call happened, or authorize a retry. Gateway
 reconciliation remains necessary. A failed baseline requires a separately
 authorized new experiment; it cannot be rerun into a convenient control.
 
+`abandonAttempt` refuses while any unconsumed operation belongs to that
+attempt. Abandon the operation first, retaining its lease and observed usage
+for authentic settlement. This ordering prevents an unresolved phase from
+becoming impossible to settle after its attempt has already been closed.
+
 FileJournal uses a private, owner-controlled POSIX directory outside the source
 repository, mode 0700, with 0600 files. It requires local exclusive-create,
 hard-link and directory-fsync semantics. Persist the volume across restarts.
 It is a bounded single-writer store with synchronous I/O, not a distributed
-database. Records contain cumulative state snapshots and are capped at 32 MiB;
-provision storage for the full retained journal plus a publication temporary.
+database. Controller records contain cumulative state snapshots; operation
+archive records contain individual event deltas. Both use the same 32 MiB
+per-record ceiling; provision storage for the full retained journal plus a
+publication temporary.
 No automatic compaction or history deletion is implemented.
 
 The journal checks a SHA-256 chain, contiguous sequence and durable head
@@ -267,8 +293,10 @@ the entire directory with an older internally consistent snapshot. The local
 hash chain is not authentication against a malicious process with the same UID.
 
 The private evaluator/runner retains original signed receipts, raw outputs,
-scoring artifacts and gateway logs. This journal keeps normalized evidence,
-receipt/body digests and lineage; it does not replace that independent archive.
+scoring artifacts and gateway logs. The controller journal keeps normalized
+evidence, receipt/body digests and lineage. The separate operation archive now
+retains call intents and raw observations, including original serialized signed
+envelopes as strings; neither replaces independently held evidence.
 
 ## Activation and existing data
 
@@ -300,8 +328,9 @@ Python contrast fixtures, retain the separately specified explicit interpreter,
 test-identity and discovery-count gates. Do not substitute a reduced command,
 the paid evaluation service, or a successful receipt from another source.
 
-Commissioning the real managed adapter, signing authority custody and gateway
-enforcement, reconciling the existing runner repairs, and proving baseline
-equivalence are Phase 2/3 work. The app status endpoint/UI consumes `status()`
+Composing the implemented adapter in the real managed runner, establishing
+signing authority custody and gateway enforcement, reconciling existing runner
+repairs, and measuring baseline equivalence are Phase 2b/3 work. The explicit
+runtime-capability changes need controls. The app status endpoint/UI consumes `status()`
 only after that integration. It must not expose `state()` or private journal
 contents to ordinary app users.

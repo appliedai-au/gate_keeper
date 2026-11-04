@@ -5,6 +5,7 @@ import { LearningController } from '../scripts/learning-v2/controller.mjs';
 import { MemoryJournal } from '../scripts/learning-v2/journal.mjs';
 import { POLICY, configuration, digest, procedure, procedureFingerprint } from '../scripts/learning-v2/contracts.mjs';
 import { reviewerInstructions } from '../scripts/learning-v2/prompts.mjs';
+import { dispatchManagedOperation } from '../scripts/learning-v2/runtime.mjs';
 
 // All receipts, keys, source identities, counts and dollar amounts in this file
 // are synthetic fixtures. Only the managed test runner may execute the suite;
@@ -138,12 +139,18 @@ async function installGate(r) {
 
 async function reserve(r, kind, attemptId = null, leaseChanges = {}) {
   const request = await r.controller.executionRequest(kind, attemptId);
-  const state = await r.controller.state();
   const operation = {
     id: r.next(`operation-${kind}`), kind, attemptId,
     namespace: request.namespace, requestDigest: digest(request),
   };
-  const envelope = r.sign('budget', {
+  const envelope = await operationLease(r, operation, request, leaseChanges);
+  const reserved = await r.controller.reserveOperation(operation, envelope);
+  return { ...reserved, request, envelope };
+}
+
+async function operationLease(r, operation, request, changes = {}) {
+  const state = await r.controller.state();
+  return r.sign('budget', {
     schema: 'gk-learning-v2-operation-lease', receiptId: r.next('lease'),
     ...stateIdentity(state), ...operation,
     budgetId: state.config.budgetId, gatewayId: r.trust.budget.gatewayId,
@@ -153,10 +160,8 @@ async function reserve(r, kind, attemptId = null, leaseChanges = {}) {
     namespaceExclusive: true, providerLimitEnforced: true,
     maxCalls: request.requiredCalls, reservationMicros: 10_000,
     spentMicros: state.budget.spentMicros, reservedMicros: 10_000,
-    ...timeWindow(), ...leaseChanges,
+    ...timeWindow(), ...changes,
   });
-  const reserved = await r.controller.reserveOperation(operation, envelope);
-  return { ...reserved, request, envelope };
 }
 
 async function settle(r, operation, changes = {}) {
@@ -691,4 +696,121 @@ test('an unconsumed operation cannot settle and cannot be retried under a differ
   assert.equal(state.operations[0].settled, true);
   await assert.rejects(reserve(r, 'baseline'), /operation pending or reused/);
   assert.equal((await r.controller.state()).operations.length, 1);
+});
+
+async function assertAmbiguousAttemptRecovery(kind) {
+  const r = await rig();
+  const attempt = kind === 'proposal' ? await r.controller.beginAttempt() :
+    await propose(r, rule(`recovery-${kind}`));
+  if (kind === 'screen') await r.controller.planScreen(attempt.attemptId);
+  if (kind === 'confirmation') {
+    await screen(r, attempt.attemptId);
+    await r.controller.planConfirmation(attempt.attemptId);
+  }
+  const beforeDispatch = await r.controller.state();
+  const counts = { admitted: 0, executed: 0, settled: 0 };
+  let operation;
+  const dispatch = {
+    controller: r.controller, kind, attemptId: attempt.attemptId,
+    operationId: r.next(`ambiguous-${kind}`),
+    async admit({ operation: requested, request }) {
+      counts.admitted++;
+      return operationLease(r, requested, request);
+    },
+    async execute({ operation: reserved }) {
+      operation = reserved;
+      counts.executed++;
+      throw new Error('Synthetic connection loss after dispatch; outcome unknown.');
+    },
+    async settle() {
+      counts.settled++;
+      throw new Error('Automatic settlement must not follow ambiguous execution.');
+    },
+  };
+  await assert.rejects(dispatchManagedOperation(dispatch), /MANAGED_OPERATION_UNRESOLVED/);
+  assert.deepEqual(counts, { admitted: 1, executed: 1, settled: 0 });
+  const beforeRefusal = await r.controller.state();
+  const journalBefore = await r.journal.read();
+  assert.equal(beforeRefusal.operations.length, beforeDispatch.operations.length + 1);
+  assert.equal(beforeRefusal.operations.at(-1).consumed, false);
+  assert.equal(beforeRefusal.operations.at(-1).settled, false);
+  assert.equal(beforeRefusal.budget.reservedMicros, operation.reservationMicros);
+
+  await assert.rejects(r.controller.abandonAttempt(attempt.attemptId, 'Operator notes ambiguous execution.'),
+    /abandon the pending operation instead/);
+  assert.equal((await r.journal.read()).head, journalBefore.head);
+  assert.deepEqual(await r.controller.state(), beforeRefusal);
+
+  const reason = `Synthetic ${kind} outcome requires gateway reconciliation.`;
+  await r.controller.abandonOperation(operation.id, reason);
+  let state = await r.controller.state();
+  assert.equal(lastAttempt(state).status, 'unresolved');
+  assert.equal(lastAttempt(state).reason, reason);
+  assert.equal(state.attempts.length, 1);
+  assert.equal(state.operations.at(-1).consumed, true);
+  assert.equal(state.operations.at(-1).settled, false);
+  assert.equal(state.operations.at(-1).failureReason, reason);
+  assert.equal(state.budget.reservedMicros, operation.reservationMicros);
+  assert.equal(state.budget.spentMicros, beforeDispatch.budget.spentMicros);
+  assert.equal(state.activeVersionId, beforeDispatch.activeVersionId);
+  assert.equal(state.versions.length, beforeDispatch.versions.length);
+  await assert.rejects(r.controller.beginAttempt(), /operation or billing unresolved/);
+  await assert.rejects(r.controller.activateVersion(state.baseVersion.id, {}), /work is pending/);
+  await assert.rejects(r.controller.settleOperation(operation.id, {}), /envelope/);
+  assert.equal((await r.controller.state()).budget.reservedMicros, operation.reservationMicros);
+
+  // The independent synthetic gateway reports a nonzero partial charge. The
+  // timeout itself neither proves zero calls nor permits an automatic refund.
+  await settle(r, operation, {
+    actualCalls: 1, actualMicros: 7,
+    spentMicros: beforeDispatch.budget.spentMicros + 7,
+  });
+  state = await r.controller.state();
+  assert.equal(state.operations.at(-1).settled, true);
+  assert.equal(state.operations.at(-1).actualCalls, 1);
+  assert.equal(state.operations.at(-1).actualMicros, 7);
+  assert.equal(state.budget.reservedMicros, 0);
+  assert.equal(state.budget.spentMicros, beforeDispatch.budget.spentMicros + 7);
+  const settledOperationCount = state.operations.length;
+  await assert.rejects(dispatchManagedOperation({ ...dispatch, operationId: r.next('forbidden-phase-retry') }),
+    /invalid attempt transition/);
+  assert.deepEqual(counts, { admitted: 1, executed: 1, settled: 0 });
+  assert.equal((await r.controller.state()).operations.length, settledOperationCount);
+
+  const next = await r.controller.beginAttempt();
+  state = await r.controller.state();
+  assert.equal(next.number, 2);
+  assert.notEqual(next.attemptId, attempt.attemptId);
+  assert.equal(state.attempts[0].status, 'unresolved');
+  assert.equal(state.attempts[0].id, attempt.attemptId);
+  assert.equal(state.operations.length, settledOperationCount);
+  assert.equal(state.operations.at(-1).id, operation.id);
+  assert.equal(state.activeVersionId, beforeDispatch.activeVersionId);
+  assert.deepEqual(counts, { admitted: 1, executed: 1, settled: 0 });
+}
+
+test('ambiguous proposal dispatch refuses attempt abandonment and remains explicitly settleable', async () => {
+  await assertAmbiguousAttemptRecovery('proposal');
+});
+
+test('ambiguous screening dispatch refuses attempt abandonment and remains explicitly settleable', async () => {
+  await assertAmbiguousAttemptRecovery('screen');
+});
+
+test('ambiguous confirmation dispatch refuses attempt abandonment and remains explicitly settleable', async () => {
+  await assertAmbiguousAttemptRecovery('confirmation');
+});
+
+test('an attempt without an unconsumed operation can still be abandoned honestly', async () => {
+  const r = await rig();
+  const attempt = await r.controller.beginAttempt();
+  const before = await r.controller.state();
+  await r.controller.abandonAttempt(attempt.attemptId, 'No proposer operation was admitted.');
+  const state = await r.controller.state();
+  assert.equal(lastAttempt(state).status, 'unresolved');
+  assert.equal(state.operations.length, before.operations.length);
+  assert.equal(state.budget.reservedMicros, 0);
+  assert.equal(state.budget.spentMicros, before.budget.spentMicros);
+  const next = await r.controller.beginAttempt();
+  assert.equal(next.number, 2);
 });
