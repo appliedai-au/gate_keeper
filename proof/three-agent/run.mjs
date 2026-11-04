@@ -77,10 +77,21 @@ async function turn(label, instructions, prompt, model = MODEL, tempOverride = n
   if (response) { hits++; response = { ...response, label, cached: true }; }
   else {
     response = await turnLive(label, instructions, prompt, model, temperature, maxTokens);
+    // Retry one failed execution with identical inputs. Never retry a successful answer,
+    // malformed successful output, a budget stop, or an externally cancelled call.
+    // Both paid attempts count toward the same hard run cap.
+    if (["error", "failed", "EXCEPTION"].includes(response.status)) {
+      const failed = response;
+      console.log("GK3_CALL_RETRY " + JSON.stringify({ label, failedStatus: failed.status, retry: 1 }));
+      const retry = await turnLive(label, instructions, prompt, model, temperature, maxTokens);
+      response = { ...retry, cost: (failed.cost || 0) + (retry.cost || 0),
+        seconds: (failed.seconds || 0) + (retry.seconds || 0),
+        attemptStatuses: [failed.status, retry.status] };
+    }
     if (ck && response.status === "done" && response.text) { try { wfs(ck, JSON.stringify(response)); } catch {} }
   }
   if (REUSE && response.status === "done" && response.text) responseMemory.set(key, response);
-  console.log("GK3_RESPONSE " + JSON.stringify({ label, requestHash: key, origin, status: response.status }));
+  console.log("GK3_RESPONSE " + JSON.stringify({ label, requestHash: key, origin, status: response.status, attemptStatuses: response.attemptStatuses || [response.status] }));
   return response;
 }
 async function turnLive(label, instructions, prompt, model, temperature, maxTokens) {
@@ -519,7 +530,7 @@ async function improve() {
       }
       const sc = score(task.expected, fs, task.benign || []), code = codeOf(task);
       const requiredFindingPasses = BAGMODE ? Number(process.env.GK3_IMPROVE_CHAIN || "1") : focused ? FOCUS.length : 1;
-      const passes = rs.map((r, i) => ({ pass: i + 1, status: r.status ?? "missing",
+      const passes = rs.map((r, i) => ({ pass: i + 1, status: r.status ?? "missing", attemptStatuses: r.attemptStatuses || [r.status],
         parsed: r.status === "done" && Array.isArray(jsonFindings(r.text)) }));
       const missingOrInvalid = Math.max(0, requiredFindingPasses - passes.length) + passes.filter((p) => !p.parsed).length;
       res.incompleteFindingPasses += missingOrInvalid;
