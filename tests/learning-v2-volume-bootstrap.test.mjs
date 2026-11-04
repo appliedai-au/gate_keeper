@@ -9,13 +9,14 @@ const stat = (uid = 0, gid = 0, mode = 0o40755, directory = true, symlink = fals
   ({ uid, gid, mode, isDirectory: () => directory, isSymbolicLink: () => symlink });
 
 function fixture({ names = [], ancestor = stat(), initial = stat(), after = stat(1000, 1000, 0o40700),
-    mount = leaf, postcondition = true } = {}) {
+    mount = leaf, postcondition = true, lostFound = stat(0, 0, 0o40700), lostContents = [] } = {}) {
   const writes = [];
   let changed = false;
   const fs = {
     readFileSync: () => mount,
-    lstatSync: path => path === JOURNAL_MOUNT ? (changed && postcondition ? after : initial) : ancestor,
-    readdirSync: () => names,
+    lstatSync: path => path.endsWith('/lost+found') ? lostFound :
+      path === JOURNAL_MOUNT ? (changed && postcondition ? after : initial) : ancestor,
+    readdirSync: path => path.endsWith('/lost+found') ? lostContents : names,
     chownSync: (...args) => { writes.push(['chown', ...args]); changed = true; },
     chmodSync: (...args) => writes.push(['chmod', ...args]),
   };
@@ -55,6 +56,29 @@ test('ancestor must be trusted and existing data is never reowned', () => {
     { ancestor: stat(0, 0, 0o120777, false, true) }, { names: ['controller'] }]) {
     const { prepare, writes } = fixture(opts);
     assert.throws(() => run(prepare), /untrusted mount ancestor|existing data/);
+    assert.deepEqual(writes, []);
+  }
+});
+
+
+test('pristine ext4 lost+found is accepted but is never modified', () => {
+  const { prepare, writes } = fixture({ names: ['lost+found'] });
+  assert.equal(run(prepare).prepared, true);
+  assert.deepEqual(writes, [['chown', JOURNAL_MOUNT, 1000, 1000],
+    ['chmod', JOURNAL_MOUNT, 0o700]]);
+});
+
+test('only exact empty, root-owned 0700 lost+found is admissible', () => {
+  const cases = [
+    { names: ['lost+found', 'controller'] },
+    { names: ['lost+found'], lostFound: stat(0, 0, 0o40755) },
+    { names: ['lost+found'], lostFound: stat(1000, 1000, 0o40700) },
+    { names: ['lost+found'], lostFound: stat(0, 0, 0o120777, false, true) },
+    { names: ['lost+found'], lostContents: ['old-data'] },
+  ];
+  for (const opts of cases) {
+    const { prepare, writes } = fixture(opts);
+    assert.throws(() => run(prepare), /JOURNAL|VOLUME_REFUSED/);
     assert.deepEqual(writes, []);
   }
 });
