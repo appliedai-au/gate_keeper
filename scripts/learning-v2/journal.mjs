@@ -374,7 +374,23 @@ export class FileJournal {
         const listing = () => readdirSync(this.#directory).sort();
         const before = listing();
         if (before.includes(LOCK_NAME)) reject("writer lock present; status read unavailable");
-        const records = this.#readLocked();
+        let records;
+        try {
+          records = this.#readLocked();
+        } catch (error) {
+          // An append can begin after the first directory snapshot. If its
+          // lock or pending/final files appeared, this is transient unavailability,
+          // not evidence that the immutable journal was corrupt beforehand.
+          let unstable = false;
+          try {
+            const now = listing();
+            unstable = now.includes(LOCK_NAME) || canonical(before) !== canonical(now);
+          } catch {
+            unstable = true; // Disappearing storage is also not a valid snapshot.
+          }
+          if (unstable) reject("journal changed during lock-free status read", error);
+          throw error;
+        }
         const after = listing();
         if (after.includes(LOCK_NAME) || canonical(before) !== canonical(after)) {
           reject("journal changed during lock-free status read");

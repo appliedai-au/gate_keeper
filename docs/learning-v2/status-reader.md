@@ -39,3 +39,9 @@ model, scorer, benchmark and initial policy. It recomputes that digest from the
 stored configuration, trust pins, policy and historical bank on every read.
 
 The FileJournal is now opened in explicit readOnly mode with create=false. It never obtains the writer lock or creates an evidence directory; append is categorically refused. A held writer lock or unstable directory listing returns unavailable rather than racing the real writer. It does not automatically retry or delete a held lock.
+
+If validation encounters a new file or head mismatch after the first listing,
+the adapter checks directory state again. An active writer lock or changed
+listing is classified as transient unavailable (preserving the original cause),
+while an unchanged corrupt journal remains an integrity failure requiring
+operator investigation. Neither path retries nor mutates evidence.

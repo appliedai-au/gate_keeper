@@ -629,6 +629,12 @@ test('read-only journal reader never acquires or steals a held writer lock', asy
   unlinkSync(lockedPath);
   assert.equal(existsSync(lockedPath), false);
   assert.deepEqual(await read(), await f.host.status());
+  // A stable orphan without a live writer remains a real journal integrity error.
+  const orphan = join(f.directory, 'controller', '.pending-orphan.json');
+  writeFileSync(orphan, 'incomplete write', { mode: 0o600, flag: 'wx' });
+  await assert.rejects(read(), /unexpected file or orphaned pending record requires recovery/);
+  unlinkSync(orphan);
+  assert.deepEqual(await read(), await f.host.status());
   const readOnlyJournal = new FileJournal({ directory: join(f.directory, 'controller'),
     repositoryRoot: f.repositoryRoot, create: false, readOnly: true });
   await assert.rejects(readOnlyJournal.append(null, {}), /read-only journal cannot append/);
