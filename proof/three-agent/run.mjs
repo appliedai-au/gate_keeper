@@ -34,7 +34,9 @@ if (FAULT_TYPE) {
     scopeSha256: createHash("sha256").update(JSON.stringify(focused.map((t) => [t.id, t.expected]))).digest("hex") }));
 }
 const tf = new TrueForge({ baseUrl: process.env.TRUEFORGE_BASE_URL, token: process.env.TRUEFORGE_TOKEN, timeoutInSeconds: 60 });
-let spent = 0, reserved = 0, calls = 0;
+let spent = 0, reserved = 0, calls = 0, budgetStops = 0;
+const CONTROL_REPEATS = Number(process.env.GK3_CONTROL_REPEATS || '0');
+if (!Number.isInteger(CONTROL_REPEATS) || CONTROL_REPEATS < 0 || CONTROL_REPEATS > 5 || CONTROL_REPEATS === 1) throw new Error('GK3_CONTROL_REPEATS must be 0 or 2..5');
 // Same for every agent. Reviews are non-interactive: no one can answer TrueForge's built-in ask_user_question
 // tool, and a call to it ends the turn with no answer (seen in practice run 2). Everything else stays stock.
 const RUNTIME = { askUserQuestions: { enabled: false } };
@@ -48,6 +50,7 @@ import { mkdirSync, readFileSync as rfs, writeFileSync as wfs, existsSync, renam
 let CACHE = process.env.GK3_CACHE_DIR || "";
 if (CACHE) { try { mkdirSync(CACHE, { recursive: true }); wfs(CACHE + "/.probe", "1"); } catch (e) { console.log("GK3_CACHE_OFF " + String(e?.code || e)); CACHE = ""; } }
 let hits = 0;
+console.log("GK3_CACHE_STATUS " + JSON.stringify({ configured: !!process.env.GK3_CACHE_DIR, usable: !!CACHE, controlFreshCalls: CONTROL_REPEATS > 0 }));
 // Key = inputs + trial + any per-sample suffix after /t<n> (vote's a/b samples stay distinct).
 const cacheKey = (label, model, instructions, prompt, temperature, maxTokens) => {
   const m = label.match(/\/t(\d+)((?:\/.*)?)$/) || [], k = [model, temperature, maxTokens, instructions, prompt, m[1] || "1"];
@@ -64,7 +67,7 @@ async function turn(label, instructions, prompt, model = MODEL, tempOverride = n
 }
 async function turnLive(label, instructions, prompt, model, temperature, maxTokens) {
   const reserve = est(instructions.length + prompt.length, RESERVE_OUT || maxTokens);
-  if (spent + reserved + reserve > CAP) return { label, status: "BUDGET_STOP", text: "" };
+  if (spent + reserved + reserve > CAP) { budgetStops++; return { label, status: "BUDGET_STOP", text: "" }; }
   reserved += reserve; calls++;
   const t0 = Date.now();
   let sid = null, st = null, tid = null;
@@ -463,6 +466,7 @@ async function improve() {
   const codeOf = (t) => { const m = new Map(); for (const x of t.prompts.gate_keeper.matchAll(/^\s*(\d+) \| ?(.*)$/gm)) m.set(+x[1], x[2].trim()); return m; };
   const isFit = (t) => !t.id.startsWith("t6-");
   async function evalRules(tag, sys, focused = false) {
+    const callsBefore = calls, hitsBefore = hits, stopsBefore = budgetStops;
     const q = []; for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) q.push({ trial, task });
     const res = { tag, fit: 0, val: 0, caught: 0, fa: 0, cost: 0, sec: 0, n: 0, unparsed: 0, misses: [], fas: [], rows: [] };
     async function one({ trial, task }) {
@@ -503,6 +507,7 @@ async function improve() {
     }
     await Promise.all(Array.from({ length: CONC }, async () => { while (q.length) await one(q.shift()); }));
     const out = { tag, net: res.caught - res.fa, caught: res.caught, of: P.tasks.reduce((a, t) => a + t.expected.length, 0) * TRIALS, fa: res.fa, fitNet: res.fit, checkNet: res.val, unparsed: res.unparsed, avgS: Math.round(10 * res.sec / res.n) / 10, avgUsd: Math.round(1e6 * res.cost / res.n) / 1e6 };
+    console.log("GK3_EVAL_USAGE " + JSON.stringify({ tag, liveCalls: calls - callsBefore, cacheHits: hits - hitsBefore, budgetStops: budgetStops - stopsBefore }));
     console.log("GK3_EVAL " + JSON.stringify(out)); return { ...out, misses: res.misses, fas: res.fas, rows: res.rows };
   }
   const LEARNER_TEMP = process.env.GK3_LEARNER_TEMPERATURE === undefined ? null : Number(process.env.GK3_LEARNER_TEMPERATURE);
@@ -543,8 +548,31 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     addedFalseAlarms: fitDelta(before, after, "fas", "added"),
     removedFalseAlarms: fitDelta(before, after, "fas", "removed"),
   });
-  console.log("GK3_START " + JSON.stringify({ improve: true, structuredRules: STRUCTURED_RULES, learnerTemperature: LEARNER_TEMP ?? P.params.temperature, learnedRulePlacement: process.env.GK3_LEARN_PASS2_ONLY ? "second finding pass only" : "both finding passes", learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, faultType: FAULT_TYPE || "all", rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
+  console.log("GK3_START " + JSON.stringify({ improve: true, controlRepeats: CONTROL_REPEATS, structuredRules: STRUCTURED_RULES, learnerTemperature: LEARNER_TEMP ?? P.params.temperature, learnedRulePlacement: process.env.GK3_LEARN_PASS2_ONLY ? "second finding pass only" : "both finding passes", learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, faultType: FAULT_TYPE || "all", rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
   const BASE = P.agents.gate_keeper.system;
+  // Measurement-only controls use fresh calls and never load, save or activate the rule bank.
+  // Existing response-cache files are untouched; only this process temporarily bypasses reuse.
+  if (CONTROL_REPEATS) {
+    if (!BAGMODE || Number(process.env.GK3_IMPROVE_CHAIN || "1") !== 2) throw new Error("controls require the two-finding-pass rule-bag base");
+    const oldCache = CACHE, samples = [];
+    let complete = true;
+    try {
+      CACHE = "";
+      for (let i = 1; i <= CONTROL_REPEATS; i++) {
+        const stopsBefore = budgetStops;
+        const result = await evalRules("unchanged baseline control " + i, BASE);
+        const sample = { repeat: i, net: result.net, caught: result.caught, fa: result.fa, fit: result.fitNet,
+          check: result.checkNet, unparsed: result.unparsed, rows: result.rows };
+        samples.push(sample);
+        console.log("GK3_CONTROL " + JSON.stringify(sample));
+        if (budgetStops > stopsBefore || result.unparsed) { complete = false; break; }
+      }
+    } finally { CACHE = oldCache; }
+    console.log("GK3_SUMMARY " + JSON.stringify({ mode: "unchanged-baseline-controls", calls, cacheHits: hits,
+      spentUsd: Math.round(spent * 1e6) / 1e6, requestedRepeats: CONTROL_REPEATS, complete,
+      samples, bankChanged: false, learned: [] }));
+    return;
+  }
   const bank = STRUCTURED_RULES ? loadRuleBank() : { accepted: [], harmful: [], unproven: [], history: [] };
   const records = new Map(bank.accepted.flatMap((e) => (e.rules || []).map((rule) => [rule, e.scope || { kind: "general" }])));
   const withRules = (all, prompt = null) => {
@@ -673,7 +701,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   console.log("GK3_RULES " + JSON.stringify({ learned, sha256: createHash("sha256").update(rules).digest("hex") }));
   console.log("GK3_FINAL " + JSON.stringify(rules));
   if (STRUCTURED_RULES) console.log("GK3_BANK_SUMMARY " + JSON.stringify({ path: RULE_BANK_FILE || null, accepted: bank.accepted.length, harmful: bank.harmful.length, unproven: bank.unproven.length }));
-  console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, best: { net: best.net, caught: best.caught, fa: best.fa }, focused: { net: fq.net, caught: fq.caught, fa: fq.fa, avgUsd: fq.avgUsd }, learned }));
+  console.log("GK3_SUMMARY " + JSON.stringify({ calls, cacheHits: hits, budgetStops, spentUsd: Math.round(spent * 1e6) / 1e6, best: { net: best.net, caught: best.caught, fa: best.fa }, focused: { net: fq.net, caught: fq.caught, fa: fq.fa, avgUsd: fq.avgUsd }, learned }));
 }
 if (process.env.GK3_IMPROVE) { await improve(); } else if (process.env.GK3_PIPE) { await pipe(); } else if (process.env.GK3_MATRIX) {
   const M = { ds: MODEL, oss: "tfy-direct/gpt-oss-120b", glm: "tfy-direct/glm-5-3-flash", mimo: "tfy-direct/mimo-v2-6-flash" };

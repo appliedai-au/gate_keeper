@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -96,7 +96,9 @@ test('delta learning feeds fit-only regressions into the next learner, never rev
   }
   const bank = JSON.parse(readFileSync(path, 'utf8'));
   assert.equal(bank.accepted.length, 0);
-  assert.equal(bank.harmful.length, 2);
+  assert.equal(bank.harmful.length, 1);
+  assert.equal(records(r, 'GK3_BANK_DUPLICATE').length, 1);
+  assert.equal(bank.history.filter((x) => x.kind === 'duplicate-not-retried').length, 1);
   for (const e of bank.harmful) {
     assert.ok(e.fitFeedback.lostRealBugs.some((x) => x.why.includes('FIT_ONLY_TRUTH') && x.occurrencesChanged === 1));
     assert.ok(e.fitFeedback.addedFalseAlarms.some((x) => x.line === 99 && x.occurrencesChanged === 1));
@@ -161,4 +163,47 @@ test('learner temperature changes leave every finding call at baseline temperatu
   success(r);
   assert.ok(records(r, 'MOCK_LEARNER').every((x) => x.temperature === 0.7));
   assert.ok(records(r, 'MOCK_REQUEST').every((x) => x.temperature === 0.2));
+}));
+
+test('unchanged controls make fresh two-pass calls without changing bank or cache entries', () => fixture((path) => {
+  const seed = run(path, proposal('general', true)); success(seed);
+  const bankBefore = readFileSync(path, 'utf8');
+  const cache = path + '-control-cache';
+  const r = run(path, proposal(), { GK3_CONTROL_REPEATS: '3', GK3_CACHE_DIR: cache, GK3_ROUNDS: '10', GK3_LEARN_PASS2_ONLY: '1' });
+  success(r);
+  assert.equal(records(r, 'MOCK_LEARNER').length, 0);
+  const asks = records(r, 'MOCK_REQUEST');
+  assert.equal(asks.length, 12); // 3 repeats x 2 tasks x 2 finding calls
+  assert.ok(asks.every((x) => !x.good && !x.bad));
+  const controls = records(r, 'GK3_CONTROL');
+  assert.equal(controls.length, 3);
+  assert.ok(controls.every((x) => x.rows.length === 2));
+  const summary = records(r, 'GK3_SUMMARY')[0];
+  assert.equal(summary.mode, 'unchanged-baseline-controls');
+  assert.equal(summary.calls, 12);
+  assert.equal(summary.cacheHits, 0);
+  assert.equal(summary.complete, true);
+  assert.equal(summary.bankChanged, false);
+  assert.equal(readFileSync(path, 'utf8'), bankBefore);
+  assert.ok(readdirSync(cache).every((x) => x === '.probe'));
+}));
+test('controls do not create a new bank and stop honestly at the budget guard', () => fixture((path) => {
+  const r = run(path, proposal(), { GK3_CONTROL_REPEATS: '3', GK3_CAP_USD: '0' });
+  success(r);
+  assert.equal(existsSync(path), false);
+  assert.equal(records(r, 'MOCK_LEARNER').length, 0);
+  assert.equal(records(r, 'MOCK_REQUEST').length, 0);
+  const summary = records(r, 'GK3_SUMMARY')[0];
+  assert.equal(summary.complete, false);
+  assert.equal(summary.samples.length, 1);
+  assert.equal(summary.calls, 0);
+  assert.equal(summary.spentUsd, 0);
+}));
+test('invalid control repeat count fails before any model call', () => fixture((path) => {
+  for (const n of ['1', '6', '-1', 'NaN', '2.5']) {
+    const r = run(path, proposal(), { GK3_CONTROL_REPEATS: n });
+    assert.notEqual(r.status, 0);
+    assert.equal(records(r, 'MOCK_REQUEST').length, 0);
+    assert.equal(records(r, 'MOCK_LEARNER').length, 0);
+  }
 }));
