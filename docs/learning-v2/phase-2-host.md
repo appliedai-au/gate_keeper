@@ -14,10 +14,15 @@ approved the source and closed its prior abandonment finding, while explicitly
 distinguishing source review from runtime qualification. That review is not a
 review or test pass for this later increment.
 
-The [host source manifest](host-source-manifest.json) seals the current files.
+The [host source manifest](host-source-manifest.json) seals this host increment.
 The earlier Phase 1 and Phase 2 manifests remain unchanged historical snapshots
 of their named parent revisions. They are not current whole-repository gate
 receipts or effective-tree manifests.
+
+The later [baseline recovery closeout](phase-2-baseline-recovery.md) addresses
+Gitar's review of this host: baseline non-admission must be recorded in the
+controller before dispatch closure. It also adds a safe public baseline status
+and explicit recovery for the interval between those two journal writes.
 
 ## Concrete host API
 
@@ -197,6 +202,10 @@ refuses non-admission if it already holds a matching authenticated admission.
 It retains the original negative receipt, marks a learning attempt unresolved
 and consumes the logical phase. An error, timeout, missing archive or missing
 gateway response cannot substitute for this receipt.
+For a baseline, the controller records an authenticated `baselineNonAdmission`
+marker and fixed terminal `baselineError` before the dispatch ledger completes.
+If that completion is interrupted, explicit resubmission of the exact original
+receipt finishes closure without another controller disposition or dispatch.
 
 ### Original observations remain immutable
 

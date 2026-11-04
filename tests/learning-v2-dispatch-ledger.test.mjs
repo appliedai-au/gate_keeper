@@ -558,3 +558,83 @@ test('selection transitions are capped at 32 on both writes and replay', async (
     kind: 'admission', observationIndex: 0 });
   await assert.rejects(fresh(journal).read(), /selection limit reached/);
 });
+
+test('guarded completion requires the selected original bytes and explicit recovery can reselect them', async () => {
+  for (const kind of ['not-admitted', 'settlement']) {
+    const { ledger, journal } = await initialized();
+    const { operation, request } = fixture({ kind: 'baseline', attemptId: null });
+    await ledger.claim(operation, request);
+    if (kind === 'settlement') await ledger.observe(operation.id, 'admission', ADMISSION);
+    const original = kind === 'settlement' ? SETTLEMENT : NOT_ADMITTED;
+    const replacement = original + '\n';
+    const resolution = kind === 'settlement' ? { kind: 'settled', receiptId: 'settlement:first' } :
+      { kind: 'not-admitted', receiptId: 'not-admitted:first' };
+    const observationIndex = (await ledger.read()).pending.observations.length;
+    await ledger.observe(operation.id, kind, original);
+    await fresh(journal).observe(operation.id, kind, replacement);
+    const before = await journal.read();
+    await assert.rejects(ledger.complete(operation.id, resolution, digest(original)), /completion observation mismatch/);
+    assert.deepEqual(await journal.read(), before);
+    const pending = (await fresh(journal).read()).pending;
+    assert.equal(pending[kind === 'settlement' ? 'settlement' : 'notAdmitted'], replacement);
+    assert.equal(pending.resolution, null);
+    await fresh(journal).select(operation.id, kind, observationIndex);
+    await ledger.complete(operation.id, resolution, digest(original));
+    const reopened = await fresh(journal).read();
+    assert.equal(reopened.pending, null);
+    assert.equal(reopened.entries[0][kind === 'settlement' ? 'settlement' : 'notAdmitted'], original);
+    assert.deepEqual(reopened.entries[0].observations, pending.observations);
+    assert.deepEqual(reopened.entries[0].resolution, resolution);
+    assert.deepEqual((await journal.read()).events.at(-1), {
+      schema: SCHEMA, type: 'completed', operationId: operation.id, resolution, observationDigest: digest(original),
+    });
+  }
+});
+
+test('completion observation guards reject invalid digests and mismatched bytes on writes and replay', async () => {
+  const { ledger, journal } = await initialized();
+  const { operation, request } = fixture({ kind: 'baseline', attemptId: null });
+  await ledger.claim(operation, request);
+  await ledger.observe(operation.id, 'not-admitted', NOT_ADMITTED);
+  const resolution = { kind: 'not-admitted', receiptId: 'not-admitted:first' };
+  const before = await journal.read();
+  for (const observationDigest of [null, 0, '', 'a'.repeat(63), 'A'.repeat(64), digest(NOT_ADMITTED + '\n')]) {
+    await assert.rejects(ledger.complete(operation.id, resolution, observationDigest), /invalid digest|observation mismatch/);
+    const forged = new MemoryJournal();
+    for (const event of before.events) await appendRaw(forged, event);
+    await appendRaw(forged, { schema: SCHEMA, type: 'completed', operationId: operation.id, resolution, observationDigest });
+    await assert.rejects(fresh(forged).read(), /invalid digest|observation mismatch/);
+  }
+  assert.deepEqual(await journal.read(), before);
+});
+
+test('a selection changed after guarded validation fails CAS and never retries completion', async () => {
+  const { ledger, journal } = await initialized();
+  const { operation, request } = fixture({ kind: 'baseline', attemptId: null });
+  await ledger.claim(operation, request);
+  await ledger.observe(operation.id, 'not-admitted', NOT_ADMITTED);
+  const resolution = { kind: 'not-admitted', receiptId: 'not-admitted:first' };
+  let completionWrites = 0;
+  const competing = {
+    read: () => journal.read(),
+    async append(head, event) {
+      completionWrites++;
+      await fresh(journal).observe(operation.id, 'not-admitted', NOT_ADMITTED + '\n');
+      return journal.append(head, event);
+    },
+  };
+  await assert.rejects(fresh(competing).complete(operation.id, resolution, digest(NOT_ADMITTED)), /stale expected head/);
+  assert.equal(completionWrites, 1);
+  const pending = (await fresh(journal).read()).pending;
+  assert.equal(pending.notAdmitted, NOT_ADMITTED + '\n');
+  assert.equal(pending.resolution, null);
+  assert.deepEqual(pending.observations, [
+    { kind: 'not-admitted', serialized: NOT_ADMITTED },
+    { kind: 'not-admitted', serialized: NOT_ADMITTED + '\n' },
+  ]);
+  assert.equal((await journal.read()).events.filter(event => event.type === 'completed').length, 0);
+  await fresh(journal).select(operation.id, 'not-admitted', 0);
+  await fresh(journal).complete(operation.id, resolution, digest(NOT_ADMITTED));
+  assert.equal((await fresh(journal).read()).pending, null);
+  assert.equal(completionWrites, 1);
+});

@@ -145,7 +145,8 @@ export class LearningController {
   #request(state, kind, attemptId) {
     let plan, namespace, requiredCalls, prompts, learner = null;
     if (kind === 'baseline') {
-      requireThat(attemptId === null && state.baselinePlan && !state.baseline, 'baseline request state');
+      requireThat(attemptId === null && state.baselinePlan && !state.baseline && !state.baselineError,
+        'baseline request state');
       plan = state.baselinePlan;
       namespace = plan.namespace;
       requiredCalls = state.config.cases.length * POLICY.passes;
@@ -272,6 +273,44 @@ export class LearningController {
         this.#complete(operation);
         state.baseline = retainedEvidence(evaluation);
       } catch (error) { state.baselineError = String(error.message); }
+    });
+  }
+
+  /** Record authenticated non-admission as a terminal baseline disposition.
+   * This creates no lease, execution result, settlement or budget update. */
+  async recordBaselineNotAdmitted(operation, envelope) {
+    const capturedOperation = copy(operation);
+    record(envelope, ['body', 'signature'], 'baseline non-admission envelope');
+    canonical(envelope);
+    // Preserve signing order and capture caller input before the first await.
+    const serialized = JSON.stringify(envelope);
+    const capturedEnvelope = JSON.parse(serialized);
+    return this.#change('baseline-not-admitted', state => {
+      record(capturedOperation, ['id', 'kind', 'attemptId', 'namespace', 'requestDigest'],
+        'baseline non-admission operation');
+      identifier(capturedOperation.id, 'baseline non-admission operation id');
+      requireThat(capturedOperation.kind === 'baseline' && capturedOperation.attemptId === null,
+        'baseline non-admission operation kind');
+      requireThat(state.gate && state.baselinePlan && !state.baseline && !state.baselineError &&
+        !state.baselineNonAdmission, 'baseline non-admission state');
+      requireThat(state.operations.length === 0 && state.attempts.length === 0,
+        'baseline non-admission requires no admitted operation');
+      const request = this.#request(state, 'baseline', null);
+      requireThat(capturedOperation.namespace === request.namespace &&
+        capturedOperation.requestDigest === digest(request), 'baseline non-admission request mismatch');
+      const body = this.#attest('budget', capturedEnvelope, 'gk-learning-v2-operation-not-admitted', {
+        ...identity(state), operationId: capturedOperation.id, requestDigest: capturedOperation.requestDigest,
+        budgetId: state.config.budgetId, gatewayId: this.#trust.budget.gatewayId,
+        provider: POLICY.provider, global: true, ceilingMicros: POLICY.programmeCeilingMicros,
+        status: 'not-admitted', reservationExists: false, actualCalls: 0, actualMicros: 0,
+      });
+      requireThat(!state.receipts.includes(body.receiptId), 'baseline non-admission receipt replay');
+      state.baselineNonAdmission = { operationId: capturedOperation.id,
+        requestDigest: capturedOperation.requestDigest, receiptId: body.receiptId,
+        receiptDigest: digest(serialized) };
+      state.baselineError = 'Independent gateway confirmed that the baseline was not admitted.';
+      state.receipts.push(body.receiptId);
+      return state.baselineNonAdmission;
     });
   }
 

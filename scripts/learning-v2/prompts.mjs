@@ -55,6 +55,11 @@ export function statusView(state) {
     sourceCommit: state.config.sourceCommit, scope: state.config.scope,
     policy: copy(state.policy), counts,
     originalVersion: state.baseVersion.id, incumbentVersion: state.activeVersionId,
+    baseline: {
+      status: state.baseline ? 'complete' : state.baselineError ? 'failed' :
+        state.baselinePlan ? 'planned' : 'not-planned',
+      failureCode: state.baselineError ? state.baselineNonAdmission ? 'not-admitted' : 'unresolved' : null,
+    },
     confirmedVersions: state.versions.filter(item => item.confirmed && item.origin !== 'frozen-base').length,
     pendingOperation: state.operations.find(item => !item.settled)?.id || null,
     budget: { ceilingMicros: state.policy.programmeCeilingMicros,

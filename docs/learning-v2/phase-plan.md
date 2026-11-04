@@ -20,6 +20,9 @@ historical admission and final settlement without dispatching again. It remains
 **unqualified source**, with no local or remote execution claimed. The
 [adapter record](phase-2-adapter.md) and [host record](phase-2-host.md) give the
 implemented interfaces, explicit runtime changes and current gate dependency.
+The [baseline recovery closeout](phase-2-baseline-recovery.md) records the later
+review correction: authenticated baseline non-admission is durable in both
+controller and dispatch state, with a safe public failure code.
 There are no schedule or accuracy forecasts in this plan.
 
 | Phase | Current status | Next required evidence |
@@ -310,6 +313,9 @@ expired historical admission can close accounting only through an atomic,
 consumed and settled record. It cannot renew execution authority. Independently
 signed non-admission also consumes its logical phase. See the
 [host record](phase-2-host.md) and its separate source manifest.
+The later baseline closeout records non-admission as a terminal controller
+disposition before ledger completion, supports explicit recovery of the gap
+between those writes, and prevents lower-level baseline re-admission.
 
 **Owned-runner integration and qualification remain:**
 
@@ -391,6 +397,9 @@ baseline, confirmed incumbent, attempts, unscored reasons, provisional versus
 confirmed status, activation history, evidence links, and cost state. Keep
 tenant-private evidence behind the existing access boundary. The app does not
 infer acceptance from a score or mutate the journal through display logic.
+The source projection now distinguishes unplanned, planned, complete and failed
+baselines with fixed public failure codes. Endpoint/UI integration and rollout
+remain pending; private baseline diagnostics and signed receipts are excluded.
 
 Use separately authorized version selection for a bounded rollout. Observe
 operational failures and the agreed quality measures; rollback selects an

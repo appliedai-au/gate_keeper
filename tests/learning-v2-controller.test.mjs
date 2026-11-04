@@ -164,6 +164,25 @@ async function operationLease(r, operation, request, changes = {}) {
   });
 }
 
+async function baselineIntent(r) {
+  const request = await r.controller.executionRequest('baseline');
+  const operation = { id: r.next('baseline-intent'), kind: 'baseline', attemptId: null,
+    namespace: request.namespace, requestDigest: digest(request) };
+  return { operation, request };
+}
+
+async function baselineNotAdmitted(r, operation, changes = {}, role = 'budget') {
+  const state = await r.controller.state();
+  return r.sign(role, {
+    schema: 'gk-learning-v2-operation-not-admitted', receiptId: r.next('baseline-not-admitted'),
+    ...stateIdentity(state), operationId: operation.id, requestDigest: operation.requestDigest,
+    budgetId: state.config.budgetId, gatewayId: r.trust.budget.gatewayId,
+    provider: POLICY.provider, global: true, ceilingMicros: POLICY.programmeCeilingMicros,
+    status: 'not-admitted', reservationExists: false, actualCalls: 0, actualMicros: 0,
+    ...changes,
+  });
+}
+
 async function settle(r, operation, changes = {}) {
   const state = await r.controller.state();
   const body = {
@@ -433,7 +452,7 @@ test('an incomplete baseline consumes its admitted operation and cannot be retri
   await assert.rejects(r.controller.beginAttempt(), /complete baseline/);
   body.cases[0].passes[0].empty = false;
   await assert.rejects(r.controller.recordBaseline(r.sign('evaluation', body)), /admitted operation/);
-  await assert.rejects(reserve(r, 'baseline'), /operation pending or reused/);
+  await assert.rejects(reserve(r, 'baseline'), /baseline request state/);
 });
 
 test('screening cache misses cannot silently buy a new first pass', async () => {
@@ -694,7 +713,7 @@ test('an unconsumed operation cannot settle and cannot be retried under a differ
   state = await r.controller.state();
   assert.equal(state.operations[0].consumed, true);
   assert.equal(state.operations[0].settled, true);
-  await assert.rejects(reserve(r, 'baseline'), /operation pending or reused/);
+  await assert.rejects(reserve(r, 'baseline'), /baseline request state/);
   assert.equal((await r.controller.state()).operations.length, 1);
 });
 
@@ -813,4 +832,185 @@ test('an attempt without an unconsumed operation can still be abandoned honestly
   assert.equal(state.budget.spentMicros, before.budget.spentMicros);
   const next = await r.controller.beginAttempt();
   assert.equal(next.number, 2);
+});
+
+test('authenticated baseline non-admission records one terminal outcome without changing money or admitted work', async () => {
+  const r = await rig({ withBaseline: false });
+  await r.controller.planBaseline();
+  const { operation } = await baselineIntent(r);
+  const envelope = await baselineNotAdmitted(r, operation);
+  const before = await r.controller.state();
+  const journalBefore = await r.journal.read();
+  const expected = { operationId: operation.id, requestDigest: operation.requestDigest,
+    receiptId: envelope.body.receiptId, receiptDigest: digest(JSON.stringify(envelope)) };
+  assert.deepEqual(await r.controller.recordBaselineNotAdmitted(operation, envelope), expected);
+  const after = await r.controller.state();
+  assert.deepEqual(after, { ...before, baselineNonAdmission: expected,
+    baselineError: 'Independent gateway confirmed that the baseline was not admitted.',
+    receipts: [...before.receipts, envelope.body.receiptId] });
+  const journalAfter = await r.journal.read();
+  assert.equal(journalAfter.events.length, journalBefore.events.length + 1);
+  assert.equal(journalAfter.events.at(-1).reason, 'baseline-not-admitted');
+  assert.deepEqual(journalAfter.events.at(-1).state, after);
+  assert.deepEqual(after.budget, before.budget);
+  assert.deepEqual(after.operations, []);
+  assert.deepEqual(after.observedCalls, []);
+  assert.equal(after.baseline, null);
+  assert.deepEqual((await r.controller.status()).baseline, { status: 'failed', failureCode: 'not-admitted' });
+});
+
+test('baseline non-admission rejects identity substitutions wrong signatures and nonzero usage without a state change', async () => {
+  const r = await rig({ withBaseline: false });
+  await r.controller.planBaseline();
+  const { operation } = await baselineIntent(r);
+  const envelope = await baselineNotAdmitted(r, operation);
+  const before = await r.controller.state();
+  const journalBefore = await r.journal.read();
+  const operationChanges = [
+    { id: '' }, { id: 'another-baseline-intent' }, { kind: 'proposal' }, { attemptId: 'attempt:1' },
+    { namespace: 'other-baseline' }, { requestDigest: 'f'.repeat(64) }, { leaseId: 'not-a-prelease-operation' },
+  ];
+  for (const change of operationChanges) {
+    await assert.rejects(r.controller.recordBaselineNotAdmitted({ ...operation, ...change }, envelope));
+    assert.deepEqual(await r.controller.state(), before);
+    assert.deepEqual(await r.journal.read(), journalBefore);
+  }
+  const receiptChanges = [
+    { schema: 'gk-learning-v2-operation-settlement' }, { receiptId: '' },
+    { experimentId: 'different-experiment' }, { configDigest: 'f'.repeat(64) },
+    { sourceCommit: 'f'.repeat(40) }, { operationId: 'different-operation' },
+    { requestDigest: 'f'.repeat(64) }, { budgetId: 'different-programme' },
+    { gatewayId: 'different-gateway' }, { provider: 'different-provider' },
+    { global: false }, { ceilingMicros: POLICY.programmeCeilingMicros + 1 },
+    { status: 'admitted' }, { reservationExists: true }, { actualCalls: 1 }, { actualMicros: 1 },
+  ];
+  for (const change of receiptChanges) {
+    const substituted = r.sign('budget', { ...clone(envelope.body), ...change });
+    await assert.rejects(r.controller.recordBaselineNotAdmitted(operation, substituted));
+    assert.deepEqual(await r.controller.state(), before);
+    assert.deepEqual(await r.journal.read(), journalBefore);
+  }
+  const invalidEnvelopes = [
+    r.sign('activation', clone(envelope.body)),
+    { body: clone(envelope.body), signature: Buffer.alloc(64).toString('base64') },
+  ];
+  for (const invalid of invalidEnvelopes) await assert.rejects(r.controller.recordBaselineNotAdmitted(operation, invalid));
+  let reads = 0;
+  const accessor = clone(envelope);
+  Object.defineProperty(accessor.body, 'actualCalls', { enumerable: true, get() { reads++; return 0; } });
+  await assert.rejects(r.controller.recordBaselineNotAdmitted(operation, accessor));
+  assert.equal(reads, 0);
+  assert.deepEqual(await r.controller.state(), before);
+  assert.deepEqual(await r.journal.read(), journalBefore);
+});
+
+test('baseline non-admission requires a planned unfailed baseline with a gate and no admitted operation', async () => {
+  const scenarios = [];
+  const unplanned = await rig({ withBaseline: false });
+  scenarios.push({ r: unplanned, operation: { id: 'unplanned-baseline', kind: 'baseline', attemptId: null,
+    namespace: `${unplanned.config.experimentId}:baseline`, requestDigest: sha('unplanned synthetic request') } });
+  const ungated = await rig({ withBaseline: false, withGate: false });
+  await ungated.controller.planBaseline();
+  scenarios.push({ r: ungated, ...(await baselineIntent(ungated)) });
+  const admitted = await rig({ withBaseline: false });
+  await admitted.controller.planBaseline();
+  const held = await baselineIntent(admitted);
+  await admitted.controller.reserveOperation(held.operation, await operationLease(admitted, held.operation, held.request));
+  scenarios.push({ r: admitted, ...held });
+  const completed = await rig();
+  const completedRequest = completed.baseline.operation.request;
+  scenarios.push({ r: completed, operation: { id: 'completed-baseline', kind: 'baseline', attemptId: null,
+    namespace: completedRequest.namespace, requestDigest: digest(completedRequest) } });
+  const alreadyFailed = await rig({ withBaseline: false });
+  await alreadyFailed.controller.planBaseline();
+  const failedIntent = await baselineIntent(alreadyFailed);
+  await alreadyFailed.controller.recordBaselineNotAdmitted(failedIntent.operation,
+    await baselineNotAdmitted(alreadyFailed, failedIntent.operation));
+  scenarios.push({ r: alreadyFailed, ...failedIntent });
+  for (const { r, operation } of scenarios) {
+    const envelope = await baselineNotAdmitted(r, operation);
+    const before = await r.controller.state();
+    const journalBefore = await r.journal.read();
+    await assert.rejects(r.controller.recordBaselineNotAdmitted(operation, envelope), /baseline non-admission state|no admitted operation/);
+    assert.deepEqual(await r.controller.state(), before);
+    assert.deepEqual(await r.journal.read(), journalBefore);
+  }
+});
+
+test('baseline non-admission rejects a previously consumed receipt identity before recording failure', async () => {
+  const r = await rig({ withBaseline: false });
+  await r.controller.planBaseline();
+  const { operation } = await baselineIntent(r);
+  const replay = await baselineNotAdmitted(r, operation, { receiptId: r.initialBudget.body.receiptId });
+  const before = await r.controller.state();
+  const journalBefore = await r.journal.read();
+  await assert.rejects(r.controller.recordBaselineNotAdmitted(operation, replay), /receipt replay/);
+  assert.deepEqual(await r.controller.state(), before);
+  assert.deepEqual(await r.journal.read(), journalBefore);
+  const fresh = await baselineNotAdmitted(r, operation);
+  await r.controller.recordBaselineNotAdmitted(operation, fresh);
+  assert.equal((await r.controller.state()).receipts.filter(id => id === fresh.body.receiptId).length, 1);
+});
+
+test('baseline non-admission survives restart and blocks request reservation reconciliation and dispatch retries', async () => {
+  const r = await rig({ withBaseline: false });
+  await r.controller.planBaseline();
+  const { operation, request } = await baselineIntent(r);
+  await r.controller.recordBaselineNotAdmitted(operation, await baselineNotAdmitted(r, operation));
+  const stopped = await r.controller.state();
+  const journalBefore = await r.journal.read();
+  const retry = { ...operation, id: r.next('renamed-baseline-retry') };
+  const lease = await operationLease(r, retry, request);
+  const settlement = r.sign('budget', {
+    schema: 'gk-learning-v2-operation-settlement', receiptId: r.next('forbidden-recovery-settlement'),
+    ...stateIdentity(stopped), operationId: retry.id, leaseId: lease.body.receiptId,
+    budgetId: stopped.config.budgetId, gatewayId: r.trust.budget.gatewayId,
+    provider: POLICY.provider, global: true, ceilingMicros: POLICY.programmeCeilingMicros,
+    status: 'settled', actualCalls: 0, actualMicros: 0,
+    spentMicros: stopped.budget.spentMicros, reservedMicros: stopped.budget.reservedMicros,
+  });
+  const reopened = new LearningController({ journal: r.journal, trust: r.trust, clock: () => NOW });
+  for (const controller of [r.controller, reopened]) {
+    await assert.rejects(controller.executionRequest('baseline'), /baseline request state/);
+    await assert.rejects(controller.reserveOperation(retry, lease), /baseline request state/);
+    await assert.rejects(controller.reconcileAdmission(retry, lease, settlement, 'Forbidden new baseline recovery.'), /baseline request state/);
+    await assert.rejects(controller.planBaseline(), /baseline already planned/);
+    await assert.rejects(controller.beginAttempt(), /complete baseline required/);
+  }
+  const calls = { admitted: 0, executed: 0, settled: 0 };
+  await assert.rejects(dispatchManagedOperation({ controller: reopened, kind: 'baseline', operationId: retry.id,
+    async admit() { calls.admitted++; return lease; },
+    async execute() { calls.executed++; return {}; },
+    async settle() { calls.settled++; return settlement; },
+  }), /baseline request state/);
+  assert.deepEqual(calls, { admitted: 0, executed: 0, settled: 0 });
+  assert.deepEqual(await reopened.state(), stopped);
+  assert.deepEqual(await r.journal.read(), journalBefore);
+});
+
+test('baseline non-admission captures operation and original signing order before the first await', async () => {
+  const r = await rig({ withBaseline: false });
+  await r.controller.planBaseline();
+  const { operation } = await baselineIntent(r);
+  const originalOperation = clone(operation);
+  const original = await baselineNotAdmitted(r, operation);
+  const signed = r.sign('budget', Object.fromEntries(Object.entries(original.body).reverse()));
+  const envelope = { signature: signed.signature, body: signed.body };
+  const capturedBytes = JSON.stringify(envelope);
+  const receiptId = envelope.body.receiptId;
+  const before = await r.controller.state();
+  const recording = r.controller.recordBaselineNotAdmitted(operation, envelope);
+  operation.id = 'mutated-after-call'; operation.kind = 'proposal'; operation.requestDigest = 'f'.repeat(64);
+  envelope.signature = 'mutated-after-call';
+  envelope.body.receiptId = 'mutated-receipt'; envelope.body.actualCalls = 999;
+  const retained = await recording;
+  const expected = { operationId: originalOperation.id, requestDigest: originalOperation.requestDigest,
+    receiptId, receiptDigest: digest(capturedBytes) };
+  assert.deepEqual(retained, expected);
+  retained.receiptId = 'mutated-return';
+  const state = await r.controller.state();
+  assert.deepEqual(state.baselineNonAdmission, expected);
+  assert.equal(state.receipts.at(-1), receiptId);
+  assert.deepEqual(state.budget, before.budget);
+  assert.deepEqual(state.operations, before.operations);
 });

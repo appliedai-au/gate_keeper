@@ -286,6 +286,15 @@ learning evidence. A separately authenticated non-admission consumes the
 logical phase, including when no call occurred. Missing responses prove
 neither non-admission nor zero cost.
 
+Baseline non-admission additionally uses the authenticated controller transition
+`recordBaselineNotAdmitted(operation, envelope)`. It records the exact receipt
+marker and a terminal baseline error before the dispatch ledger completes,
+without changing global budget totals or creating a lease/settlement. An
+interruption between those stores remains pending until explicit resubmission
+of the same original receipt completes the ledger. Lower-level baseline request
+generation also refuses a recorded baseline failure. See the
+[baseline recovery closeout](phase-2-baseline-recovery.md).
+
 If execution is ambiguous, preserve the operation and reconcile with the
 existing runner/gateway owner. `abandonOperation(id, reason)` can mark an
 unconsumed phase unresolved without releasing money. It does not cancel a
@@ -376,3 +385,6 @@ It includes the pending dispatch identity and locally observed stage, even
 before a controller reservation exists. It must not expose `inspect()`,
 `inspectOperation()`, controller `state()` or private journal contents to
 ordinary app users. Observation stages do not assert remote termination.
+The public `baseline` field contains only a status (`not-planned`, `planned`,
+`complete` or `failed`) and fixed failure code (`null`, `not-admitted` or
+`unresolved`). Raw baseline errors and private receipt markers remain private.

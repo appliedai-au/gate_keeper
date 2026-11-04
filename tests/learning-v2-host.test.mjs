@@ -5,6 +5,8 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { POLICY, configuration, copy, digest, procedure } from '../scripts/learning-v2/contracts.mjs';
+import { LearningController } from '../scripts/learning-v2/controller.mjs';
+import { DispatchLedger } from '../scripts/learning-v2/dispatch-ledger.mjs';
 import { verifyEvaluation } from '../scripts/learning-v2/evidence.mjs';
 import { initializeLearningHost, openLearningHost } from '../scripts/learning-v2/host.mjs';
 import { FileJournal } from '../scripts/learning-v2/journal.mjs';
@@ -199,8 +201,13 @@ async function readyAttempt(f) {
   await f.start(); await f.host.dispatch('baseline'); return f.host.beginAttempt();
 }
 
+async function journalSnapshots(f) {
+  return { controller: await f.journal('controller').read(), dispatch: await f.journal('dispatch').read() };
+}
+
 test('exclusive host initialization and complete baseline persist real private journals and survive reopening', async t => {
   const f = fixture(t); await f.start();
+  assert.deepEqual((await f.host.status()).baseline, { status: 'not-planned', failureCode: null });
   f.controls.onAdmit = async ({ operation, request }) => {
     const inspected = await f.host.inspect();
     assert.equal(inspected.dispatch.pending.operation.id, operation.id);
@@ -211,6 +218,7 @@ test('exclusive host initialization and complete baseline persist real private j
   };
   await f.host.dispatch('baseline');
   const before = await f.host.inspect(), status = await f.host.status();
+  assert.deepEqual(status.baseline, { status: 'complete', failureCode: null });
   assert.equal(before.state.baseline.totals.caught, 4); assert.equal(before.state.baseline.totals.falseAlarms, 0);
   assert.equal(before.state.operations.length, 1); assert.equal(before.state.operations[0].settled, true);
   assert.equal(before.state.operations[0].actualCalls, 4); assert.equal(before.state.budget.spentMicros, 400);
@@ -405,6 +413,118 @@ test('only an exact budget-signed non-admission can close a pre-reservation inte
   await assert.rejects(f.host.dispatch('proposal', attempt.attemptId));
   assert.equal((await f.host.beginAttempt()).number, 2);
   assert.equal(f.admissions.length, 2); assert.equal(f.settlements.length, 1); assert.equal(f.turnRequests.length, 4);
+});
+
+test('authentic baseline non-admission persists a private failure record and a terminal public baseline status', async t => {
+  const f = fixture(t); await f.start(); f.controls.admission = 'not-admitted';
+  await assert.rejects(f.host.dispatch('baseline'));
+  const held = await f.host.inspect(), pending = held.dispatch.pending;
+  assert.equal(pending.operation.kind, 'baseline'); assert.equal(pending.operation.attemptId, null);
+  assert.deepEqual((await f.host.status()).baseline, { status: 'planned', failureCode: null });
+  const before = await journalSnapshots(f);
+  for (const invalid of [f.notAdmitted(pending, {}, 'activation'),
+    f.notAdmitted(pending, { requestDigest: sha('a different baseline request') })]) {
+    await assert.rejects(f.host.recordNotAdmitted(invalid));
+    assert.deepEqual(await f.host.inspect(), held);
+    assert.deepEqual(await journalSnapshots(f), before);
+  }
+  const envelope = f.notAdmitted(pending, { receiptId: 'baseline-denial-private-canary' });
+  const status = await f.host.recordNotAdmitted(envelope), closed = await f.host.inspect();
+  assert.equal(closed.state.baseline, null); assert.deepEqual(closed.state.operations, []);
+  assert.deepEqual(closed.state.attempts, []); assert.deepEqual(closed.state.budget, held.state.budget);
+  assert.equal(typeof closed.state.baselineError, 'string'); assert.ok(closed.state.baselineError.length > 0);
+  assert.deepEqual(closed.state.baselineNonAdmission, { operationId: pending.operation.id,
+    requestDigest: pending.operation.requestDigest, receiptId: envelope.body.receiptId,
+    receiptDigest: digest(JSON.stringify(envelope)) });
+  assert.equal(closed.state.receipts.filter(id => id === envelope.body.receiptId).length, 1);
+  assert.equal(closed.dispatch.pending, null);
+  assert.deepEqual(closed.dispatch.entries[0].resolution, { kind: 'not-admitted', receiptId: envelope.body.receiptId });
+  assert.equal(closed.dispatch.entries[0].notAdmitted, JSON.stringify(envelope));
+  assert.deepEqual(status.baseline, { status: 'failed', failureCode: 'not-admitted' });
+  assert.equal(status.pendingOperation, null); assert.deepEqual(status.dispatch, { pending: null, completed: 1 });
+  assert.equal(status.counts.attempted, 0);
+  const publicBytes = JSON.stringify(status);
+  assert.doesNotMatch(publicBytes, /baseline-denial-private-canary|baselineError|baselineNonAdmission|receiptDigest|Return JSON findings/);
+  assert.equal(publicBytes.includes(envelope.signature), false);
+  const finished = await journalSnapshots(f);
+  await f.reopen(); assert.deepEqual(await f.host.inspect(), closed); assert.deepEqual(await f.host.status(), status);
+  await assert.rejects(f.host.dispatch('baseline'));
+  await assert.rejects(f.host.beginAttempt());
+  await assert.rejects(f.host.recordNotAdmitted(envelope));
+  assert.deepEqual(await journalSnapshots(f), finished);
+  assert.equal(f.admissions.length, 1); assert.deepEqual(f.settlements, []);
+  assert.deepEqual(f.sessions, []); assert.deepEqual(f.turnRequests, []);
+  assert.deepEqual(f.evaluationIssues, []); assert.deepEqual(f.noveltyIssues, []);
+  assert.equal(existsSync(f.archivePath(pending.operation.id)), false);
+});
+
+test('baseline denial committed before a concurrent receipt selection reopens and finishes only from its exact original receipt', async t => {
+  const f = fixture(t); await f.start(); f.controls.admission = 'not-admitted';
+  await assert.rejects(f.host.dispatch('baseline'));
+  const pending = (await f.host.inspect()).dispatch.pending;
+  const envelope = f.notAdmitted(pending, { receiptId: 'crashed-baseline-denial' });
+  const ledger = new DispatchLedger({ journal: f.journal('dispatch'),
+    experimentId: f.config.experimentId, configDigest: f.identity.configDigest });
+  const controller = new LearningController({ journal: f.journal('controller'), trust: f.trust, clock: () => f.controls.now });
+  // Reproduce the durable boundary with the actual two stores: the receipt and
+  // controller failure are recorded, but the process never completes the ledger.
+  await ledger.observe(pending.operation.id, 'not-admitted', JSON.stringify(envelope));
+  await controller.recordBaselineNotAdmitted(pending.operation, envelope);
+  // Another recovery read the earlier state and selected receipt B after the
+  // first recovery committed marker A. Both observations must remain available.
+  const intervening = f.notAdmitted(pending, { receiptId: 'intervening-baseline-denial' });
+  await ledger.observe(pending.operation.id, 'not-admitted', JSON.stringify(intervening));
+  const interrupted = await f.host.inspect(), before = await journalSnapshots(f);
+  assert.equal(interrupted.state.baselineNonAdmission.receiptDigest, digest(JSON.stringify(envelope)));
+  assert.equal(interrupted.dispatch.pending.operation.id, pending.operation.id);
+  assert.equal(interrupted.dispatch.pending.notAdmitted, JSON.stringify(intervening));
+  assert.equal(interrupted.dispatch.pending.resolution, null);
+  await f.reopen(); assert.deepEqual(await f.host.inspect(), interrupted);
+  const pendingStatus = await f.host.status();
+  assert.deepEqual(pendingStatus.baseline, { status: 'failed', failureCode: 'not-admitted' });
+  assert.deepEqual(pendingStatus.dispatch.pending, { operationId: pending.operation.id, kind: 'baseline', stage: 'not-admitted-observed' });
+  const alternatives = [
+    intervening,
+    // Same facts and receipt ID, valid signer, different signed wire bytes.
+    f.seal('budget', Object.fromEntries(Object.entries(envelope.body).reverse())),
+  ];
+  for (const altered of alternatives) {
+    assert.notEqual(JSON.stringify(altered), JSON.stringify(envelope));
+    await assert.rejects(f.host.recordNotAdmitted(altered));
+    assert.deepEqual(await journalSnapshots(f), before);
+    assert.deepEqual(await f.host.inspect(), interrupted);
+  }
+  const status = await f.host.recordNotAdmitted(envelope), finished = await journalSnapshots(f);
+  assert.deepEqual(finished.controller, before.controller, 'finishing the ledger must not replay the controller transition');
+  assert.equal(finished.dispatch.events.at(-1).type, 'completed');
+  assert.equal(finished.dispatch.events.at(-1).observationDigest, digest(JSON.stringify(envelope)));
+  const closed = await f.host.inspect();
+  assert.deepEqual(closed.state, interrupted.state); assert.equal(closed.dispatch.pending, null);
+  assert.deepEqual(closed.dispatch.entries[0].resolution, { kind: 'not-admitted', receiptId: envelope.body.receiptId });
+  assert.equal(closed.dispatch.entries[0].notAdmitted, JSON.stringify(envelope));
+  assert.deepEqual(closed.dispatch.entries[0].observations, interrupted.dispatch.entries[0].observations);
+  assert.deepEqual(status.baseline, { status: 'failed', failureCode: 'not-admitted' });
+  await f.reopen(); await assert.rejects(f.host.recordNotAdmitted(envelope));
+  await assert.rejects(f.host.dispatch('baseline'));
+  assert.deepEqual(await journalSnapshots(f), finished);
+  assert.equal(f.admissions.length, 1); assert.deepEqual(f.settlements, []);
+  assert.deepEqual(f.sessions, []); assert.deepEqual(f.turnRequests, []);
+});
+
+test('a completed baseline denial without a controller disposition cannot reopen as a healthy experiment', async t => {
+  const f = fixture(t); await f.start(); f.controls.admission = 'not-admitted';
+  await assert.rejects(f.host.dispatch('baseline'));
+  const pending = (await f.host.inspect()).dispatch.pending, envelope = f.notAdmitted(pending);
+  const ledger = new DispatchLedger({ journal: f.journal('dispatch'),
+    experimentId: f.config.experimentId, configDigest: f.identity.configDigest });
+  await ledger.observe(pending.operation.id, 'not-admitted', JSON.stringify(envelope));
+  await ledger.complete(pending.operation.id, { kind: 'not-admitted', receiptId: envelope.body.receiptId },
+    digest(JSON.stringify(envelope)));
+  const before = await journalSnapshots(f);
+  await assert.rejects(openLearningHost(f.options));
+  assert.deepEqual(await journalSnapshots(f), before);
+  assert.equal(f.admissions.length, 1); assert.deepEqual(f.settlements, []);
+  assert.deepEqual(f.sessions, []); assert.deepEqual(f.turnRequests, []);
 });
 
 test('explicit phases qualify a candidate across restart while leaving activation under separate authority', async t => {

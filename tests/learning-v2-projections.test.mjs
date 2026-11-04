@@ -282,3 +282,39 @@ test('app status exposes counts and state without private procedures or diagnost
   assert.equal(result.deployment, 'not-managed-by-learning-core');
   assert.equal(result.budget.authoritative, 'external-gateway');
 });
+
+test('public baseline status uses fixed enums without raw failure or non-admission receipt details', () => {
+  const base = { ...confirmedVersion([]), origin: 'frozen-base' };
+  const privateReceiptId = 'BASELINE_NON_ADMISSION_RECEIPT_PRIVATE_8af2';
+  const privateOperationId = 'BASELINE_NON_ADMISSION_OPERATION_PRIVATE_49c1';
+  const privateDigest = digest('private original non-admission envelope bytes');
+  const common = {
+    config: { experimentId: 'baseline-projection-test', sourceCommit: 'a'.repeat(40), scope: FOCUS },
+    policy: copy(POLICY), baseVersion: base, activeVersionId: base.id,
+    versions: [base], attempts: [], activationHistory: [], operations: [],
+    budget: { spentMicros: 1250, reservedMicros: 0 }, gate: null, baseline: null,
+  };
+  const planned = { baselinePlan: { privateRequest: PRIVATE_CANARY } };
+  const cases = [
+    { state: {}, expected: { status: 'not-planned', failureCode: null } },
+    { state: planned, expected: { status: 'planned', failureCode: null } },
+    { state: { ...planned, baseline: { receiptId: privateReceiptId, bodyDigest: privateDigest, raw: SCORE_CANARY } },
+      expected: { status: 'complete', failureCode: null } },
+    { state: { ...planned, baselineError: PRIVATE_CANARY },
+      expected: { status: 'failed', failureCode: 'unresolved' } },
+    { state: { ...planned, baselineError: UNPROVEN_CANARY, baselineNonAdmission: {
+      operationId: privateOperationId, requestDigest: privateDigest, receiptId: privateReceiptId,
+      receiptDigest: privateDigest, rawEnvelope: SCORE_CANARY,
+    } }, expected: { status: 'failed', failureCode: 'not-admitted' } },
+  ];
+  for (const { state, expected } of cases) {
+    const result = statusView({ ...common, ...state });
+    assert.deepEqual(result.baseline, expected);
+    assert.deepEqual(Object.keys(result.baseline).sort(), ['failureCode', 'status']);
+    excludesPrivate(result);
+    const serialized = JSON.stringify(result);
+    for (const secret of [privateReceiptId, privateOperationId, privateDigest]) {
+      assert.equal(serialized.includes(secret), false, 'private baseline evidence leaked');
+    }
+  }
+});

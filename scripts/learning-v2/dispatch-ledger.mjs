@@ -134,7 +134,9 @@ function apply(state, event, identity) {
     return state;
   }
   if (event.type === 'completed') {
-    record(event, ['schema', 'type', 'operationId', 'resolution'], 'dispatch completion record');
+    const guarded = Object.hasOwn(event, 'observationDigest');
+    record(event, ['schema', 'type', 'operationId', 'resolution', ...(guarded ? ['observationDigest'] : [])],
+      'dispatch completion record');
     record(event.resolution, ['kind', 'receiptId'], 'dispatch resolution');
     identifier(event.resolution.receiptId, 'dispatch resolution receipt id');
     requireThat(event.resolution.kind === 'settled' || event.resolution.kind === 'not-admitted',
@@ -147,6 +149,14 @@ function apply(state, event, identity) {
       // operation was admitted. Absence of observations alone proves nothing;
       // an earlier malformed admission response is not admission authority.
       requireThat(entry.notAdmitted !== null, 'dispatch not-admitted observation required');
+    }
+    if (guarded) {
+      hash(event.observationDigest, 'dispatch completion observation digest');
+      const selected = event.resolution.kind === 'settled' ? entry.settlement : entry.notAdmitted;
+      // Compare the exact retained string in the same CAS transition that closes
+      // the intent. A concurrent selection must fail here or at journal append;
+      // it must never complete a different receipt than the host authenticated.
+      requireThat(digest(selected) === event.observationDigest, 'dispatch completion observation mismatch');
     }
     entry.resolution = event.resolution;
     state.pending = null;
@@ -222,8 +232,10 @@ export class DispatchLedger {
     return this.#append({ schema: SCHEMA, type: 'selected', operationId, kind, observationIndex });
   }
 
-  /** The host authenticates this resolution; this transition grants no authority. */
-  async complete(operationId, resolution) {
-    return this.#append({ schema: SCHEMA, type: 'completed', operationId, resolution });
+  /** The host authenticates this resolution; this transition grants no authority.
+   * An optional digest binds completion to the exact selected receipt string. */
+  async complete(operationId, resolution, observationDigest) {
+    return this.#append({ schema: SCHEMA, type: 'completed', operationId, resolution,
+      ...(observationDigest === undefined ? {} : { observationDigest }) });
   }
 }

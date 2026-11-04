@@ -117,6 +117,23 @@ function compose(prepared, createDirectories) {
     ledger ??= new DispatchLedger({ journal: dispatchJournal,
       experimentId: p.config.experimentId, configDigest: state.configDigest });
     const dispatch = await ledger.read();
+    if (state.baselineNonAdmission) {
+      const marker = state.baselineNonAdmission;
+      record(marker, ['operationId', 'requestDigest', 'receiptId', 'receiptDigest'],
+        'baseline non-admission marker');
+      const entry = dispatch.entries.find(item => item.operation.id === marker.operationId);
+      requireThat(state.baselineError && !state.baseline &&
+        !state.operations.some(item => item.kind === 'baseline') &&
+        entry?.operation.kind === 'baseline' && entry.operation.attemptId === null &&
+        entry.operation.requestDigest === marker.requestDigest &&
+        entry.observations.some(item => item.kind === 'not-admitted' &&
+          digest(item.serialized) === marker.receiptDigest) &&
+        state.receipts.includes(marker.receiptId),
+      'baseline non-admission marker lacks matching retained evidence');
+      requireThat(!entry.resolution || (entry.resolution.kind === 'not-admitted' &&
+        entry.resolution.receiptId === marker.receiptId && entry.notAdmitted !== null &&
+        digest(entry.notAdmitted) === marker.receiptDigest), 'baseline non-admission resolution mismatch');
+    }
     for (const operation of state.operations) {
       const entry = dispatch.entries.find(item => item.operation.id === operation.id);
       requireThat(entry && entry.operation.requestDigest === operation.requestDigest,
@@ -135,6 +152,11 @@ function compose(prepared, createDirectories) {
       requireThat(entry.resolution.kind === 'not-admitted' ? !held :
         held?.settled && held.settlementReceiptId === entry.resolution.receiptId,
       'dispatch resolution disagrees with controller evidence');
+      if (entry.resolution.kind === 'not-admitted' && entry.operation.kind === 'baseline') {
+        requireThat(state.baselineNonAdmission?.operationId === entry.operation.id &&
+          state.baselineNonAdmission.receiptId === entry.resolution.receiptId,
+        'baseline non-admission resolution lacks controller disposition');
+      }
     }
     return { state, dispatch };
   }
@@ -338,14 +360,23 @@ function compose(prepared, createDirectories) {
           } catch { /* An unauthenticated observation never establishes a reservation. */ }
           requireThat(!authenticated, 'an authenticated admission requires settlement, not non-admission');
         }
+        if (entry.operation.attemptId === null && state.baselineNonAdmission) {
+          const expected = { operationId: entry.operation.id, requestDigest: entry.operation.requestDigest,
+            receiptId: checked.body.receiptId, receiptDigest: digest(JSON.stringify(checked.signed)) };
+          requireThat(canonical(state.baselineNonAdmission) === canonical(expected),
+            'baseline non-admission differs from recorded disposition');
+        }
         await observe(entry.operation.id, 'not-admitted', checked.signed);
         if (entry.operation.attemptId !== null) {
           const attempt = state.attempts.find(item => item.id === entry.operation.attemptId);
           requireThat(attempt, 'non-admitted attempt missing');
           if (attempt.status !== 'unresolved') await controller.abandonAttempt(attempt.id,
             'Independent gateway confirmed that this request was not admitted.');
+        } else if (!state.baselineNonAdmission) {
+          await controller.recordBaselineNotAdmitted(copy(entry.operation), checked.signed);
         }
-        await ledger.complete(entry.operation.id, { kind: 'not-admitted', receiptId: checked.body.receiptId });
+        await ledger.complete(entry.operation.id, { kind: 'not-admitted', receiptId: checked.body.receiptId },
+          entry.operation.attemptId === null ? digest(JSON.stringify(checked.signed)) : undefined);
         return status();
       });
     },
