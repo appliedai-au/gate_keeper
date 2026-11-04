@@ -1,0 +1,86 @@
+{
+  "schema": "gk-learning-v2-source-slice-v1",
+  "repository": "appliedai-au/gate_keeper",
+  "baseCommit": "20dcea65a22e680398d017191b91d04e32b4f883",
+  "baseTree": "85250eea3a6348b0a58dce42b48f164b3cf232fe",
+  "date": "2026-11-04",
+  "status": "source-only-unqualified",
+  "validation": {
+    "method": "static source review",
+    "candidateExecution": "not performed",
+    "managedGateReceipt": null
+  },
+  "files": [
+    {
+      "path": "docs/learning-v2/integration.md",
+      "bytes": 18822,
+      "sha256": "920aa69258d34e3e9f6d9675a005f1ec2ee3d66a36291f147cee8086428c01c2"
+    },
+    {
+      "path": "docs/learning-v2/phase-plan.md",
+      "bytes": 24584,
+      "sha256": "804554b9731c0fea6a65d2dc43e4cc9a4b6b6a28dcdde5c901ef99c6ea6365a8"
+    },
+    {
+      "path": "scripts/learning-v2/contracts.mjs",
+      "bytes": 7911,
+      "sha256": "fcb166dd6b3e814617512321001355e5bb11ee524a09b7fde4dad36ee4331e5d"
+    },
+    {
+      "path": "scripts/learning-v2/controller.mjs",
+      "bytes": 34971,
+      "sha256": "3d96130a22e961d51f76bf446ff07e2096e202749943e75452e19d46b0bf3508"
+    },
+    {
+      "path": "scripts/learning-v2/evidence.mjs",
+      "bytes": 14453,
+      "sha256": "39f60b2f319e69a17102d68210eb3e678138a83857a12e8499729cd4da097f89"
+    },
+    {
+      "path": "scripts/learning-v2/journal.mjs",
+      "bytes": 16692,
+      "sha256": "ed24555c4995156b1fca751a5df91e3f72082cce119d832e385b410bd1026703"
+    },
+    {
+      "path": "scripts/learning-v2/prompts.mjs",
+      "bytes": 3970,
+      "sha256": "5e7575a031c4d231bec081a3b92184b8a56113cffb344de2106b659c5c84bbe0"
+    },
+    {
+      "path": "scripts/learning-v2/runtime.mjs",
+      "bytes": 3429,
+      "sha256": "88e574b008ba8c02d2812e792610aeed7fda9db9e85bc2e2ac6f27778abedf59"
+    },
+    {
+      "path": "tests/learning-v2-controller.test.mjs",
+      "bytes": 37509,
+      "sha256": "4e173f47a2440b41e759f3aa84ab0fd9183db647e599757a032f34dd5d5e09b0",
+      "writtenTestDeclarations": 25
+    },
+    {
+      "path": "tests/learning-v2-evidence.test.mjs",
+      "bytes": 17015,
+      "sha256": "28fc2fa42da47a9efbbd826b61f770e6a2f0ced866cec63ba39f99e1f8e2951c",
+      "writtenTestDeclarations": 25
+    },
+    {
+      "path": "tests/learning-v2-journal.test.mjs",
+      "bytes": 12209,
+      "sha256": "921fe557c269edde94c4b0cb12fff269a869f6fa94273ce4af1eaee5fa061620",
+      "writtenTestDeclarations": 13
+    },
+    {
+      "path": "tests/learning-v2-projections.test.mjs",
+      "bytes": 14280,
+      "sha256": "ff1ba35c9f39a63b312097f0219be149edb75b9886a821658c30f34bc2ff9576",
+      "writtenTestDeclarations": 15
+    },
+    {
+      "path": "tests/learning-v2-runtime.test.mjs",
+      "bytes": 3103,
+      "sha256": "17d08444feab083b8ff19b6bf35f7a2b6c4a59532016ec96a3f8edbd1019435e",
+      "writtenTestDeclarations": 5
+    }
+  ],
+  "note": "Delta manifest only; excludes itself and does not substitute for the complete managed effective-tree identity or a test receipt."
+}

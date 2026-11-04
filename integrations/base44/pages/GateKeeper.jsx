@@ -3,6 +3,7 @@ import GateKeeperConnectionPanel from "../components/GateKeeperConnectionPanel";
 import AdversarialLab from "../components/AdversarialLab";
 import GateKeeperBenchmark from "../components/GateKeeperBenchmark";
 import GateKeeperControlSettings from "../components/GateKeeperControlSettings";
+import GateKeeperLearningStatus from "../components/GateKeeperLearningStatus";
 import "./GateKeeper.css";
 
 // A product walkthrough fixture, not output from TrueForge. Never display it
@@ -43,6 +44,7 @@ const NAV = [
   ["Overview", "◫"],
   ["Review", "⌁"],
   ["Runs", "◷"],
+  ["Learning", "↗"],
   ["Evidence", "◇"],
   ["Settings", "⚙"],
 ];
@@ -203,19 +205,21 @@ export default function GateKeeper() {
             </nav>
           </div>
           <div className="gk-sidebar-bottom">
-            <span className="gk-label-small">RELEASE MODE</span>
-            <div className="gk-mode"><span className="gk-mode-dot" /> DEMONSTRATION</div>
-            <p>Live reviews and paid learning are not enabled in this interface.</p>
+            <span className="gk-label-small">{page === "Learning" ? "STATUS VIEW" : "RELEASE MODE"}</span>
+            <div className="gk-mode"><span className="gk-mode-dot" /> {page === "Learning" ? "READ ONLY" : "DEMONSTRATION"}</div>
+            <p>{page === "Learning" ? "Learning records are scoped to the configured owner. This view provides no learning or promotion controls." : "Live reviews and paid learning are not enabled in this interface."}</p>
           </div>
         </aside>
         <main id="gk-main-content" className="gk-content">
           {page === "Overview" && <AdversarialLab onReview={() => navigate("Review")} onControls={() => navigate("Settings")} />}
           {page === "Review" && <Review onControls={() => navigate("Settings")} />}
           {(page === "Runs" || page === "Evidence") && <GateKeeperBenchmark key={page} section={page} />}
+          {page === "Learning" && <GateKeeperLearningStatus />}
           {page === "Settings" && <Settings />}
-          <footer className="gk-footer"><span>GATE / KEEPER</span><span>REVIEW WITH EVIDENCE. SHIP WITH INTENT.</span><span>SAMPLE UI · NOT LIVE AI OUTPUT</span></footer>
+          <footer className="gk-footer"><span>GATE / KEEPER</span><span>REVIEW WITH EVIDENCE. SHIP WITH INTENT.</span><span>{page === "Learning" ? "READ-ONLY LEARNING STATUS · NO EXECUTION CONTROLS" : "SAMPLE UI · NOT LIVE AI OUTPUT"}</span></footer>
         </main>
       </div>
     </div>
   );
 }
+
