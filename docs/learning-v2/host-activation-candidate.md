@@ -5,8 +5,10 @@ the existing TrueForge production Dockerfile, deploy settings or live volume.
 
 The new `Dockerfile.v2-host` uses a shell entrypoint that verifies an explicit
 `GK_V2_HOST_BOOTSTRAP=enabled` operator flag, then invokes the root-only
-volume startup preflight. The preparer only changes permissions of an empty,
-dedicated, root-owned mount to UID/GID 1000:1000 and mode 0700. Later boots
+volume startup preflight. The preparer only changes permissions of a fresh,
+dedicated, root-owned mount to UID/GID 1000:1000 and mode 0700. A fresh ext4 volume may include a single empty root:root mode-0700
+`lost+found` directory; it is verified but never re-owned, removed or written.
+Any other entry or metadata mismatch refuses. Later boots
 verify a previously prepared node-owned leaf without rewriting the journal.
 Wrong identity, unsafe ancestors, missing/duplicate mount, root-owned nonempty
 volume or any unexpected ownership fail closed before server startup.
