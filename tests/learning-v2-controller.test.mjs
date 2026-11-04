@@ -44,7 +44,9 @@ function stateIdentity(state) {
   };
 }
 
-async function rig({ history = [], withBaseline = true, withGate = true, extraCases = [] } = {}) {
+async function rig({ history = [], withBaseline = true, withGate = true, extraCases = [],
+  openingSpentMicros = 2_000_000, openingReservedMicros = 0,
+  openingCeilingMicros = POLICY.programmeCeilingMicros } = {}) {
   const privateKeys = {};
   const trust = {};
   for (const role of ROLES) {
@@ -106,9 +108,9 @@ async function rig({ history = [], withBaseline = true, withGate = true, extraCa
     gatewayId: trust.budget.gatewayId,
     provider: POLICY.provider,
     global: true,
-    ceilingMicros: POLICY.programmeCeilingMicros,
-    spentMicros: 2_000_000,
-    reservedMicros: 0,
+    ceilingMicros: openingCeilingMicros,
+    spentMicros: openingSpentMicros,
+    reservedMicros: openingReservedMicros,
     ...timeWindow(),
   };
   result.initialBudget = result.sign('budget', initialBudget);
@@ -1013,4 +1015,50 @@ test('baseline non-admission captures operation and original signing order befor
   assert.equal(state.receipts.at(-1), receiptId);
   assert.deepEqual(state.budget, before.budget);
   assert.deepEqual(state.operations, before.operations);
+});
+
+
+test('US$50 total ceiling includes signed pre-existing spend and unsettled reservations', async () => {
+  const r = await rig({ withBaseline: false, withGate: false,
+    openingSpentMicros: 47_000_000, openingReservedMicros: 3_000_000 });
+  const state = await r.controller.state();
+  assert.equal(POLICY.version, 2);
+  assert.equal(POLICY.programmeCeilingMicros, 50_000_000);
+  assert.deepEqual(state.budget, {
+    spentMicros: 47_000_000, reservedMicros: 3_000_000,
+    lastReceiptId: r.initialBudget.body.receiptId,
+  });
+  assert.equal(state.policy.programmeCeilingMicros, 50_000_000);
+  // The opening receipt is never translated into a new US$50 allowance.
+  assert.equal(state.budget.spentMicros + state.budget.reservedMicros, POLICY.programmeCeilingMicros);
+});
+
+test('a signed opening state cannot reset prior charges or import more than US$50', async () => {
+  for (const [spent, reserved] of [[47_000_000, 3_000_001],
+    [50_000_001, 0], [0, 50_000_001]]) {
+    await assert.rejects(rig({ withBaseline: false, withGate: false,
+      openingSpentMicros: spent, openingReservedMicros: reserved }),
+    /programme budget exceeded|invalid integer/);
+  }
+  // A v1 US$20 opening receipt is not a valid v2 opening authority.
+  await assert.rejects(rig({ withBaseline: false, withGate: false,
+    openingSpentMicros: 2_000_000, openingCeilingMicros: 20_000_000 }),
+  /budget receipt ceilingMicros mismatch/);
+});
+
+test('existing spend and outstanding holds leave no new capacity despite a US$50 policy', async () => {
+  const r = await rig({ withBaseline: false, withGate: true,
+    openingSpentMicros: 49_995_000, openingReservedMicros: 5_000 });
+  await r.controller.planBaseline();
+  const request = await r.controller.executionRequest('baseline');
+  const operation = { id: r.next('operation-baseline'), kind: 'baseline',
+    attemptId: null, namespace: request.namespace, requestDigest: digest(request) };
+  const lease = await operationLease(r, operation, request, {
+    spentMicros: 49_995_000, reservedMicros: 10_000,
+  });
+  await assert.rejects(r.controller.reserveOperation(operation, lease),
+    /programme budget exceeded|reservation|budget/);
+  assert.deepEqual((await r.controller.state()).budget,
+    { spentMicros: 49_995_000, reservedMicros: 5_000,
+      lastReceiptId: r.initialBudget.body.receiptId });
 });

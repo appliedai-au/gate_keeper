@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { copy, digest } from '../scripts/learning-v2/contracts.mjs';
+import { POLICY, copy, digest } from '../scripts/learning-v2/contracts.mjs';
 import { FileJournal, MemoryJournal } from '../scripts/learning-v2/journal.mjs';
 import { OperationArchive } from '../scripts/learning-v2/operation-archive.mjs';
 
@@ -115,6 +115,27 @@ test('operation reservation and request identities are checked before any archiv
     const journal = new MemoryJournal();
     const archive = new OperationArchive({ journal });
     await assert.rejects(archive.claimOperation(values.operation, values.request), /LEARNING_V2_REJECTED:/);
+    assert.deepEqual(await journal.read(), { head: null, events: [] });
+  }
+});
+
+test('a controller-admissible US$20-plus reservation is archive-admissible up to the shared US$50 ceiling', async () => {
+  assert.equal(POLICY.programmeCeilingMicros, 50_000_000);
+  for (const micros of [20_000_001, POLICY.programmeCeilingMicros]) {
+    const { operation, request } = fixture();
+    const bound = { ...operation, reservationMicros: micros };
+    const journal = new MemoryJournal();
+    const archive = new OperationArchive({ journal });
+    const claimed = await archive.claimOperation(bound, request);
+    assert.equal(claimed.operation.reservationMicros, micros);
+    assert.equal((await new OperationArchive({ journal }).read()).operation.reservationMicros, micros);
+  }
+  for (const micros of [0, POLICY.programmeCeilingMicros + 1]) {
+    const { operation, request } = fixture();
+    const journal = new MemoryJournal();
+    await assert.rejects(new OperationArchive({ journal }).claimOperation({
+      ...operation, reservationMicros: micros,
+    }, request), /operation reservation: invalid integer/);
     assert.deepEqual(await journal.read(), { head: null, events: [] });
   }
 });

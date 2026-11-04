@@ -306,7 +306,7 @@ test('attempt counters are safe bounded integers while activation history can ex
 
 test('cumulative spend and reservations must fit the fixed programme ceiling together', () => {
   const ceiling = POLICY.programmeCeilingMicros;
-  for (const [spent, reserved] of [[0, 0], [ceiling, 0], [0, ceiling], [12_000_000, 8_000_000]]) {
+  for (const [spent, reserved] of [[0, 0], [ceiling, 0], [0, ceiling], [12_000_000, 8_000_000], [47_000_000, 3_000_000]]) {
     const value = status();
     value.budget.observedSpentMicros = spent; value.budget.observedReservedMicros = reserved;
     assert.deepEqual(projectLearningStatus(value).budget, value.budget);
@@ -317,7 +317,7 @@ test('cumulative spend and reservations must fit the fixed programme ceiling tog
       assert.throws(() => projectLearningStatus(value), undefined, key);
     }
   }
-  for (const [spent, reserved] of [[ceiling, 1], [1, ceiling], [10_000_001, 10_000_000]]) {
+  for (const [spent, reserved] of [[ceiling, 1], [1, ceiling], [35_000_001, 15_000_000]]) {
     const value = status();
     value.budget.observedSpentMicros = spent; value.budget.observedReservedMicros = reserved;
     assert.throws(() => projectLearningStatus(value), undefined, 'combined programme balance');

@@ -241,7 +241,7 @@ authority; the regression suite's generated keys are synthetic fixtures only.
 
 | Schema | Issuer and required binding |
 | --- | --- |
-| `gk-learning-v2-budget-state` | Budget authority: experiment/config/source, global budget and gateway, cumulative spent/reserved amounts, fixed US$20 ceiling and short validity window |
+| `gk-learning-v2-budget-state` | Budget authority: experiment/config/source, global budget and gateway, cumulative spent/reserved amounts, fixed US$50 total ceiling, including historical spending and reservations, and short validity window |
 | `gk-learning-v2-managed-gate` | Trusted independent qualification receipt: exact config/source and gatePolicy, actual run and log digest, passed full suite, current base, no skipped checks, completed cleanup |
 | `gk-learning-v2-operation-lease` | Budget authority: exact operation, namespace, request digest, source/config/model/provider, gate receipt digest, exclusive namespace, provider-enforced global reservation, exact complete call count and expiry |
 | `gk-learning-v2-novelty` | Host reviewer: operation/request, attempt, candidate, incumbent, original BASE, full prior-history digest, procedure-policy version, code-scope attestation and explicit comparisons |
@@ -274,7 +274,7 @@ session/turn pairs are checked against the persisted experiment history.
 
 ## State, billing and recovery
 
-Money uses integer micro-US-dollars: `20_000_000` is US$20. The initial signed
+Money uses integer micro-US-dollars: `50_000_000` is the US$50 **programme total**, not additional credit. Previously consumed spending and unresolved reservations must be independently signed into the initial global opening receipt, and the gateway must enforce uniqueness across all old and new runs. The initial signed
 budget receipt must include all prior programme spend and outstanding
 reservations. There is no reset to zero when v2 starts, no per-worker allowance,
 and no automatic release on timeout.

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 
 export const POLICY = Object.freeze({
-  schema: 'gk-learning-v2-policy', version: 1, attempts: 10,
+  schema: 'gk-learning-v2-policy', version: 2, attempts: 10,
   minimumGain: 1, confirmationPairs: 3, additionalPairs: 0,
   confirmationDecision: 'every-pair-passes', passes: 2,
-  programmeCeilingMicros: 20_000_000, provider: 'truefoundry', memory: 'off',
+  programmeCeilingMicros: 50_000_000, provider: 'truefoundry', memory: 'off',
 });
 
 export function requireThat(condition, message) {

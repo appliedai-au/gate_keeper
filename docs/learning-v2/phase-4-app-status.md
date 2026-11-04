@@ -50,7 +50,7 @@ The response is:
 | Confirmed versions | Counts confirmed learned versions, excluding the original frozen baseline |
 | Activated count | Number of recorded activate events; reactivation after rollback can exceed the attempt count |
 | Pending operation and dispatch stage | Recorded admission/settlement/non-admission observations; no assertion of a live worker or automatic recovery |
-| Budget | Observed cumulative spend and reservations under the fixed US$20 programme cap; the external gateway remains authoritative |
+| Budget | Observed cumulative spend and reservations under the fixed US$50 total programme cap, inclusive of all historical charges and open holds; the external gateway remains authoritative |
 | Qualification | Recorded managed source gate status; it is not an accuracy result, authorization to spend, activation or deployment |
 | `checkedAt` | When the host produced this read; it is not a last-progress timestamp |
 
