@@ -8,7 +8,7 @@
  * binding separately before running this function.
  */
 import { chownSync, chmodSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 export const JOURNAL_MOUNT = '/var/lib/gk-v2-private-journal';
 const OWNER_ONLY = 0o700;
@@ -24,6 +24,28 @@ function verifiedAncestor(path, fs) {
         ((stat.mode & 0o022) !== 0)) deny('untrusted mount ancestor');
     if (current === '/') return;
     current = dirname(current);
+  }
+}
+
+/**
+ * A fresh ext4 Railway volume may contain one filesystem-managed lost+found
+ * directory. Do not delete or re-own it. It is admissible ONLY when root:root,
+ * mode 0700, a true directory (not symlink), and completely empty.
+ */
+export function assertFreshVolumeRoot(path, fs) {
+  if (typeof fs?.lstatSync !== 'function' || typeof fs?.readdirSync !== 'function') {
+    deny('invalid volume inventory adapter');
+  }
+  const entries = fs.readdirSync(path);
+  if (!Array.isArray(entries)) deny('invalid mount entries');
+  if (entries.length === 0) return;
+  if (entries.length !== 1 || entries[0] !== 'lost+found') deny('existing data must never be changed');
+  const child = join(path, 'lost+found');
+  const item = fs.lstatSync(child);
+  if (!item.isDirectory() || item.isSymbolicLink() || item.uid !== 0 ||
+      item.gid !== 0 || (item.mode & 0o777) !== 0o700 ||
+      fs.readdirSync(child).length !== 0) {
+    deny('lost+found is not pristine root-owned filesystem metadata');
   }
 }
 
@@ -68,7 +90,7 @@ export function createVolumePreparer(fs) {
         stat.gid !== 0 || ((stat.mode & 0o022) !== 0)) {
       deny('volume is not an untouched root-owned directory');
     }
-    if (fs.readdirSync(path).length !== 0) deny('existing data must never be changed');
+    assertFreshVolumeRoot(path, fs);
     // Only the mount root changes, never its children or parents.
     fs.chownSync(path, identityUid, identityGid);
     fs.chmodSync(path, OWNER_ONLY);

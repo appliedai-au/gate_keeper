@@ -15,6 +15,7 @@ COPY tests ./tests
 # verify that new proof services cannot auto-start billable inference.
 COPY Dockerfile ./Dockerfile
 COPY Dockerfile.proof ./Dockerfile.proof
+COPY Dockerfile.v2-host ./Dockerfile.v2-host
 COPY Dockerfile.qualify ./Dockerfile.qualify
 COPY integrations ./integrations
 # Deployment-contract tests also read checked-in security and rollout docs.
