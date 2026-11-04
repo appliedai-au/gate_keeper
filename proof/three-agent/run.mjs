@@ -534,6 +534,13 @@ async function improve() {
         parsed: r.status === "done" && Array.isArray(jsonFindings(r.text)) }));
       const missingOrInvalid = Math.max(0, requiredFindingPasses - passes.length) + passes.filter((p) => !p.parsed).length;
       res.incompleteFindingPasses += missingOrInvalid;
+      for (let i = 0; i < passes.length; i++) if (!passes[i].parsed) {
+        const reply = rs[i];
+        console.log("GK3_INVALID_FINDING_PASS " + JSON.stringify({ tag, task: task.id, trial, pass: i + 1,
+          status: reply.status, finishReason: reply.finishReason, source: reply.source, tools: reply.tools,
+          outputChars: (reply.text || "").length, outputHash: createHash("sha256").update(reply.text || "").digest("hex"),
+          finalAnswerExcerpt: (reply.text || "").slice(0, 2000), attemptStatuses: reply.attemptStatuses || [reply.status] }));
+      }
       res.rows.push({ k: `${task.id}/t${trial}`, fit: isFit(task), net: sc.caught - sc.extra,
         requiredFindingPasses, passes, complete: missingOrInvalid === 0 });
       res.caught += sc.caught; res.fa += sc.extra; res[isFit(task) ? "fit" : "val"] += sc.caught - sc.extra; res.n++; if (!sc.parsed) res.unparsed++;
@@ -597,18 +604,22 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
       for (let i = 1; i <= CONTROL_REPEATS; i++) {
         const stopsBefore = budgetStops;
         const result = await evalRules("unchanged baseline control " + i, BASE);
-        const sample = { repeat: i, net: result.net, caught: result.caught, fa: result.fa, fit: result.fitNet,
+        const sample = { repeat: i, complete: result.complete, net: result.net, caught: result.caught, fa: result.fa, fit: result.fitNet,
           check: result.checkNet, unparsed: result.unparsed, incompleteFindingPasses: result.incompleteFindingPasses,
           expectedReviews: P.tasks.length * TRIALS, requiredFindingPasses: P.tasks.length * TRIALS * 2, rows: result.rows };
         samples.push(sample);
         console.log("GK3_CONTROL " + JSON.stringify(sample));
-        if (budgetStops > stopsBefore || result.unparsed || result.incompleteFindingPasses || result.rows.length !== P.tasks.length * TRIALS) { complete = false; break; }
+        if (!result.complete) complete = false;
+        // Controls estimate answer reliability as well as score variation. An invalid
+        // control remains invalid; collect remaining requested replicates without repair.
+        if (budgetStops > stopsBefore) break;
+        if (!result.complete && process.env.GK3_CONTROL_DIAGNOSTIC !== "1") break;
       }
     } finally { CACHE = oldCache; REUSE = oldReuse; }
     console.log("GK3_CONTROL_SUMMARY " + JSON.stringify({ mode: "unchanged-baseline-controls", calls, cacheHits: hits,
       spentUsd: Math.round(spent * 1e6) / 1e6, requestedRepeats: CONTROL_REPEATS, complete,
-      samples, bankChanged: false, learned: [] }));
-    if (!complete || process.env.GK3_CONTROL_THEN_LEARN !== "1") {
+      samples, validRepeats: samples.filter((s) => s.complete).length, diagnosticOnly: process.env.GK3_CONTROL_DIAGNOSTIC === "1", bankChanged: false, learned: [] }));
+    if ((!complete && process.env.GK3_CONTROL_DIAGNOSTIC !== "1") || budgetStops || !samples.some((s) => s.complete) || process.env.GK3_CONTROL_THEN_LEARN !== "1") {
       console.log("GK3_SUMMARY " + JSON.stringify({ mode: "controls-only", calls, spentUsd: Math.round(spent * 1e6) / 1e6, complete, learned: [] }));
       return;
     }
