@@ -78,32 +78,46 @@ test('malformed seed fails before any review request', () => fixture((path) => {
   assert.notEqual(r.status, 0); assert.equal(records(r, 'MOCK_REQUEST').length, 0);
 }));
 
-test('delta learning feeds fit-only regressions into the next learner, never reviewer calls', () => fixture((path) => {
-  const r = run(path, proposal('general', true), { GK3_DELTA_LEARNING: '1', GK3_ROUNDS: '2' });
-  success(r);
-  const learners = records(r, 'MOCK_LEARNER');
+test('negative rules are banked only to prevent repetition, never fed to the learner or reviewer', () => fixture((path) => {
+  const first = run(path, proposal('general', true), { GK3_DELTA_LEARNING: '1', GK3_ROUNDS: '2' });
+  success(first);
+  const b = JSON.parse(readFileSync(path, 'utf8'));
+  assert.equal(b.harmful.length, 1);
+  assert.equal(b.accepted.length, 0);
+  assert.equal(records(first, 'GK3_BANK_DUPLICATE').length, 1, 'the identical failed proposal must not be scored again');
+  assert.equal(records(first, 'GK3_EVAL').length, 2, 'baseline and one candidate only');
+  const learners = records(first, 'MOCK_LEARNER');
   assert.equal(learners.length, 2);
-  assert.ok(learners[1].prompt.includes('FIT_ONLY_TRUTH'));
-  assert.ok(learners[1].prompt.includes('lostRealBugs'));
-  assert.ok(learners[1].prompt.includes('addedFalseAlarms'));
+  assert.ok(learners.every((x) => !x.prompt.includes('TEST_BAD_RULE')));
+  assert.ok(learners.every((x) => !x.prompt.includes('Negative-learning records')));
+  assert.ok(learners.every((x) => !x.prompt.includes('Measured changes caused by recent proposals')));
+  assert.ok(learners.every((x) => !x.prompt.includes('lostRealBugs')));
   assert.ok(learners.every((x) => !x.prompt.includes('CHECK_ONLY_TRUTH')));
-  const reviews = records(r, 'MOCK_REQUEST');
-  assert.ok(reviews.length > 0);
-  for (const x of reviews) {
-    const call = x.instructions + x.prompt;
-    for (const secret of ['FIT_ONLY_TRUTH', 'CHECK_ONLY_TRUTH', 'Measured changes caused by recent proposals', 'lostRealBugs', 'addedFalseAlarms'])
-      assert.ok(!call.includes(secret), 'learner diagnostic leaked into reviewer: ' + secret);
-  }
-  const bank = JSON.parse(readFileSync(path, 'utf8'));
-  assert.equal(bank.accepted.length, 0);
-  assert.equal(bank.harmful.length, 2);
-  for (const e of bank.harmful) {
-    assert.ok(e.fitFeedback.lostRealBugs.some((x) => x.why.includes('FIT_ONLY_TRUTH') && x.occurrencesChanged === 1));
-    assert.ok(e.fitFeedback.addedFalseAlarms.some((x) => x.line === 99 && x.occurrencesChanged === 1));
-    for (const key of ['lostRealBugs', 'recoveredRealBugs', 'addedFalseAlarms', 'removedFalseAlarms'])
-      assert.ok(e.fitFeedback[key].every((x) => x.task.startsWith('t4-')));
-  }
-  assert.equal(records(r, 'GK3_SUMMARY')[0].best.net, 2);
+  assert.ok(records(first, 'MOCK_REQUEST').every((x) => !(x.instructions + x.prompt).includes('FIT_ONLY_TRUTH')));
+  const entry = b.harmful[0];
+  assert.ok(entry.fitFeedback.lostRealBugs.some((x) => x.why.includes('FIT_ONLY_TRUTH')));
+  assert.ok(entry.fitFeedback.addedFalseAlarms.some((x) => x.line === 99));
+  // A subsequent learner can still propose and accept an unrelated positive rule.
+  const next = run(path, proposal(), { GK3_DELTA_LEARNING: '1' });
+  success(next);
+  assert.ok(records(next, 'MOCK_LEARNER').every((x) => !x.prompt.includes('TEST_BAD_RULE')));
+  const saved = JSON.parse(readFileSync(path, 'utf8'));
+  assert.equal(saved.harmful.length, 1);
+  assert.equal(saved.accepted.length, 1);
+}));
+
+test('semantically repeated rejected strategy is banked without evaluation', () => fixture((path) => {
+  const bad = proposal();
+  bad.when = 'TEST_BAD_RULE under a race, a read lookup feeds a later write and findings should be reported on the write line.';
+  const first = run(path, bad); success(first);
+  assert.equal(JSON.parse(readFileSync(path, 'utf8')).harmful.length, 1);
+  const paraphrase = proposal();
+  paraphrase.when = 'TEST_BAD_RULE with concurrency, a read lookup feeds an update write; report the finding at the write line, not the lookup.';
+  const second = run(path, paraphrase); success(second);
+  assert.equal(records(second, 'GK3_BANK_DUPLICATE').length, 1);
+  assert.equal(records(second, 'GK3_EVAL').length, 1, 'repeat should not trigger candidate review');
+  assert.equal(JSON.parse(readFileSync(path, 'utf8')).harmful.length, 1);
+  assert.ok(records(second, 'MOCK_LEARNER').every((x) => !x.prompt.includes(bad.when)));
 }));
 
 test('second-pass-only learning preserves every first finding prompt', () => fixture((path) => {
@@ -143,17 +157,30 @@ test('literal code selectors activate when all tokens occur in code', () => fixt
   assert.equal(records(r, 'GK3_SUMMARY')[0].best.net, 4);
 }));
 
-test('an independent rule probe uses its own cache and never promotes the rule', () => fixture((path) => {
-  const a = run(path, proposal('general', true)); success(a);
-  const id = JSON.parse(readFileSync(path, 'utf8')).harmful[0].id;
-  const b = run(path, proposal(), { GK3_ROUNDS: '0', GK3_PROBE_RULE_ID: id, GK3_PROBE_CACHE_TAG: 'synthetic-pair', GK3_CACHE_DIR: path + '-cache' });
-  success(b);
+test('independent confirmation of an unproven proposal never promotes it', () => fixture((path) => {
+  const a = run(path, proposal(), { GK3_MIN_GAIN: '5' }); success(a);
+  const bank = JSON.parse(readFileSync(path, 'utf8'));
+  assert.equal(bank.unproven.length, 1); assert.equal(bank.harmful.length, 0);
+  const id = bank.unproven[0].id;
+  const b = run(path, proposal(), { GK3_ROUNDS: '0', GK3_PROBE_RULE_ID: id,
+    GK3_PROBE_CACHE_TAG: 'synthetic-pair', GK3_CACHE_DIR: path + '-cache' }); success(b);
   const c = records(b, 'GK3_CONFIRMATION')[0];
   assert.equal(c.ruleId, id);
   assert.equal(c.promoted, false);
-  assert.ok(c.netChange < 0);
+  assert.ok(c.netChange > 0);
   assert.equal(records(b, 'GK3_SUMMARY')[0].best.net, 2);
   assert.equal(JSON.parse(readFileSync(path, 'utf8')).accepted.length, 0);
+}));
+
+test('rejected rules cannot be probed again, even explicitly', () => fixture((path) => {
+  const a = run(path, proposal('general', true)); success(a);
+  const id = JSON.parse(readFileSync(path, 'utf8')).harmful[0].id;
+  const b = run(path, proposal(), { GK3_ROUNDS: '0', GK3_PROBE_RULE_ID: id,
+    GK3_PROBE_CACHE_TAG: 'must-refuse', GK3_CACHE_DIR: path + '-cache' });
+  assert.notEqual(b.status, 0);
+  assert.match(b.stderr, /NEGATIVE_RULE_RETRY_FORBIDDEN/);
+  assert.equal(records(b, 'MOCK_REQUEST').length, 0, 'rejected rule refused before model review');
+  assert.equal(records(b, 'GK3_CONFIRMATION').length, 0);
 }));
 
 test('learner temperature changes leave every finding call at baseline temperature', () => fixture((path) => {
