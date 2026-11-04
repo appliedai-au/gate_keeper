@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { POLICY, configuration, copy, digest, procedure } from '../scripts/learning-v2/contracts.mjs';
@@ -9,6 +9,7 @@ import { LearningController } from '../scripts/learning-v2/controller.mjs';
 import { DispatchLedger } from '../scripts/learning-v2/dispatch-ledger.mjs';
 import { verifyEvaluation } from '../scripts/learning-v2/evidence.mjs';
 import { initializeLearningHost, openLearningHost } from '../scripts/learning-v2/host.mjs';
+import { createReadOnlyLearningStatusReader } from '../scripts/learning-v2/status-reader.mjs';
 import { FileJournal } from '../scripts/learning-v2/journal.mjs';
 import { CHAIN_ASK, LEGACY_BAG_BLOB, LEGACY_RENDERER_ID } from '../scripts/learning-v2/legacy-renderer.mjs';
 import { OperationArchive } from '../scripts/learning-v2/operation-archive.mjs';
@@ -547,4 +548,97 @@ test('explicit phases qualify a candidate across restart while leaving activatio
   await assert.rejects(f.host.activateVersion(target.id, null));
   assert.equal((await f.host.inspect()).state.activeVersionId, inspected.state.baseVersion.id);
   await f.reopen(); assert.equal((await f.host.status()).counts.confirmed, 1);
+});
+
+
+test('read-only journal status equals live host without an SDK or any write capability', async t => {
+  const f = fixture(t);
+  await f.start();
+  const read = createReadOnlyLearningStatusReader({
+    directory: f.directory, repositoryRoot: f.repositoryRoot,
+    binding: { ownerId: 'owner-fixture', experimentId: f.config.experimentId,
+      sourceCommit: f.config.sourceCommit }, trust: f.trust, configDigest: f.identity.configDigest,
+  });
+  const before = await journalSnapshots(f);
+  assert.deepEqual(await read(), await f.host.status());
+  for (const name of ['controller', 'dispatch']) {
+    assert.equal(existsSync(join(f.directory, name, '.writer.lock')), false,
+      'status reads cannot leave writer locks');
+  }
+  assert.deepEqual(await journalSnapshots(f), before, 'status reader must not append journal events');
+  await f.host.dispatch('baseline');
+  assert.deepEqual(await read(), await f.host.status());
+  const post = await journalSnapshots(f);
+  await read();
+  assert.deepEqual(await journalSnapshots(f), post, 'repeated status reads must not advance the controller');
+});
+
+test('read-only journal status fails closed on absent store wrong source and untrusted public keys', async t => {
+  const f = fixture(t);
+  const opts = { directory: f.directory, repositoryRoot: f.repositoryRoot,
+    binding: { ownerId: 'owner-fixture', experimentId: f.config.experimentId,
+      sourceCommit: f.config.sourceCommit }, trust: f.trust, configDigest: f.identity.configDigest };
+  const read = createReadOnlyLearningStatusReader(opts);
+  await assert.rejects(read(), /JOURNAL_DIRECTORY_MISSING|journal directory/);
+  await f.start();
+  await assert.rejects(createReadOnlyLearningStatusReader({
+    ...opts, binding: { ...opts.binding, sourceCommit: 'f'.repeat(40) },
+  })(), /source binding mismatch/);
+  await assert.rejects(createReadOnlyLearningStatusReader({
+    ...opts, binding: { ...opts.binding, experimentId: 'foreign-experiment' },
+  })(), /source binding mismatch/);
+  await assert.rejects(createReadOnlyLearningStatusReader({
+    ...opts, configDigest: '0'.repeat(64),
+  })(), /frozen configuration digest mismatch/);
+  assert.throws(() => createReadOnlyLearningStatusReader({
+    ...opts, trust: { ...opts.trust,
+      evaluation: { ...opts.trust.evaluation, pinnedFingerprint: 'f'.repeat(64) } },
+  }), /does not match pinned fingerprint/);
+});
+
+test('read-only journal status refuses missing execution archives rather than fabricating progress', async t => {
+  const f = fixture(t);
+  await f.start();
+  await f.host.dispatch('baseline');
+  const read = createReadOnlyLearningStatusReader({
+    directory: f.directory, repositoryRoot: f.repositoryRoot,
+    binding: { ownerId: 'owner-fixture', experimentId: f.config.experimentId,
+      sourceCommit: f.config.sourceCommit }, trust: f.trust, configDigest: f.identity.configDigest,
+  });
+  assert.deepEqual(await read(), await f.host.status());
+  const operations = (await f.host.inspect()).state.operations;
+  assert.equal(operations.length, 1);
+  const archived = f.archivePath(operations[0].id);
+  renameSync(archived, archived + '.quarantined');
+  await assert.rejects(read(), /JOURNAL_DIRECTORY_MISSING|journal directory/);
+});
+
+
+test('read-only journal reader never acquires or steals a held writer lock', async t => {
+  const f = fixture(t);
+  await f.start();
+  const opts = { directory: f.directory, repositoryRoot: f.repositoryRoot,
+    binding: { ownerId: 'owner-fixture', experimentId: f.config.experimentId,
+      sourceCommit: f.config.sourceCommit }, trust: f.trust,
+    configDigest: f.identity.configDigest };
+  const read = createReadOnlyLearningStatusReader(opts);
+  const lockedPath = join(f.directory, 'controller', '.writer.lock');
+  writeFileSync(lockedPath, 'writer-kept-unchanged', { mode: 0o600, flag: 'wx' });
+  await assert.rejects(read(), /writer lock present; status read unavailable/);
+  assert.equal(readFileSync(lockedPath, 'utf8'), 'writer-kept-unchanged');
+  unlinkSync(lockedPath);
+  assert.equal(existsSync(lockedPath), false);
+  assert.deepEqual(await read(), await f.host.status());
+  // A stable orphan without a live writer remains a real journal integrity error.
+  const orphan = join(f.directory, 'controller', '.pending-orphan.json');
+  writeFileSync(orphan, 'incomplete write', { mode: 0o600, flag: 'wx' });
+  await assert.rejects(read(), /unexpected file or orphaned pending record requires recovery/);
+  unlinkSync(orphan);
+  assert.deepEqual(await read(), await f.host.status());
+  const readOnlyJournal = new FileJournal({ directory: join(f.directory, 'controller'),
+    repositoryRoot: f.repositoryRoot, create: false, readOnly: true });
+  await assert.rejects(readOnlyJournal.append(null, {}), /read-only journal cannot append/);
+  await f.host.dispatch('baseline');
+  assert.deepEqual(await read(), await f.host.status());
+  assert.equal(existsSync(lockedPath), false);
 });

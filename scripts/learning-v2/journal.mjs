@@ -219,13 +219,16 @@ export class FileJournal {
   #directory;
   #repositoryRoot;
   #createDirectories;
+  #readOnly;
 
-  constructor({ directory, repositoryRoot, create = true } = {}) {
+  constructor({ directory, repositoryRoot, create = true, readOnly = false } = {}) {
     if (typeof directory !== "string" || !isAbsolute(directory) ||
         typeof repositoryRoot !== "string" || !isAbsolute(repositoryRoot)) {
       reject("absolute journal and repository paths required");
     }
-    if (typeof create !== "boolean") reject("create must be a boolean");
+    if (typeof create !== "boolean" || typeof readOnly !== "boolean") reject("invalid journal mode");
+    if (readOnly && create) reject("read-only journal must use create=false");
+    this.#readOnly = readOnly;
     this.#directory = resolve(directory);
     this.#repositoryRoot = resolve(repositoryRoot);
     this.#createDirectories = create;
@@ -365,6 +368,39 @@ export class FileJournal {
   }
 
   async read() {
+    if (this.#readOnly) {
+      try {
+        this.#prepare();
+        const listing = () => readdirSync(this.#directory).sort();
+        const before = listing();
+        if (before.includes(LOCK_NAME)) reject("writer lock present; status read unavailable");
+        let records;
+        try {
+          records = this.#readLocked();
+        } catch (error) {
+          // An append can begin after the first directory snapshot. If its
+          // lock or pending/final files appeared, this is transient unavailability,
+          // not evidence that the immutable journal was corrupt beforehand.
+          let unstable = false;
+          try {
+            const now = listing();
+            unstable = now.includes(LOCK_NAME) || canonical(before) !== canonical(now);
+          } catch {
+            unstable = true; // Disappearing storage is also not a valid snapshot.
+          }
+          if (unstable) reject("journal changed during lock-free status read", error);
+          throw error;
+        }
+        const after = listing();
+        if (after.includes(LOCK_NAME) || canonical(before) !== canonical(after)) {
+          reject("journal changed during lock-free status read");
+        }
+        return snapshot(records);
+      } catch (error) {
+        if (error.message?.startsWith("JOURNAL_REJECTED:")) throw error;
+        reject("lock-free read failed", error);
+      }
+    }
     let lockBytes;
     try {
       lockBytes = this.#acquire();
@@ -378,6 +414,7 @@ export class FileJournal {
   }
 
   async append(head, event) {
+    if (this.#readOnly) reject('read-only journal cannot append');
     expectedHead(head);
     const copied = copyEvent(event);
     let lockBytes;
