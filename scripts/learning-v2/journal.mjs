@@ -219,13 +219,16 @@ export class FileJournal {
   #directory;
   #repositoryRoot;
   #createDirectories;
+  #readOnly;
 
-  constructor({ directory, repositoryRoot, create = true } = {}) {
+  constructor({ directory, repositoryRoot, create = true, readOnly = false } = {}) {
     if (typeof directory !== "string" || !isAbsolute(directory) ||
         typeof repositoryRoot !== "string" || !isAbsolute(repositoryRoot)) {
       reject("absolute journal and repository paths required");
     }
-    if (typeof create !== "boolean") reject("create must be a boolean");
+    if (typeof create !== "boolean" || typeof readOnly !== "boolean") reject("invalid journal mode");
+    if (readOnly && create) reject("read-only journal must use create=false");
+    this.#readOnly = readOnly;
     this.#directory = resolve(directory);
     this.#repositoryRoot = resolve(repositoryRoot);
     this.#createDirectories = create;
@@ -365,6 +368,23 @@ export class FileJournal {
   }
 
   async read() {
+    if (this.#readOnly) {
+      try {
+        this.#prepare();
+        const listing = () => readdirSync(this.#directory).sort();
+        const before = listing();
+        if (before.includes(LOCK_NAME)) reject("writer lock present; status read unavailable");
+        const records = this.#readLocked();
+        const after = listing();
+        if (after.includes(LOCK_NAME) || canonical(before) !== canonical(after)) {
+          reject("journal changed during lock-free status read");
+        }
+        return snapshot(records);
+      } catch (error) {
+        if (error.message?.startsWith("JOURNAL_REJECTED:")) throw error;
+        reject("lock-free read failed", error);
+      }
+    }
     let lockBytes;
     try {
       lockBytes = this.#acquire();
@@ -378,6 +398,7 @@ export class FileJournal {
   }
 
   async append(head, event) {
+    if (this.#readOnly) reject('read-only journal cannot append');
     expectedHead(head);
     const copied = copyEvent(event);
     let lockBytes;

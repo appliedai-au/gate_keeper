@@ -44,12 +44,12 @@ export function createReadOnlyLearningStatusReader({ directory, repositoryRoot, 
   }
   const pinnedTrust = copy(trust);
   const controller = new LearningController({
-    journal: new FileJournal({ directory: join(directory, 'controller'), repositoryRoot, create: false }),
+    journal: new FileJournal({ directory: join(directory, 'controller'), repositoryRoot, create: false, readOnly: true }),
     trust: pinnedTrust,
   });
   const archiveFor = id => new OperationArchive({ journal: new FileJournal({
     directory: join(directory, 'operations', digest({ operationId: id })),
-    repositoryRoot, create: false,
+    repositoryRoot, create: false, readOnly: true,
   }) });
 
   return async function readStatus() {
@@ -64,7 +64,7 @@ export function createReadOnlyLearningStatusReader({ directory, repositoryRoot, 
         trustPins: state.trustPins, history: state.history }) === configDigest,
       'read-only frozen configuration digest mismatch');
     const ledger = new DispatchLedger({
-      journal: new FileJournal({ directory: join(directory, 'dispatch'), repositoryRoot, create: false }),
+      journal: new FileJournal({ directory: join(directory, 'dispatch'), repositoryRoot, create: false, readOnly: true }),
       experimentId: fixed.experimentId, configDigest: state.configDigest,
     });
     const dispatch = await ledger.read();

@@ -37,3 +37,5 @@ The reader additionally requires a separately configured **64-character frozen
 configuration digest**; experiment/source alone are insufficient to bind the
 model, scorer, benchmark and initial policy. It recomputes that digest from the
 stored configuration, trust pins, policy and historical bank on every read.
+
+The FileJournal is now opened in explicit readOnly mode with create=false. It never obtains the writer lock or creates an evidence directory; append is categorically refused. A held writer lock or unstable directory listing returns unavailable rather than racing the real writer. It does not automatically retry or delete a held lock.
