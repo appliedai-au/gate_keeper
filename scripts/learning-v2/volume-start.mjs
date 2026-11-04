@@ -5,7 +5,7 @@
  */
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { JOURNAL_MOUNT, prepareEmptyJournalMount } from './volume-bootstrap.mjs';
+import { JOURNAL_MOUNT, assertFreshVolumeRoot, prepareEmptyJournalMount } from './volume-bootstrap.mjs';
 
 const uid = 1000, gid = 1000, mode = 0o700;
 function refuse(message) { throw new Error('GK_V2_STARTUP_REFUSED: ' + message); }
@@ -40,7 +40,8 @@ export function createVolumeStartup({ stat = lstatSync, list = readdirSync,
       return Object.freeze({ ready: true, prepared: false, path: JOURNAL_MOUNT });
     }
     if (leaf.uid !== 0 || leaf.gid !== 0 || (leaf.mode & 0o022)) refuse('unknown mount owner or permissions');
-    if (list(JOURNAL_MOUNT).length !== 0) refuse('root-owned volume contains existing evidence');
+    try { assertFreshVolumeRoot(JOURNAL_MOUNT, { lstatSync: stat, readdirSync: list }); }
+    catch { refuse('root-owned volume contains unexpected entries'); }
     prepare({ currentUid: 0, path: JOURNAL_MOUNT, identityUid: uid, identityGid: gid, mountinfo: data });
     const after = stat(JOURNAL_MOUNT);
     if (!after.isDirectory() || after.isSymbolicLink() || after.uid !== uid ||
