@@ -9,6 +9,7 @@ import { LearningController } from '../scripts/learning-v2/controller.mjs';
 import { DispatchLedger } from '../scripts/learning-v2/dispatch-ledger.mjs';
 import { verifyEvaluation } from '../scripts/learning-v2/evidence.mjs';
 import { initializeLearningHost, openLearningHost } from '../scripts/learning-v2/host.mjs';
+import { createReadOnlyLearningStatusReader } from '../scripts/learning-v2/status-reader.mjs';
 import { FileJournal } from '../scripts/learning-v2/journal.mjs';
 import { CHAIN_ASK, LEGACY_BAG_BLOB, LEGACY_RENDERER_ID } from '../scripts/learning-v2/legacy-renderer.mjs';
 import { OperationArchive } from '../scripts/learning-v2/operation-archive.mjs';
@@ -547,4 +548,60 @@ test('explicit phases qualify a candidate across restart while leaving activatio
   await assert.rejects(f.host.activateVersion(target.id, null));
   assert.equal((await f.host.inspect()).state.activeVersionId, inspected.state.baseVersion.id);
   await f.reopen(); assert.equal((await f.host.status()).counts.confirmed, 1);
+});
+
+
+test('read-only journal status equals live host without an SDK or any write capability', async t => {
+  const f = fixture(t);
+  await f.start();
+  const read = createReadOnlyLearningStatusReader({
+    directory: f.directory, repositoryRoot: f.repositoryRoot,
+    binding: { ownerId: 'owner-fixture', experimentId: f.config.experimentId,
+      sourceCommit: f.config.sourceCommit }, trust: f.trust,
+  });
+  const before = await journalSnapshots(f);
+  assert.deepEqual(await read(), await f.host.status());
+  assert.deepEqual(await journalSnapshots(f), before, 'status reader must not append journal events');
+  await f.host.dispatch('baseline');
+  assert.deepEqual(await read(), await f.host.status());
+  const post = await journalSnapshots(f);
+  await read();
+  assert.deepEqual(await journalSnapshots(f), post, 'repeated status reads must not advance the controller');
+});
+
+test('read-only journal status fails closed on absent store wrong source and untrusted public keys', async t => {
+  const f = fixture(t);
+  const opts = { directory: f.directory, repositoryRoot: f.repositoryRoot,
+    binding: { ownerId: 'owner-fixture', experimentId: f.config.experimentId,
+      sourceCommit: f.config.sourceCommit }, trust: f.trust };
+  const read = createReadOnlyLearningStatusReader(opts);
+  await assert.rejects(read(), /JOURNAL_DIRECTORY_MISSING|journal directory/);
+  await f.start();
+  await assert.rejects(createReadOnlyLearningStatusReader({
+    ...opts, binding: { ...opts.binding, sourceCommit: 'f'.repeat(40) },
+  })(), /source binding mismatch/);
+  await assert.rejects(createReadOnlyLearningStatusReader({
+    ...opts, binding: { ...opts.binding, experimentId: 'foreign-experiment' },
+  })(), /source binding mismatch/);
+  assert.throws(() => createReadOnlyLearningStatusReader({
+    ...opts, trust: { ...opts.trust,
+      evaluation: { ...opts.trust.evaluation, pinnedFingerprint: 'f'.repeat(64) } },
+  }), /does not match pinned fingerprint/);
+});
+
+test('read-only journal status refuses missing execution archives rather than fabricating progress', async t => {
+  const f = fixture(t);
+  await f.start();
+  await f.host.dispatch('baseline');
+  const read = createReadOnlyLearningStatusReader({
+    directory: f.directory, repositoryRoot: f.repositoryRoot,
+    binding: { ownerId: 'owner-fixture', experimentId: f.config.experimentId,
+      sourceCommit: f.config.sourceCommit }, trust: f.trust,
+  });
+  assert.deepEqual(await read(), await f.host.status());
+  const operations = (await f.host.inspect()).state.operations;
+  assert.equal(operations.length, 1);
+  const archived = f.archivePath(operations[0].id);
+  renameSync(archived, archived + '.quarantined');
+  await assert.rejects(read(), /JOURNAL_DIRECTORY_MISSING|journal directory/);
 });
