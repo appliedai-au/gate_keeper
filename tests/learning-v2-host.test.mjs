@@ -557,7 +557,7 @@ test('read-only journal status equals live host without an SDK or any write capa
   const read = createReadOnlyLearningStatusReader({
     directory: f.directory, repositoryRoot: f.repositoryRoot,
     binding: { ownerId: 'owner-fixture', experimentId: f.config.experimentId,
-      sourceCommit: f.config.sourceCommit }, trust: f.trust,
+      sourceCommit: f.config.sourceCommit }, trust: f.trust, configDigest: f.identity.configDigest,
   });
   const before = await journalSnapshots(f);
   assert.deepEqual(await read(), await f.host.status());
@@ -573,7 +573,7 @@ test('read-only journal status fails closed on absent store wrong source and unt
   const f = fixture(t);
   const opts = { directory: f.directory, repositoryRoot: f.repositoryRoot,
     binding: { ownerId: 'owner-fixture', experimentId: f.config.experimentId,
-      sourceCommit: f.config.sourceCommit }, trust: f.trust };
+      sourceCommit: f.config.sourceCommit }, trust: f.trust, configDigest: f.identity.configDigest };
   const read = createReadOnlyLearningStatusReader(opts);
   await assert.rejects(read(), /JOURNAL_DIRECTORY_MISSING|journal directory/);
   await f.start();
@@ -583,6 +583,9 @@ test('read-only journal status fails closed on absent store wrong source and unt
   await assert.rejects(createReadOnlyLearningStatusReader({
     ...opts, binding: { ...opts.binding, experimentId: 'foreign-experiment' },
   })(), /source binding mismatch/);
+  await assert.rejects(createReadOnlyLearningStatusReader({
+    ...opts, configDigest: '0'.repeat(64),
+  })(), /frozen configuration digest mismatch/);
   assert.throws(() => createReadOnlyLearningStatusReader({
     ...opts, trust: { ...opts.trust,
       evaluation: { ...opts.trust.evaluation, pinnedFingerprint: 'f'.repeat(64) } },
@@ -596,7 +599,7 @@ test('read-only journal status refuses missing execution archives rather than fa
   const read = createReadOnlyLearningStatusReader({
     directory: f.directory, repositoryRoot: f.repositoryRoot,
     binding: { ownerId: 'owner-fixture', experimentId: f.config.experimentId,
-      sourceCommit: f.config.sourceCommit }, trust: f.trust,
+      sourceCommit: f.config.sourceCommit }, trust: f.trust, configDigest: f.identity.configDigest,
   });
   assert.deepEqual(await read(), await f.host.status());
   const operations = (await f.host.inspect()).state.operations;

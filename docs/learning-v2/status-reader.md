@@ -32,3 +32,8 @@ bounded public status projection.
 
 The v2 activation task is tracked by Gate Keeper issue #44; this source bridge
 does not represent operational qualification or measured learning.
+
+The reader additionally requires a separately configured **64-character frozen
+configuration digest**; experiment/source alone are insufficient to bind the
+model, scorer, benchmark and initial policy. It recomputes that digest from the
+stored configuration, trust pins, policy and historical bank on every read.

@@ -24,11 +24,13 @@ const keyFingerprint = key => createHash('sha256').update(
  * Return a read-only () => PublicLearningStatus capability.
  * No caller input selects source/owner/experiment. Never create any directory.
  */
-export function createReadOnlyLearningStatusReader({ directory, repositoryRoot, binding, trust } = {}) {
+export function createReadOnlyLearningStatusReader({ directory, repositoryRoot, binding, trust, configDigest } = {}) {
   requireThat(typeof directory === 'string' && isAbsolute(directory) &&
     typeof repositoryRoot === 'string' && isAbsolute(repositoryRoot),
   'read-only status requires absolute existing storage and repository roots');
   const fixed = Object.freeze(validateLearningStatusBinding(binding));
+  requireThat(typeof configDigest === 'string' && /^[a-f0-9]{64}$/.test(configDigest),
+    'read-only status requires pinned frozen configuration digest');
   record(trust, ROLES, 'read-only status trust');
   for (const role of ROLES) {
     record(trust[role], role === 'budget' ?
@@ -57,6 +59,10 @@ export function createReadOnlyLearningStatusReader({ directory, repositoryRoot, 
     'read-only experiment/source binding mismatch');
     requireThat(canonical(state.policy) === canonical(POLICY),
       'read-only policy differs from qualified version');
+    requireThat(state.configDigest === configDigest &&
+      digest({ config: state.config, policy: state.policy,
+        trustPins: state.trustPins, history: state.history }) === configDigest,
+      'read-only frozen configuration digest mismatch');
     const ledger = new DispatchLedger({
       journal: new FileJournal({ directory: join(directory, 'dispatch'), repositoryRoot, create: false }),
       experimentId: fixed.experimentId, configDigest: state.configDigest,
