@@ -43,7 +43,7 @@ test('parent-only, absent, incomplete or duplicate mount fails without writes', 
 
 test('volume root must be a safe root-owned directory', () => {
   for (const initial of [stat(1000), stat(0, 12), stat(0, 0, 0o40777),
-    stat(0, 0, 0o100644, false), stat(0, 0, 0o40755, true)]) {
+    stat(0, 0, 0o100644, false), stat(0, 0, 0o120777, false, true)]) {
     const { prepare, writes } = fixture({ initial });
     assert.throws(() => run(prepare), /untouched root-owned directory/);
     assert.deepEqual(writes, []);
@@ -52,7 +52,7 @@ test('volume root must be a safe root-owned directory', () => {
 
 test('ancestor must be trusted and existing data is never reowned', () => {
   for (const opts of [{ ancestor: stat(2000) }, { ancestor: stat(0, 0, 0o40777) },
-    { ancestor: stat(0, 0, 0o40755, true) }, { names: ['controller'] }]) {
+    { ancestor: stat(0, 0, 0o120777, false, true) }, { names: ['controller'] }]) {
     const { prepare, writes } = fixture(opts);
     assert.throws(() => run(prepare), /untrusted mount ancestor|existing data/);
     assert.deepEqual(writes, []);
