@@ -55,7 +55,7 @@ test('accepted rules persist and carry into a later run behind an original-basel
   assert.equal(records(b, 'GK3_SUMMARY')[0].best.net, 4);
 }));
 
-test('harmful rules are banked as negative learning and never carried into the reviewer', () => fixture((path) => {
+test('rejected rules remain in the no-repeat bank but never enter reviewer instructions', () => fixture((path) => {
   const a = run(path, proposal('general', true)); success(a);
   const bank = JSON.parse(readFileSync(path, 'utf8'));
   assert.equal(bank.harmful.length, 1); assert.equal(bank.accepted.length, 0);
