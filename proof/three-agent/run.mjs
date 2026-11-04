@@ -507,10 +507,10 @@ async function improve() {
   }
   const LEARNER_TEMP = process.env.GK3_LEARNER_TEMPERATURE === undefined ? null : Number(process.env.GK3_LEARNER_TEMPERATURE);
   if (LEARNER_TEMP !== null && (!Number.isFinite(LEARNER_TEMP) || LEARNER_TEMP < 0 || LEARNER_TEMP > 1)) throw new Error("invalid learner temperature");
-  const STRUCTURED_IMPROVER = `You improve a code reviewer that uses two consecutive finding passes. You receive its current instructions, training misses with ground-truth explanations, false alarms, and rejected earlier rule attempts.
+  const STRUCTURED_IMPROVER = `You improve a code reviewer that uses two consecutive finding passes. You receive its current instructions, training misses with ground-truth explanations, and false alarms. Previous rejected rules are withheld; a local do-not-repeat check handles them.
 Write exactly ONE new conditional reviewing rule that addresses the most repeated underlying decision error, rather than a list of bug topics.
 Choose the narrowest justified scope: general, language, or stack. A language-specific behavior must not be asserted for other languages. Stack rules must name a framework visible in the supplied code/context. Language ids: python, js (JavaScript/TypeScript), go, jvm, c, rust, cs, php, ruby.
-Previously harmful formulations are negative learning: avoid repeating them, but do not treat the underlying real-bug category as forbidden. Use the measured outcomes to refine the condition or safe exception.
+Propose a genuinely distinct detection rule. The runner suppresses previously rejected formulations without revealing them to the model; do not treat the whole underlying defect category as forbidden.
 Your rule must contain:
 - when: a concrete code pattern or data-flow condition that makes the rule applicable;
 - evidence: the code/path/guard evidence the reviewer must establish before reporting a defect;
@@ -546,6 +546,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   console.log("GK3_START " + JSON.stringify({ improve: true, structuredRules: STRUCTURED_RULES, learnerTemperature: LEARNER_TEMP ?? P.params.temperature, learnedRulePlacement: process.env.GK3_LEARN_PASS2_ONLY ? "second finding pass only" : "both finding passes", learnerData: STRUCTURED_RULES ? "t4-t5 fit only" : "all training", model: GM, faultType: FAULT_TYPE || "all", rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
   const BASE = P.agents.gate_keeper.system;
   const bank = STRUCTURED_RULES ? loadRuleBank() : { accepted: [], harmful: [], unproven: [], history: [] };
+  if (STRUCTURED_RULES && process.env.GK3_PROBE_RULE_ID && bank.harmful.some((e) => e.id === process.env.GK3_PROBE_RULE_ID)) throw new Error("NEGATIVE_RULE_RETRY_FORBIDDEN");
   const records = new Map(bank.accepted.flatMap((e) => (e.rules || []).map((rule) => [rule, e.scope || { kind: "general" }])));
   const withRules = (all, prompt = null) => {
     const list = prompt ? all.filter((r) => appliesToCode(records.get(r), prompt)) : all;
@@ -558,7 +559,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   const seenIds = new Set(priorProposals.map((e) => e.id).filter(Boolean));
   const normalizeRule = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\\s+/g, " ");
   const seenTexts = new Set(priorProposals.flatMap((e) => e.rules || []).map(normalizeRule));
-  let rules = BASE, learned = [], rejected = STRUCTURED_RULES ? [...bank.harmful, ...bank.unproven].flatMap((e) => e.rules || []).slice(-80) : [];
+  let rules = BASE, learned = [], rejected = [];
   if (STRUCTURED_RULES) saveRuleBank(bank);
   let best = await evalRules(BAGMODE ? "round A (rule bag)" : "v12", rules);
   const original = best;
@@ -583,7 +584,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   }
   // A named unproven rule can receive an independent paired repeat without promotion.
   if (STRUCTURED_RULES && process.env.GK3_PROBE_RULE_ID) {
-    const e = [...bank.unproven, ...bank.harmful, ...bank.accepted].find((x) => x.id === process.env.GK3_PROBE_RULE_ID);
+    const e = [...bank.unproven, ...bank.accepted].find((x) => x.id === process.env.GK3_PROBE_RULE_ID);
     if (!e?.rules?.length || !CACHE || !process.env.GK3_PROBE_CACHE_TAG) throw new Error("probe requires existing rule, cache and unique confirmation tag");
     for (const rule of e.rules) records.set(rule, e.scope || { kind: "general" });
     const oldCache = CACHE;
@@ -605,14 +606,17 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     // Conditional-rule learning sees fit tasks only; t6 remains an internal training check.
     const fitOnly = (xs) => STRUCTURED_RULES ? xs.filter((x) => !x.task.startsWith("t6-")) : xs;
     const ms = tally(fitOnly(best.misses)).slice(0, 14), fs = tally(fitOnly(best.fas)).slice(0, 10);
-    const priorFeedback = DELTA_LEARNING ? [...bank.harmful, ...bank.unproven].filter((e) => e.fitFeedback).slice(-3) : [];
-    const regressionExamples = priorFeedback.flatMap((e) => [...e.fitFeedback.lostRealBugs, ...e.fitFeedback.addedFalseAlarms]);
-    const exampleIds = STRUCTURED_RULES ? [...new Set([...regressionExamples.slice(0, 2), ...ms.slice(0, 3), ...fs.slice(0, 3)].map((x) => x.task))].slice(0, 4) : [];
+    // Negative and unproven bank entries are ONLY a do-not-repeat filter. Never supply them,
+    // their measurements, or their old fit feedback as learner or reviewer instructions.
+    const exampleIds = STRUCTURED_RULES ? [...new Set([...ms.slice(0, 4), ...fs.slice(0, 4)].map((x) => x.task))].slice(0, 4) : [];
     const contexts = exampleIds.map((id) => P.tasks.find((t) => t.id === id)?.prompts.gate_keeper || "").map((x) => x.slice(0, 5000)).join("\n\n---\n\n");
-    const ask = (STRUCTURED_RULES ? "Learning cycle " + r + " of " + ROUNDS + ". Produce a new supported distinction, not a previously rejected formulation.\n\n" : "") + (contexts ? "Fit-only example code and stated context (for checking guards, not memorizing identifiers):\n" + contexts + "\n\n" : "") + "Current instructions:\n" + rules + (STRUCTURED_RULES ? "\n\nNegative-learning records (exact formulations and measured context; not universal bug-category bans):\n" + JSON.stringify(bank.harmful.slice(-8).map((e) => ({ rules: e.rules, scope: e.scope, baseline: e.baseline, candidate: e.candidate }))) + "\n\nUnproven proposals (not classified as harmful):\n" + JSON.stringify(bank.unproven.slice(-4).map((e) => ({ rules: e.rules, scope: e.scope, reason: e.reason, baseline: e.baseline, candidate: e.candidate }))) : "") + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n") +
-      "\n\nFalse alarms:\n" + fs.map((f) => `- [${f.n}x] line ${f.line}: \`${f.code}\` — reviewer said: ${f.comment}`).join("\n") + (rejected.length ? "\n\nRules already tried that did not help (do not propose these again):\n" + rejected.map((x) => "- " + x).join("\n") : "");
-    const feedbackAsk = DELTA_LEARNING ? ask + "\n\nMeasured changes caused by recent proposals (fit tasks only):\n" + JSON.stringify(priorFeedback.map((e) => ({ rules: e.rules, scope: e.scope, baseline: e.baseline, candidate: e.candidate, fitFeedback: e.fitFeedback }))) + "\nDiagnose why a previous instruction lost real bugs or introduced false alarms. Prefer a narrow positive inspection procedure over another broad reporting restriction. A named framework helper is not proof of a safety guarantee: require the actual stated implementation or documented behavior; do not invent guarantees. Keep task details out of the proposed reusable rule." : ask;
-    let rr = await turn(`i/improve-r${r}`, IMPROVER, feedbackAsk, GM, LEARNER_TEMP);
+    const ask = (STRUCTURED_RULES ? "Learning cycle " + r + " of " + ROUNDS + ". Propose one new supported distinction.\n\n" : "")
+      + (contexts ? "Fit-only example code and stated context (for checking guards, not memorizing identifiers):\n" + contexts + "\n\n" : "")
+      + "Current instructions:\n" + rules
+      + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n")
+      + "\n\nFalse alarms:\n" + fs.map((f) => `- [${f.n}x] line ${f.line}: \`${f.code}\` — reviewer said: ${f.comment}`).join("\n")
+      + (!STRUCTURED_RULES && rejected.length ? "\n\nRules already tried that did not help (do not propose these again):\n" + rejected.map((x) => "- " + x).join("\n") : "");
+    let rr = await turn(`i/improve-r${r}`, IMPROVER, ask, GM, LEARNER_TEMP);
     let rawRules = jsonFindings(rr.text, "rules") || [];
     const parseConditional = (xs) => xs.filter((x) => x && ["when", "evidence", "unless"].every((k) => typeof x[k] === "string" && x[k].trim().length >= 8))
       .filter((x) => [x.when, x.evidence, x.unless].join(" ").trim().split(/\s+/).length <= 160)
@@ -640,7 +644,27 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     // Never rerun a rejected proposal, whether rejected in this run or banked previously.
     // Count and bank duplicates as attempted cycles, not as scored evaluations.
     const proposalId = STRUCTURED_RULES ? createHash("sha256").update(JSON.stringify(conditional)).digest("hex") : "";
-    if (STRUCTURED_RULES && (seenIds.has(proposalId) || nr.some((x) => seenTexts.has(normalizeRule(x))))) {
+    // Reject exact, near-text, and known failure-strategy restatements before paid scoring.
+    // These bank comparisons never become model instructions; suppress a *rule*, not its fault class.
+    const stopWords = new Set("about above after also because before based both code concrete could each every evidence false finding findings from have into line lines must only other report reported result same should since that their then there these this those under when where which with without would".split(" "));
+    const words = (txt) => new Set(normalizeRule(txt).split(" ").filter((x) => x.length > 3 && !stopWords.has(x)).map((x) => x.replace(/(ing|tion|ed|s)$/, "")));
+    const strategy = (txt) => {
+      const x = normalizeRule(txt);
+      if (/\b(read|lookup|select|getter|fetched)\b/.test(x) && /\b(write|save|insert|update|branch|writeback)\b/.test(x)
+        && /\b(report|finding|line|location)\b/.test(x) && /\b(race|stale|concurrency|atomic)\b/.test(x)) return "race-read-write-line-relocation";
+      if (/\b(transactional|transaction)\b/.test(x) && /\b(self|proxy|outer)\b/.test(x)
+        && /\b(call|annotation|spring)\b/.test(x)) return "transaction-self-call";
+      return "";
+    };
+    const isRestatement = (next, prev) => {
+      const a = words(next), b = words(prev), overlap = [...a].filter((x) => b.has(x)).length;
+      if (a.size >= 12 && b.size >= 12 && overlap >= 10 && overlap / Math.min(a.size, b.size) >= 0.67) return true;
+      const sa = strategy(next), sb = strategy(prev);
+      return !!sa && sa === sb;
+    };
+    const previouslyRejected = bank.harmful.flatMap((e) => e.rules || []);
+    const repeatsRejectedStrategy = nr.some((candidate) => previouslyRejected.some((prior) => isRestatement(candidate, prior)));
+    if (STRUCTURED_RULES && (seenIds.has(proposalId) || nr.some((x) => seenTexts.has(normalizeRule(x))) || repeatsRejectedStrategy)) {
       const duplicate = { kind: "duplicate-not-retried", round: r, faultType: FAULT_TYPE || "all", id: proposalId,
         model: GM, source: process.env.GK3_COMMIT, rules: nr, status: "not-scored" };
       bank.history.push(duplicate); saveRuleBank(bank);
