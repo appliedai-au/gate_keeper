@@ -1,7 +1,7 @@
 # Learning v2: implementation and runner contract
 
-Status: core and concrete adapter source implemented, awaiting live composition
-and the full managed remote gate.
+Status: core, concrete adapter and persistent host source implemented, awaiting
+owned-runner integration and the full managed remote gate.
 This document describes the committed contract; it is not a run receipt.
 The [phase plan](phase-plan.md) records the rollout and outstanding owners.
 
@@ -15,6 +15,8 @@ The [phase plan](phase-plan.md) records the rollout and outstanding owners.
 | `scripts/learning-v2/journal.mjs` | Private durable records, compare-and-swap writes, restart state and fail-closed writer locks |
 | `scripts/learning-v2/prompts.mjs` | Allowed learner/finder projections and a small app status projection |
 | `scripts/learning-v2/runtime.mjs` | Ordered admission, durable intent, managed dispatch, evidence consumption and billing settlement |
+| `scripts/learning-v2/host.mjs` | Stable private composition, exact reopen checks, one-phase dispatch and explicit authenticated recovery |
+| `scripts/learning-v2/dispatch-ledger.mjs` | Durable intent before gateway admission, immutable original observations, explicit receipt selection and terminal resolution |
 | `scripts/learning-v2/executor.mjs` | Concrete baseline/proposal/screen/confirmation scheduler and independent receipt verification |
 | `scripts/learning-v2/trueforge-turn.mjs` | Injected SDK transport with durable call intent, explicit fresh turns and complete observations |
 | `scripts/learning-v2/operation-archive.mjs` | Private create-once operation/call observations, ordered stages and immutable artifacts |
@@ -24,54 +26,59 @@ The [phase plan](phase-plan.md) records the rollout and outstanding owners.
 The modules use Node built-ins, the existing `learning-trust.mjs` signature
 verifier and a host-supplied SDK client. There is no new package, SDK upgrade,
 service or CLI. The [Phase 2 adapter record](phase-2-adapter.md) details the
-proposed runtime configuration changes and concrete host composition.
+proposed runtime configuration changes; the [host record](phase-2-host.md)
+describes the persistent composition and original-receipt recovery contract.
 The current `proof/three-agent/run.mjs` is not changed by this source slice.
 
 ## Host integration sequence
 
-The existing runner owner supplies the transport capabilities and real receipts.
-The following is integration pseudocode for that admitted runner, not a local
-execution instruction:
+The existing runner owner supplies the transport capabilities, durable volume
+and real receipts. Use the concrete persistent host so admission intent is
+durable before contacting the gateway. The following is integration pseudocode
+for that admitted runner, not a local execution instruction:
 
 ```js
-const controller = new LearningController({ journal, trust });
-
-await controller.initialize(frozenConfiguration, {
+const host = await initializeLearningHost({
+  directory: stablePrivateExperimentDirectory,
+  repositoryRoot: admittedCheckout,
+  config: frozenConfiguration,
+  trust: pinnedPublicTrust,
+  client: admittedTrueForgeClient,
+  runtime: frozenRuntimeManifest,
+  caseInputs: frozenModelVisibleCases,
+  authorities: { evaluation: independentEvaluator, novelty: independentReviewer },
+  gateway: { admit: gatewayAdmission, settle: gatewaySettlement },
+}, {
   history: reviewedHistoricalReferences,
   budgetEnvelope: signedCumulativeBudgetState,
 });
-await controller.recordManagedGate(signedFullGateReceipt);
-await controller.planBaseline();
-await dispatchManagedOperation({
-  controller, kind: 'baseline', operationId: baselineOperationId,
-  admit, execute, settle,
-});
+await host.recordManagedGate(signedFullGateReceipt);
+await host.dispatch('baseline');
 
-const attempt = await controller.beginAttempt(signedOriginalFitFeedback);
-await dispatchManagedOperation({
-  controller, kind: 'proposal', attemptId: attempt.attemptId,
-  operationId: proposalOperationId, admit, execute, settle,
-});
+const attempt = await host.beginAttempt(signedOriginalFitFeedback);
+await host.dispatch('proposal', attempt.attemptId);
 // The runner reads the persisted state. Only a ready proposal can be screened.
-await controller.planScreen(attempt.attemptId);
-// Dispatch kind 'screen'. Only a provisional result can be confirmed.
-await controller.planConfirmation(attempt.attemptId);
-// Dispatch kind 'confirmation': exactly the three predeclared fresh pairs.
-// Confirmation produces an inactive artifact. Separate operator authorization:
-await controller.activateVersion(confirmedVersionId, signedActivationApproval);
+await host.dispatch('screen', attempt.attemptId);
+// Only a provisional result can be confirmed.
+await host.dispatch('confirmation', attempt.attemptId);
+// Confirmation uses exactly three predeclared fresh pairs and leaves an
+// inactive artifact. Separate operator authorization is required:
+await host.activateVersion(confirmedVersionId, signedActivationApproval);
 ```
 
 The caller branches on recorded states; it does not call every line blindly.
 An invalid, duplicate, unresolved or uncovered proposal already consumed its
 attempt. A rejected screen cannot enter confirmation. A failed confirmation
 cannot be extended. Ten attempts is the experiment limit, not a target count of
-successful evaluations. Reopening the same journal resumes its existing state.
+successful evaluations. Subsequent processes use `openLearningHost(options)`
+with the same directory, configuration and trust pins; they never initialize
+replacement stores as a recovery step.
 
-`admit`, `execute` and `settle` are trusted host capabilities. They are never
-registered as model tools. `createLearningExecutor` supplies the concrete
-`execute` implementation. Real `admit`, `settle`, independent evaluation/novelty
-issuers and private durable archive locations remain the admitted host's
-responsibility. A local process signing its own model outputs does not become
+Gateway admission/settlement and independent evaluation/novelty issuers are
+trusted host capabilities, never model tools. The persistent host supplies
+the concrete executor and deterministic archive locations under its stable
+private root. Real transports, authority custody and durable volume provisioning
+remain the admitted runner's responsibility. A local process signing its own model outputs does not become
 an independent evaluator or a global budget gateway.
 
 ### Admission and dispatch
@@ -82,8 +89,12 @@ incumbent identities, complete phase plan, prompt artifacts, required call
 count, pinned authority identities, and the safe proposer projection when applicable. Its digest is bound
 to the gateway lease and every evaluation/novelty receipt.
 
-`dispatchManagedOperation` obtains admission, persists the operation, then calls
-the executor. It has no default transport or automatic retry. The executor
+The host first claims the logical phase in its dispatch ledger, before invoking
+gateway admission through `dispatchManagedOperation`. It retains the original
+lease before controller reservation and uses a stable archive that claims each
+call before SDK mutation. It has no default transport or automatic retry. A
+pending intent blocks further work even when no controller lease was recorded.
+The executor
 receives `receiptContext.operationId` and `receiptContext.requestDigest`; the
 independent issuer verifies the actual execution against that request before
 including these fields in its signed receipts. Merely copying the requested
@@ -223,9 +234,10 @@ authority; the regression suite's generated keys are synthetic fixtures only.
 | `gk-learning-v2-evaluation` | Independent evaluator: operation/request, source/model/benchmark/scorer/prompt, phase/namespace/pair/order/applicability, complete case/pass evidence |
 | `gk-learning-v2-fit-feedback` | Independent evaluator: original baseline receipt, original-fit-only origin and unique approved visible fit examples |
 | `gk-learning-v2-operation-settlement` | Budget authority: operation/lease/global budget, actual calls and cost, cumulative spent/reserved totals and settled status |
+| `gk-learning-v2-operation-not-admitted` | Budget authority: exact pending operation/request/source/config/global gateway, no reservation, zero calls/cost and explicit non-admission; the host consumes that logical phase |
 | `gk-learning-v2-activation` | Operator authority: exact confirmed version/evidence, expected incumbent, original BASE, action and experiment-only purpose within a short validity window |
 
-The controller source gives the exact non-evaluation field checks; the closed
+The controller and host source give the exact non-evaluation field checks; the closed
 evaluation schema is defined in `evidence.mjs`. Novelty compares every retained
 reference using `distinct`, `equivalent` or `uncertain`, with actual prior IDs
 and reasons. A normalized exact match blocks automatically. A reviewed
@@ -262,6 +274,18 @@ fewer calls, but never fewer than already verified fresh calls. Actual calls,
 actual cost and the settlement identity remain in the journal. A contradiction
 keeps the reservation unresolved and blocks new work/activation.
 
+The host's separate dispatch ledger also covers the interval before controller
+reservation. An admission request whose response is lost remains pending and
+blocks another attempt or phase. `recover` imports original gateway receipts;
+it never calls admission, settlement or the SDK itself. If no controller lease
+was recorded, historical admission alone preserves the hold. Historical
+admission plus final settlement can atomically create an already-consumed,
+already-settled `reconciliationOnly` record. Its original expiry may have
+elapsed, but this accounting path never issues execution authority or accepts
+learning evidence. A separately authenticated non-admission consumes the
+logical phase, including when no call occurred. Missing responses prove
+neither non-admission nor zero cost.
+
 If execution is ambiguous, preserve the operation and reconcile with the
 existing runner/gateway owner. `abandonOperation(id, reason)` can mark an
 unconsumed phase unresolved without releasing money. It does not cancel a
@@ -278,11 +302,18 @@ FileJournal uses a private, owner-controlled POSIX directory outside the source
 repository, mode 0700, with 0600 files. It requires local exclusive-create,
 hard-link and directory-fsync semantics. Persist the volume across restarts.
 It is a bounded single-writer store with synchronous I/O, not a distributed
-database. Controller records contain cumulative state snapshots; operation
-archive records contain individual event deltas. Both use the same 32 MiB
+database. Controller records contain cumulative state snapshots; dispatch-ledger
+and operation-archive records contain individual event deltas. They use the same 32 MiB
 per-record ceiling; provision storage for the full retained journal plus a
 publication temporary.
 No automatic compaction or history deletion is implemented.
+
+Reopened host stores and archive inspection use `create: false`. Missing stores
+are refused instead of recreated; missing archived evidence required by recorded
+execution also blocks reopening. An admission-only reconciliation can have no
+call archive without implying no remote usage. Only the specific missing
+journal-directory condition has `JOURNAL_DIRECTORY_MISSING`; missing records,
+corruption and unsafe paths remain errors.
 
 The journal checks a SHA-256 chain, contiguous sequence and durable head
 checkpoint. A stale revision, extra file, interrupted publication, unexpected
@@ -297,6 +328,10 @@ scoring artifacts and gateway logs. The controller journal keeps normalized
 evidence, receipt/body digests and lineage. The separate operation archive now
 retains call intents and raw observations, including original serialized signed
 envelopes as strings; neither replaces independently held evidence.
+The dispatch ledger retains the original gateway envelopes, including unusable
+observations. Explicit recovery may select an earlier retained receipt through
+an append-only reference event; it never overwrites receipt bytes or rewrites
+history. The host authenticates the selected evidence before resolving billing.
 
 ## Activation and existing data
 
@@ -328,9 +363,16 @@ Python contrast fixtures, retain the separately specified explicit interpreter,
 test-identity and discovery-count gates. Do not substitute a reduced command,
 the paid evaluation service, or a successful receipt from another source.
 
-Composing the implemented adapter in the real managed runner, establishing
-signing authority custody and gateway enforcement, reconciling existing runner
-repairs, and measuring baseline equivalence are Phase 2b/3 work. The explicit
-runtime-capability changes need controls. The app status endpoint/UI consumes `status()`
-only after that integration. It must not expose `state()` or private journal
-contents to ordinary app users.
+Connecting the persistent host to the real managed runner, establishing signing
+authority custody, gateway enforcement and durable volume custody, reconciling
+existing runner repairs, and measuring baseline equivalence are Phase 2b/3 work.
+The explicit runtime-capability changes need controls. The served native gate
+requires an open, non-draft PR with exact head/base; explicit dispatch has the
+same requirement. Registration and source integration must be ready before
+advancing this draft for gate admission.
+
+The app status endpoint/UI consumes `host.status()` only after that integration.
+It includes the pending dispatch identity and locally observed stage, even
+before a controller reservation exists. It must not expose `inspect()`,
+`inspectOperation()`, controller `state()` or private journal contents to
+ordinary app users. Observation stages do not assert remote termination.

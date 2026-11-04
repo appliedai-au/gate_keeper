@@ -15,6 +15,12 @@ The original [source manifest](source-manifest.json) describes that Phase 1
 snapshot. The [Phase 2 manifest](phase-2-source-manifest.json) seals this
 increment separately; neither manifest is a managed gate receipt.
 
+The later [persistent-host increment](phase-2-host.md) builds on published
+commit `3ef57ff4d9776a70d337e0dbf206b5ccca9488fb`. It supplies stable archive
+composition, a dispatch intent before gateway admission and explicit recovery
+of original gateway evidence. The earlier manifests remain historical source
+snapshots; the host record and its new manifest describe the current increment.
+
 | Source | Implemented behavior |
 | --- | --- |
 | `trueforge-turn.mjs` | Claims a call durably; creates a fresh inline session/root turn; captures bounded observations and a completeness flag; preserves ambiguous failures |
@@ -30,8 +36,10 @@ inherited tests are untouched by this increment.
 
 ## Host composition
 
-The following illustrates the composition seam; it is not an instruction to
-run candidate code outside the full managed gate:
+The following illustrates the adapter's lower-level composition seam; it is not
+an instruction to run candidate code outside the full managed gate. New runner
+integration should use the [persistent host](phase-2-host.md), which owns these
+stable stores and also records intent before gateway admission:
 
 ```js
 const execute = createLearningExecutor({
@@ -235,15 +243,17 @@ The read-only inspection on 4 November 2026 found Spekky API Railway deployment
 The inspected Spekky main
 `f66bc753fb1c5de81ac4bdc1b9f152135bd372b1` also lacked this registration.
 An empty pending GitHub status does not demonstrate a queued native gate.
-The default poller skips draft PRs; this draft is not automatically admitted.
-The owner must use the supported explicit exact-head gate path after the
-registration is complete, or deliberately advance the review state when ready.
+The later source inspection confirmed that the served source guard requires
+an **open, non-draft PR at the exact head and base**, including prepared operator
+capsules. Explicit dispatch cannot bypass draft state. After registration and
+source integration are ready, the candidate must become review-ready before
+native gate admission. Merge and deployment remain separately gated.
 
 The remaining Phase 2 work is concrete:
 
-1. The existing owner reconciles the 3091/e054 runner repairs and composes this
-   adapter with private durable archives, real independent issuers and the
-   already reconciled global gateway. Preserve all inherited regressions.
+1. The existing owner reconciles the 3091/e054 runner repairs and connects the
+   implemented persistent host to its durable volume, real SDK/independent
+   issuers and the reconciled global gateway. Preserve all inherited regressions.
 2. The native-gate owner registers Gate Keeper's complete target and reviewed
    preset, both shell/embedded output-profile copies, repository enrollment
    and protected gate paths; qualifies and releases that Spekky change.
@@ -260,6 +270,7 @@ evaluation host or self-signed gate evidence substitutes for that exit.
 
 Sources: [served target table](https://github.com/appliedai-au/Spekky-V1/blob/2882f1c67d77a17a42840c2eb738fa8e9c07891e/server-go/internal/services/executor_check.go),
 [served output profiles](https://github.com/appliedai-au/Spekky-V1/blob/2882f1c67d77a17a42840c2eb738fa8e9c07891e/scripts/executor/run-task.sh),
+[served source-admission guard](https://github.com/appliedai-au/Spekky-V1/blob/2882f1c67d77a17a42840c2eb738fa8e9c07891e/server-go/internal/services/executor_sandbox_source.go),
 [existing registration owner requirements](https://github.com/appliedai-au/Spekky-V1/issues/794#issuecomment-6619321938),
 [current ownership coordination](https://github.com/appliedai-au/Spekky-V1/issues/794#issuecomment-6620951327),
 and [Gate Keeper full qualification recipe](https://github.com/appliedai-au/gate_keeper/blob/20dcea65a22e680398d017191b91d04e32b4f883/Dockerfile.qualify).

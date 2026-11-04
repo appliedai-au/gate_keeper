@@ -14,18 +14,20 @@ does not establish an operational runner, a passed gate, a model improvement,
 or authority to deploy or merge.
 
 The delivery now includes Phase 1 core source and the Phase 2 concrete TrueForge
-adapter, durable operation archive, compatibility renderer and regression
-source. It remains **unqualified source**, with no local or remote execution
-claimed. The [Phase 2 adapter record](phase-2-adapter.md) gives the implemented
-interfaces, explicit runtime changes and current gate dependency. There are no
-schedule or accuracy forecasts in this plan.
+adapter, persistent host, pre-admission dispatch ledger, operation archive,
+compatibility renderer and regression source. Explicit recovery reconciles
+historical admission and final settlement without dispatching again. It remains
+**unqualified source**, with no local or remote execution claimed. The
+[adapter record](phase-2-adapter.md) and [host record](phase-2-host.md) give the
+implemented interfaces, explicit runtime changes and current gate dependency.
+There are no schedule or accuracy forecasts in this plan.
 
 | Phase | Current status | Next required evidence |
 | --- | --- | --- |
 | 0: source and ownership | Pinned for additive work | Refresh refs at integration |
 | 1: isolated learning core | Source delivered in PR #43 | Full managed qualification |
-| 2a: concrete adapter and recovery | Source implemented in this increment | Independent review and managed tests |
-| 2b: owned-runner integration and gate | Pending existing owners | Reconciled runner, real authorities/gateway, registered target and complete exact-source receipt |
+| 2a: concrete adapter and operation archive | Source delivered; parent source review approved | Full managed qualification |
+| 2b: persistent host, owned-runner integration and gate | Host and admission-recovery source implemented; live integration pending | Reconciled runner, real authorities/gateway, durable volume, registered target and complete exact-source receipt |
 | 3: controls and ten-attempt pilot | Not started | Qualified source, BASE controls and reconciled cumulative budget |
 | 4: app read model and rollout | Not started | Qualified state integration and separate activation authorization |
 | 5: broader memory and skills | Deferred | Separate design and evaluation for each expansion |
@@ -73,6 +75,7 @@ existing `tests/` discovery path. Their responsibilities are:
 | Runtime admission and budget boundary | Require authenticated evidence and external authorization before runtime work; never obtain authority from a model's claim |
 | Concrete TrueForge adapter | Schedule the frozen two-pass plan, retain provider observations and obtain independent receipts |
 | Operation archive and compatibility renderer | Persist call intent before dispatch and preserve existing finding preparation/merge behavior |
+| Persistent host and dispatch ledger | Compose stable private stores, persist intent before gateway admission and reconcile original receipts without automatic retry |
 | Version activation | Produce an immutable confirmed version and require separate authorization for activation or rollback |
 
 Implement these responsibilities as modules in the existing application. The
@@ -298,10 +301,21 @@ operation/call claim after ambiguous dispatch. The compatibility helper matches
 the existing BAG blob. The PR review's stranded-reservation recovery defect is
 repaired. See the [adapter record](phase-2-adapter.md) and its separate manifest.
 
-**2b integration and qualification remain:**
+**2b host source implemented:** `host.mjs` now composes the existing controller,
+executor and stable private operation archives. Its dispatch ledger records
+intent before requesting gateway admission, including the interval before a
+controller lease exists. Reopening requires the original stores and pins.
+Explicit recovery authenticates retained admission and final settlement;
+expired historical admission can close accounting only through an atomic,
+consumed and settled record. It cannot renew execution authority. Independently
+signed non-admission also consumes its logical phase. See the
+[host record](phase-2-host.md) and its separate source manifest.
 
-The existing reconciliation owner integrates the core at the runner's existing
-proposal/evaluation seam. Carry forward both 3091's control completeness and
+**Owned-runner integration and qualification remain:**
+
+The existing reconciliation owner connects this host at the runner's existing
+proposal/evaluation seam and supplies the real capabilities and durable volume.
+Carry forward both 3091's control completeness and
 e054's host-only history isolation. Replace the overbroad novelty matcher and
 immediate screen-positive activation. Preserve the original baseline and all
 inherited regressions. Connect the current TrueForge boundary without changing
@@ -338,7 +352,11 @@ effective trees, command/preset, provider/service/worker/allocation/native run,
 all step results and counts, log digests, reconciliation, and cleanup. No such
 v2 receipt is claimed by the current source delivery. The served Spekky build
 inspected on 4 November still lacks Gate Keeper's target and output profile;
-the adapter record names the exact inspected identities and remaining actions.
+the host record names the exact inspected identities and remaining actions.
+The served source guard requires an open, non-draft PR at the exact head and
+base, including explicit operator dispatch. Complete registration and source
+integration, then advance the candidate to review-ready for gate admission;
+there is no draft bypass.
 
 Sources: [current qualification recipe](https://github.com/appliedai-au/gate_keeper/blob/20dcea65a22e680398d017191b91d04e32b4f883/Dockerfile.qualify),
 [native registration requirements](https://github.com/appliedai-au/Spekky-V1/issues/794#issuecomment-6619321938),
@@ -430,7 +448,8 @@ must name its actual artifact or receipt. A prepared regression, signed empty
 envelope, historical deployment, or posted operator request is not a test pass,
 accepted task, newly available capability, or measured learning gain.
 
-The next milestone is Phase 2b: compose the implemented adapter in the owned
-runner and retain full managed qualification for the exact reconciled source.
-The existing owner/operator requirements remain explicit dependencies while
-the authorized source work proceeds.
+The next milestone is the remaining Phase 2b live integration: supply the
+implemented host with the real SDK, independent authorities, global gateway
+and durable volume; reconcile the owned runner; and retain full managed
+qualification for that exact source. The existing owner/operator requirements
+remain explicit dependencies while the authorized source work proceeds.

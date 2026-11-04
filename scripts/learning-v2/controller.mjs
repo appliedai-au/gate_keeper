@@ -572,6 +572,67 @@ export class LearningController {
     });
   }
 
+  /** Recover the admission/recording crash window without creating execution
+   * authority. Both historical admission and final settlement are mandatory.
+   * An elapsed lease may be accounted for here, never renewed or dispatched. */
+  async reconcileAdmission(operation, admissionEnvelope, settlementEnvelope, reason) {
+    return this.#change('admission-reconciled', state => {
+      record(operation, ['id', 'kind', 'attemptId', 'namespace', 'requestDigest'], 'reconciled operation');
+      identifier(operation.id, 'reconciled operation id');
+      hash(operation.requestDigest, 'reconciled requestDigest');
+      requireThat(state.gate, 'source has no matching full managed gate receipt');
+      requireThat(!state.operations.some(item => !item.settled || item.id === operation.id ||
+        (item.kind === operation.kind && item.attemptId === operation.attemptId)), 'operation pending or reused');
+      const request = this.#request(state, operation.kind, operation.attemptId);
+      requireThat(operation.namespace === request.namespace && operation.requestDigest === digest(request),
+        'recovery request differs from frozen plan');
+      const admission = this.#attest('budget', admissionEnvelope, 'gk-learning-v2-operation-lease', {
+        ...identity(state), ...operation, budgetId: state.config.budgetId, gatewayId: this.#trust.budget.gatewayId,
+        provider: POLICY.provider, model: state.config.model, global: true,
+        ceilingMicros: POLICY.programmeCeilingMicros, managedGateDigest: state.gate.digest,
+        namespaceExclusive: true, providerLimitEnforced: true,
+      });
+      const issued = Date.parse(admission.issuedAt), expires = Date.parse(admission.expiresAt);
+      requireThat(Number.isFinite(issued) && Number.isFinite(expires) && issued <= this.#clock() &&
+        expires > issued && expires - issued <= 3_600_000, 'historical admission validity window');
+      requireThat(!state.receipts.includes(admission.receiptId), 'historical admission receipt replay');
+      integer(admission.maxCalls, 'historical maxCalls', 1, 1_000_000);
+      requireThat(admission.maxCalls === request.requiredCalls, 'historical admission call count differs from plan');
+      integer(admission.reservationMicros, 'historical reservationMicros', 1, POLICY.programmeCeilingMicros);
+      integer(admission.spentMicros, 'historical spentMicros', 0, POLICY.programmeCeilingMicros);
+      integer(admission.reservedMicros, 'historical reservedMicros', 0, POLICY.programmeCeilingMicros);
+      requireThat(admission.reservedMicros >= admission.reservationMicros &&
+        admission.spentMicros + admission.reservedMicros <= POLICY.programmeCeilingMicros,
+      'historical programme reservation invalid');
+      const settlement = this.#attest('budget', settlementEnvelope, 'gk-learning-v2-operation-settlement', {
+        ...identity(state), operationId: operation.id, leaseId: admission.receiptId, budgetId: state.config.budgetId,
+        gatewayId: this.#trust.budget.gatewayId, provider: POLICY.provider, global: true,
+        ceilingMicros: POLICY.programmeCeilingMicros, status: 'settled',
+      });
+      requireThat(!state.receipts.includes(settlement.receiptId) && settlement.receiptId !== admission.receiptId,
+        'historical settlement receipt replay');
+      integer(settlement.actualCalls, 'reconciled actualCalls', 0, admission.maxCalls);
+      integer(settlement.actualMicros, 'reconciled actualMicros', 0, admission.reservationMicros);
+      requireThat(settlement.spentMicros >= Math.max(state.budget.spentMicros, admission.spentMicros) + settlement.actualMicros,
+        'historical settlement omitted spend');
+      this.#budget(state, settlement);
+      const failureReason = text(reason, 'admission reconciliation reason', 2000);
+      const reconciled = { ...copy(operation), leaseId: admission.receiptId, maxCalls: admission.maxCalls,
+        reservationMicros: admission.reservationMicros, settled: true, consumed: true,
+        observedFreshCalls: 0, evidenceComplete: false, reconciliationOnly: true, failureReason,
+        settlementReceiptId: settlement.receiptId, actualCalls: settlement.actualCalls, actualMicros: settlement.actualMicros };
+      state.operations.push(reconciled);
+      state.receipts.push(admission.receiptId, settlement.receiptId);
+      if (operation.attemptId === null) state.baselineError = failureReason;
+      else {
+        const attempt = state.attempts.find(item => item.id === operation.attemptId);
+        requireThat(attempt && OPEN.has(attempt.status), 'reconciled attempt state');
+        attempt.status = 'unresolved'; attempt.reason = failureReason;
+      }
+      return reconciled;
+    });
+  }
+
   async settleOperation(operationId, envelope) {
     return this.#change('operation-settled', state => {
       const operation = state.operations.find(item => item.id === operationId && !item.settled);

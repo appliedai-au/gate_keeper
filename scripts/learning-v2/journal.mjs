@@ -218,14 +218,17 @@ export class MemoryJournal {
 export class FileJournal {
   #directory;
   #repositoryRoot;
+  #createDirectories;
 
-  constructor({ directory, repositoryRoot } = {}) {
+  constructor({ directory, repositoryRoot, create = true } = {}) {
     if (typeof directory !== "string" || !isAbsolute(directory) ||
         typeof repositoryRoot !== "string" || !isAbsolute(repositoryRoot)) {
       reject("absolute journal and repository paths required");
     }
+    if (typeof create !== "boolean") reject("create must be a boolean");
     this.#directory = resolve(directory);
     this.#repositoryRoot = resolve(repositoryRoot);
+    this.#createDirectories = create;
     if (contains(this.#repositoryRoot, this.#directory) || contains(this.#directory, this.#repositoryRoot)) {
       reject("journal and repository directories must be disjoint");
     }
@@ -233,7 +236,17 @@ export class FileJournal {
 
   #prepare() {
     const repository = directoryPath(this.#repositoryRoot);
-    const directory = directoryPath(this.#directory, { create: true, privateLeaf: true });
+    let directory;
+    try {
+      directory = directoryPath(this.#directory, { create: this.#createDirectories, privateLeaf: true });
+    } catch (cause) {
+      if (!this.#createDirectories && cause.code === "ENOENT") {
+        const error = new Error("JOURNAL_REJECTED: expected journal directory is missing", { cause });
+        error.code = "JOURNAL_DIRECTORY_MISSING";
+        throw error;
+      }
+      throw cause;
+    }
     if (contains(repository, directory) || contains(directory, repository)) reject("canonical repository containment");
   }
 
