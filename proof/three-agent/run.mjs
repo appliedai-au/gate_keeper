@@ -657,13 +657,21 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
       return "";
     };
     const isRestatement = (next, prev) => {
-      const a = words(next), b = words(prev), overlap = [...a].filter((x) => b.has(x)).length;
-      if (a.size >= 12 && b.size >= 12 && overlap >= 10 && overlap / Math.min(a.size, b.size) >= 0.67) return true;
-      const sa = strategy(next), sb = strategy(prev);
+      // Compare the actual "when" trigger, not generic evidence/exception boilerplate.
+      const a = words(next.when), b = words(prev.when);
+      const overlap = [...a].filter((x) => b.has(x)).length;
+      if (a.size >= 8 && b.size >= 8 && overlap >= 6 && overlap / Math.min(a.size, b.size) >= 0.72) return true;
+      const sa = strategy(next.full), sb = strategy(prev.full);
       return !!sa && sa === sb;
     };
-    const previouslyRejected = bank.harmful.flatMap((e) => e.rules || []);
-    const repeatsRejectedStrategy = nr.some((candidate) => previouslyRejected.some((prior) => isRestatement(candidate, prior)));
+    const previouslyRejected = bank.harmful.flatMap((e) =>
+      (e.conditional?.length ? e.conditional : (e.rules || []).map((r) => ({ when: r })))
+        .map((c) => ({ when: c.when || "", full: (e.rules || []).join(" ") })));
+    const repeatsRejectedStrategy = conditional.some((candidate) =>
+      previouslyRejected.some((prior) => isRestatement({
+        when: candidate.when,
+        full: `When ${candidate.when} Establish ${candidate.evidence} Do not report when ${candidate.unless}`
+      }, prior)));
     if (STRUCTURED_RULES && (seenIds.has(proposalId) || nr.some((x) => seenTexts.has(normalizeRule(x))) || repeatsRejectedStrategy)) {
       const duplicate = { kind: "duplicate-not-retried", round: r, faultType: FAULT_TYPE || "all", id: proposalId,
         model: GM, source: process.env.GK3_COMMIT, rules: nr, status: "not-scored" };
