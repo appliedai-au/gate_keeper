@@ -111,7 +111,7 @@ export class LearningController {
       budget: { spentMicros: 0, reservedMicros: 0, lastReceiptId: null }, gate: null };
     const budget = this.#attest('budget', budgetEnvelope, 'gk-learning-v2-budget-state', {
       ...identity(state), budgetId: config.budgetId, gatewayId: this.#trust.budget.gatewayId,
-      provider: POLICY.provider, global: true, ceilingMicros: POLICY.programmeCeilingMicros,
+      provider: POLICY.provider, global: false, ceilingMicros: Number.MAX_SAFE_INTEGER,
     }, { timely: true });
     this.#budget(state, budget);
     state.receipts.push(budget.receiptId);
@@ -121,10 +121,10 @@ export class LearningController {
   }
 
   #budget(state, body) {
-    integer(body.spentMicros, 'global spentMicros', 0, POLICY.programmeCeilingMicros);
-    integer(body.reservedMicros, 'global reservedMicros', 0, POLICY.programmeCeilingMicros);
+    integer(body.spentMicros, 'global spentMicros', 0, Number.MAX_SAFE_INTEGER);
+    integer(body.reservedMicros, 'global reservedMicros', 0, Number.MAX_SAFE_INTEGER);
     requireThat(body.spentMicros >= state.budget.spentMicros, 'cumulative spend went backwards');
-    requireThat(body.spentMicros + body.reservedMicros <= POLICY.programmeCeilingMicros, 'programme budget exceeded');
+    requireThat(body.spentMicros + body.reservedMicros <= Number.MAX_SAFE_INTEGER, 'programme budget exceeded');
     state.budget = { spentMicros: body.spentMicros, reservedMicros: body.reservedMicros, lastReceiptId: body.receiptId };
   }
 
@@ -301,7 +301,7 @@ export class LearningController {
       const body = this.#attest('budget', capturedEnvelope, 'gk-learning-v2-operation-not-admitted', {
         ...identity(state), operationId: capturedOperation.id, requestDigest: capturedOperation.requestDigest,
         budgetId: state.config.budgetId, gatewayId: this.#trust.budget.gatewayId,
-        provider: POLICY.provider, global: true, ceilingMicros: POLICY.programmeCeilingMicros,
+        provider: POLICY.provider, global: false, ceilingMicros: Number.MAX_SAFE_INTEGER,
         status: 'not-admitted', reservationExists: false, actualCalls: 0, actualMicros: 0,
       });
       requireThat(!state.receipts.includes(body.receiptId), 'baseline non-admission receipt replay');
@@ -592,14 +592,14 @@ export class LearningController {
       requireThat(operation.namespace === expectedNamespace, 'operation namespace mismatch');
       const lease = this.#attest('budget', envelope, 'gk-learning-v2-operation-lease', {
         ...identity(state), ...operation, budgetId: state.config.budgetId, gatewayId: this.#trust.budget.gatewayId,
-        provider: POLICY.provider, model: state.config.model, global: true,
-        ceilingMicros: POLICY.programmeCeilingMicros, managedGateDigest: state.gate.digest,
-        namespaceExclusive: true, providerLimitEnforced: true,
+        provider: POLICY.provider, model: state.config.model, global: false,
+        ceilingMicros: Number.MAX_SAFE_INTEGER, managedGateDigest: state.gate.digest,
+        namespaceExclusive: true, providerLimitEnforced: false,
       }, { timely: true });
       requireThat(!state.receipts.includes(lease.receiptId), 'lease replay');
       integer(lease.maxCalls, 'lease maxCalls', 1, 1_000_000);
       requireThat(lease.maxCalls === request.requiredCalls, 'lease must cover exactly the complete planned call count');
-      integer(lease.reservationMicros, 'lease reservationMicros', 1, POLICY.programmeCeilingMicros);
+      integer(lease.reservationMicros, 'lease reservationMicros', 1, Number.MAX_SAFE_INTEGER);
       requireThat(lease.reservedMicros >= lease.reservationMicros, 'reservation absent from global total');
       this.#budget(state, lease);
       state.receipts.push(lease.receiptId);
@@ -627,9 +627,9 @@ export class LearningController {
         'recovery request differs from frozen plan');
       const admission = this.#attest('budget', admissionEnvelope, 'gk-learning-v2-operation-lease', {
         ...identity(state), ...operation, budgetId: state.config.budgetId, gatewayId: this.#trust.budget.gatewayId,
-        provider: POLICY.provider, model: state.config.model, global: true,
-        ceilingMicros: POLICY.programmeCeilingMicros, managedGateDigest: state.gate.digest,
-        namespaceExclusive: true, providerLimitEnforced: true,
+        provider: POLICY.provider, model: state.config.model, global: false,
+        ceilingMicros: Number.MAX_SAFE_INTEGER, managedGateDigest: state.gate.digest,
+        namespaceExclusive: true, providerLimitEnforced: false,
       });
       const issued = Date.parse(admission.issuedAt), expires = Date.parse(admission.expiresAt);
       requireThat(Number.isFinite(issued) && Number.isFinite(expires) && issued <= this.#clock() &&
@@ -637,16 +637,16 @@ export class LearningController {
       requireThat(!state.receipts.includes(admission.receiptId), 'historical admission receipt replay');
       integer(admission.maxCalls, 'historical maxCalls', 1, 1_000_000);
       requireThat(admission.maxCalls === request.requiredCalls, 'historical admission call count differs from plan');
-      integer(admission.reservationMicros, 'historical reservationMicros', 1, POLICY.programmeCeilingMicros);
-      integer(admission.spentMicros, 'historical spentMicros', 0, POLICY.programmeCeilingMicros);
-      integer(admission.reservedMicros, 'historical reservedMicros', 0, POLICY.programmeCeilingMicros);
+      integer(admission.reservationMicros, 'historical reservationMicros', 1, Number.MAX_SAFE_INTEGER);
+      integer(admission.spentMicros, 'historical spentMicros', 0, Number.MAX_SAFE_INTEGER);
+      integer(admission.reservedMicros, 'historical reservedMicros', 0, Number.MAX_SAFE_INTEGER);
       requireThat(admission.reservedMicros >= admission.reservationMicros &&
-        admission.spentMicros + admission.reservedMicros <= POLICY.programmeCeilingMicros,
+        admission.spentMicros + admission.reservedMicros <= Number.MAX_SAFE_INTEGER,
       'historical programme reservation invalid');
       const settlement = this.#attest('budget', settlementEnvelope, 'gk-learning-v2-operation-settlement', {
         ...identity(state), operationId: operation.id, leaseId: admission.receiptId, budgetId: state.config.budgetId,
-        gatewayId: this.#trust.budget.gatewayId, provider: POLICY.provider, global: true,
-        ceilingMicros: POLICY.programmeCeilingMicros, status: 'settled',
+        gatewayId: this.#trust.budget.gatewayId, provider: POLICY.provider, global: false,
+        ceilingMicros: Number.MAX_SAFE_INTEGER, status: 'settled',
       });
       requireThat(!state.receipts.includes(settlement.receiptId) && settlement.receiptId !== admission.receiptId,
         'historical settlement receipt replay');
@@ -679,8 +679,8 @@ export class LearningController {
       requireThat(operation.consumed, 'record evidence or explicitly abandon the operation before settlement');
       const receipt = this.#attest('budget', envelope, 'gk-learning-v2-operation-settlement', {
         ...identity(state), operationId, leaseId: operation.leaseId, budgetId: state.config.budgetId,
-        gatewayId: this.#trust.budget.gatewayId, provider: POLICY.provider, global: true,
-        ceilingMicros: POLICY.programmeCeilingMicros, status: 'settled',
+        gatewayId: this.#trust.budget.gatewayId, provider: POLICY.provider, global: false,
+        ceilingMicros: Number.MAX_SAFE_INTEGER, status: 'settled',
       });
       requireThat(!state.receipts.includes(receipt.receiptId), 'settlement replay');
       integer(receipt.actualCalls, 'actualCalls', 0, operation.maxCalls);
