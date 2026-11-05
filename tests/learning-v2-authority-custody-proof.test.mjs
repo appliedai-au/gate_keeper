@@ -68,7 +68,8 @@ test('uncommitted partial artifact staging never becomes committed evidence and 
 });
 
 function sourceFixture({ acknowledgement = true, acknowledgedHead = 'a'.repeat(40),
-  approvalAt = '2026-11-05T05:03:00Z', nativeState = 'COMMENTED' } = {}) {
+  approvalAt = '2026-11-05T05:03:00Z', nativeState = 'COMMENTED',
+  approvalBody = '<kbd>✅ Approved</kbd> <kbd>0 findings</kbd>' } = {}) {
   const repository = 'appliedai-au/gate_keeper', root = 'https://api.github.com/repos/' + repository;
   const qualifiedCommit = 'a'.repeat(40), sourceCommit = 'b'.repeat(40),
     baseCommit = 'c'.repeat(40), treeSha = 'd'.repeat(40), pullRequest = 99;
@@ -79,7 +80,7 @@ function sourceFixture({ acknowledgement = true, acknowledgedHead = 'a'.repeat(4
     created_at: at, updated_at: at, issue_url: root + '/issues/' + pullRequest });
   const request = issue(1, owner, '@gitar-bot review exact ' + qualifiedCommit, '2026-11-05T05:01:00Z');
   const ack = issue(2, bot, 'Queued a current-head review for ' + acknowledgedHead, '2026-11-05T05:02:00Z');
-  const approval = issue(3, bot, '<kbd>✅ Approved</kbd> <kbd>0 findings</kbd>', approvalAt);
+  const approval = issue(3, bot, approvalBody, approvalAt);
   const pin = comment => ({ id: comment.id, bodySha256: sha(comment.body) });
   const native = add('/pulls/99/reviews/4', { id: 4, user: bot, body: '', state: nativeState,
     commit_id: 'e'.repeat(40) });
@@ -123,6 +124,17 @@ test('source gate independently fetches exact merged tree and real dashboard evi
   assert.equal(result.runId, f.receipt.deployment.deploymentId);
   assert.equal(result.evidence.qualification.review.nativeReviews[0].state, 'COMMENTED');
   assert.equal(result.evidence.reviewArtifacts.find(item => item.id === 4).state, 'COMMENTED');
+});
+
+test('source gate accepts actual zero-finding Gitar dashboard wording only with its exact-head acknowledgement', async () => {
+  const approvalBody = '<details>\n<summary><b>Code Review</b> <kbd>✅ Approved</kbd></summary>\n' +
+    'The protected authority review completed. No issues found.\n</details>';
+  const valid = sourceFixture({ approvalBody });
+  assert.equal((await valid.verify(valid.bundle)).runId, valid.receipt.deployment.deploymentId);
+  const unbound = sourceFixture({ approvalBody, acknowledgement: false });
+  await assert.rejects(unbound.verify(unbound.bundle), /exact-head bot acknowledgement/);
+  const wrongHead = sourceFixture({ approvalBody, acknowledgedHead: 'e'.repeat(40) });
+  await assert.rejects(wrongHead.verify(wrongHead.bundle), /exact-head bot acknowledgement/);
 });
 
 for (const [name, options] of [

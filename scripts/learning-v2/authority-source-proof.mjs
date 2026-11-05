@@ -155,7 +155,7 @@ export function createSourceGateVerifier({ descriptor: supplied, fetcher = fetch
       'dashboard review lacks exact-head bot acknowledgement');
       const count = approval.body.match(/<kbd>(\d+) closed \/ (\d+) findings<\/kbd>/u);
       requireThat(approval.body.includes('✅ Approved') &&
-        (/No open findings remain|0 findings|0 open/iu.test(approval.body) || count && count[1] === count[2]),
+        (/No open findings remain|No issues found\.|0 findings|0 open/iu.test(approval.body) || count && count[1] === count[2]),
       'Gitar dashboard has no complete approval evidence');
       requireThat(Date.parse(approval.updated_at || approval.created_at) >= Date.parse(acknowledgement.created_at),
         'dashboard approval predates exact-head bot acknowledgement');
