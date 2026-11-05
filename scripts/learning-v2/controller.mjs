@@ -3,6 +3,7 @@ import { verifyEvaluation, compareEvaluations } from './evidence.mjs';
 import { POLICY, canonical, copy, digest, configuration, identifier, integer, hash,
   procedure, procedureFingerprint, record, requireThat, text, version } from './contracts.mjs';
 import { learnerRequest, statusView } from './prompts.mjs';
+import { operationRunBalance } from './run-balance.mjs';
 
 const OPEN = new Set(['reserved', 'ready', 'screenPlanned', 'provisional', 'confirmationPlanned']);
 const ROLES = ['evaluation', 'novelty', 'budget', 'activation'];
@@ -109,7 +110,7 @@ export class LearningController {
       activeVersionId: base.id, versions: [base], attempts: [], baseline: null,
       namespaces: [], receipts: [], observedCalls: [], operations: [], activationHistory: [],
       budget: { spentMicros: 0, reservedMicros: 0, lastReceiptId: null }, gate: null };
-    // Version 3 opens an empty per-run ledger. An external opening balance
+    // Version 4 opens an empty per-run ledger. An external opening balance
     // is optional and NEVER imports legacy programme-wide spending.
     if (budgetEnvelope !== null) {
       const budget = this.#attest('budget', budgetEnvelope, 'gk-learning-v2-budget-state', {
@@ -118,7 +119,7 @@ export class LearningController {
       }, { timely: true });
       requireThat(budget.spentMicros === 0 && budget.reservedMicros === 0,
         'new run cannot import historical programme spending');
-      this.#budget(state, budget);
+      this.#balance(state, budget.receiptId);
       state.receipts.push(budget.receiptId);
     }
     await this.#journal.append(null, { schema: 'gk-learning-v2-state', reason: 'initialized',
@@ -126,13 +127,12 @@ export class LearningController {
     return statusView(state);
   }
 
-  #budget(state, body) {
-    integer(body.spentMicros, 'run spentMicros', 0, Number.MAX_SAFE_INTEGER);
-    integer(body.reservedMicros, 'run reservedMicros', 0, Number.MAX_SAFE_INTEGER);
-    requireThat(body.spentMicros >= state.budget.spentMicros, 'run charges went backwards');
-    requireThat(Number.isSafeInteger(body.spentMicros + body.reservedMicros), 'run charges exceed safe precision');
-    requireThat(Number.isSafeInteger(body.spentMicros + body.reservedMicros), 'run total precision exceeded');
-    state.budget = { spentMicros: body.spentMicros, reservedMicros: body.reservedMicros, lastReceiptId: body.receiptId };
+  #balance(state, receiptId) {
+    // Only authenticated operation facts belong to this run. Remote cumulative
+    // balances may be delayed or refer to other runs; they cannot gate progress.
+    const balance = operationRunBalance(state.operations);
+    state.budget = { spentMicros: balance.chargedMicros,
+      reservedMicros: balance.reservedMicros, lastReceiptId: receiptId };
   }
 
   #attempt(state, id, statuses) {
@@ -325,7 +325,7 @@ export class LearningController {
     return this.#change('attempt-reserved', state => {
       requireThat(state.baseline, 'complete baseline required');
       requireThat(!state.attempts.some(item => OPEN.has(item.status)), 'another attempt is open');
-      requireThat(!state.operations.some(item => !item.settled), 'operation or billing unresolved');
+      requireThat(!state.operations.some(item => !item.settled), 'operation execution unresolved');
       requireThat(state.attempts.length < POLICY.attempts, 'ten attempt limit reached');
       const number = state.attempts.length + 1;
       const id = `${state.config.experimentId}:attempt:${number}`;
@@ -607,13 +607,12 @@ export class LearningController {
       integer(lease.maxCalls, 'lease maxCalls', 1, 1_000_000);
       requireThat(lease.maxCalls === request.requiredCalls, 'lease must cover exactly the complete planned call count');
       integer(lease.reservationMicros, 'lease reservationMicros', 0, Number.MAX_SAFE_INTEGER);
-      requireThat(lease.reservedMicros >= lease.reservationMicros, 'reservation absent from global total');
-      this.#budget(state, lease);
       state.receipts.push(lease.receiptId);
       const reserved = { ...copy(operation), leaseId: lease.receiptId, maxCalls: lease.maxCalls,
         reservationMicros: lease.reservationMicros, settled: false, consumed: false,
         observedFreshCalls: 0, evidenceComplete: false };
       state.operations.push(reserved);
+      this.#balance(state, lease.receiptId);
       return reserved;
     });
   }
@@ -645,11 +644,6 @@ export class LearningController {
       integer(admission.maxCalls, 'historical maxCalls', 1, 1_000_000);
       requireThat(admission.maxCalls === request.requiredCalls, 'historical admission call count differs from plan');
       integer(admission.reservationMicros, 'historical reservationMicros', 0, Number.MAX_SAFE_INTEGER);
-      integer(admission.spentMicros, 'historical spentMicros', 0, Number.MAX_SAFE_INTEGER);
-      integer(admission.reservedMicros, 'historical reservedMicros', 0, Number.MAX_SAFE_INTEGER);
-      requireThat(admission.reservedMicros >= admission.reservationMicros &&
-        admission.spentMicros + admission.reservedMicros <= Number.MAX_SAFE_INTEGER,
-      'historical programme reservation invalid');
       const settlement = this.#attest('budget', settlementEnvelope, 'gk-learning-v2-operation-settlement', {
         ...identity(state), operationId: operation.id, leaseId: admission.receiptId, budgetId: state.config.budgetId,
         gatewayId: this.#trust.budget.gatewayId, provider: POLICY.provider, global: false,
@@ -658,10 +652,7 @@ export class LearningController {
       requireThat(!state.receipts.includes(settlement.receiptId) && settlement.receiptId !== admission.receiptId,
         'historical settlement receipt replay');
       integer(settlement.actualCalls, 'reconciled actualCalls', 0, admission.maxCalls);
-      integer(settlement.actualMicros, 'reconciled actualMicros', 0, Number.MAX_SAFE_INTEGER);
-      requireThat(settlement.spentMicros >= Math.max(state.budget.spentMicros, admission.spentMicros) + settlement.actualMicros,
-        'historical settlement omitted spend');
-      this.#budget(state, settlement);
+      if (settlement.actualMicros !== null) integer(settlement.actualMicros, 'reconciled actualMicros');
       const failureReason = text(reason, 'admission reconciliation reason', 2000);
       const reconciled = { ...copy(operation), leaseId: admission.receiptId, maxCalls: admission.maxCalls,
         reservationMicros: admission.reservationMicros, settled: true, consumed: true,
@@ -669,6 +660,7 @@ export class LearningController {
         settlementReceiptId: settlement.receiptId, actualCalls: settlement.actualCalls, actualMicros: settlement.actualMicros };
       state.operations.push(reconciled);
       state.receipts.push(admission.receiptId, settlement.receiptId);
+      this.#balance(state, settlement.receiptId);
       if (operation.attemptId === null) state.baselineError = failureReason;
       else {
         const attempt = state.attempts.find(item => item.id === operation.attemptId);
@@ -691,18 +683,65 @@ export class LearningController {
       });
       requireThat(!state.receipts.includes(receipt.receiptId), 'settlement replay');
       integer(receipt.actualCalls, 'actualCalls', 0, operation.maxCalls);
-      integer(receipt.actualMicros, 'actualMicros', 0, Number.MAX_SAFE_INTEGER);
+      // A signed exact execution count can close custody while pricing is
+      // explicitly unknown. Missing/invalid costs are not implicitly null.
+      if (receipt.actualMicros !== null) integer(receipt.actualMicros, 'actualMicros');
       requireThat(receipt.actualCalls >= operation.observedFreshCalls &&
         (!operation.evidenceComplete || receipt.actualCalls === operation.maxCalls),
-      'billing call count contradicts verified execution evidence');
-      requireThat(receipt.spentMicros >= state.budget.spentMicros + receipt.actualMicros, 'settlement omitted spend');
-      this.#budget(state, receipt);
+      'execution call count contradicts verified execution evidence');
       state.receipts.push(receipt.receiptId);
       operation.settled = true;
       operation.settlementReceiptId = receipt.receiptId;
       operation.actualCalls = receipt.actualCalls;
       operation.actualMicros = receipt.actualMicros;
+      this.#balance(state, receipt.receiptId);
     });
+  }
+
+  /** Record a delayed verified charge without repeating or reopening execution.
+   * The original settlement stays immutable, including its explicit null cost.
+   * This is allowed while other execution is pending. Identical replay adds no
+   * event; conflicting receipts and cross-operation/role reuse are refused. */
+  async reconcileOperationUsage(operationId, envelope) {
+    identifier(operationId, 'usage operationId');
+    record(envelope, ['body', 'signature'], 'usage envelope');
+    canonical(envelope);
+    const serialized = JSON.stringify(envelope);
+    text(serialized, 'original usage receipt', 16_384);
+    const captured = JSON.parse(serialized);
+    const { head, state } = await this.#snapshot();
+    const operation = state.operations.find(item => item.id === operationId);
+    requireThat(operation?.settled && operation.actualMicros === null,
+      'usage reconciliation requires a completed operation with unknown charge');
+    const body = this.#attest('budget', captured, 'gk-learning-v4-operation-usage', {
+      ...identity(state), operationId, leaseId: operation.leaseId,
+      requestDigest: operation.requestDigest, settlementReceiptId: operation.settlementReceiptId,
+      actualCalls: operation.actualCalls, budgetId: state.config.budgetId,
+      gatewayId: this.#trust.budget.gatewayId, provider: POLICY.provider,
+      global: false, ceilingMicros: null, status: 'known',
+    });
+    record(body, ['schema', 'receiptId', 'experimentId', 'configDigest', 'sourceCommit',
+      'operationId', 'leaseId', 'requestDigest', 'settlementReceiptId', 'actualCalls',
+      'budgetId', 'gatewayId', 'provider', 'global', 'ceilingMicros', 'status', 'actualMicros'],
+    'usage receipt');
+    integer(body.actualMicros, 'verified operation actualMicros');
+    const reconciliation = { receiptId: body.receiptId, actualMicros: body.actualMicros,
+      receiptDigest: digest(serialized), serialized };
+    if (operation.usageReconciliation) {
+      // Envelope property order is not signed authority. A newly verified
+      // copy of the same receipt body is a replay, not a conflicting charge.
+      // Retain the first accepted original bytes and digest without appending.
+      requireThat(canonical(JSON.parse(operation.usageReconciliation.serialized).body) === canonical(body),
+        'conflicting operation usage receipt');
+      return statusView(state);
+    }
+    requireThat(!state.receipts.includes(body.receiptId), 'usage receipt replay');
+    operation.usageReconciliation = reconciliation;
+    state.receipts.push(body.receiptId);
+    this.#balance(state, body.receiptId);
+    await this.#journal.append(head, { schema: 'gk-learning-v2-state', reason: 'operation-usage-reconciled',
+      recordedAt: new Date(this.#clock()).toISOString(), state });
+    return statusView(state);
   }
 
   /** Close an ambiguous phase without inventing a result or freeing its budget.

@@ -264,7 +264,7 @@ test('app status exposes counts and state without private procedures or diagnost
       { status: 'rejected', screen: { feedback: SCORE_CANARY }, candidate: PRIVATE_CANARY },
       { status: 'unresolved', reason: UNPROVEN_CANARY },
     ],
-    activationHistory: [], operations: [{ id: 'pending-admitted-operation', settled: false,
+    activationHistory: [], operations: [{ id: 'pending-admitted-operation', settled: false, reservationMicros: 500,
       diagnostics: SCORE_CANARY }], budget: { spentMicros: 1250, reservedMicros: 500 }, gate: null,
   };
   const result = statusView(state);
@@ -281,6 +281,10 @@ test('app status exposes counts and state without private procedures or diagnost
   assert.equal(result.qualification, 'source-only-unqualified');
   assert.equal(result.deployment, 'not-managed-by-learning-core');
   assert.equal(result.budget.authoritative, 'external-gateway');
+  assert.equal(result.budget.observedSpentMicros, 0, 'ignore unsupported cumulative snapshot money');
+  assert.equal(result.budget.observedReservedMicros, 500);
+  assert.equal(result.budget.pendingExecutionOperations, 1);
+  assert.equal(result.budget.complete, false);
 });
 
 test('public baseline status uses fixed enums without raw failure or non-admission receipt details', () => {
@@ -316,5 +320,26 @@ test('public baseline status uses fixed enums without raw failure or non-admissi
     for (const secret of [privateReceiptId, privateOperationId, privateDigest]) {
       assert.equal(serialized.includes(secret), false, 'private baseline evidence leaked');
     }
+  }
+});
+
+test('status includes both dispatch custody gaps without double-counting an admitted operation', () => {
+  const base = { ...confirmedVersion([]), origin: 'frozen-base' };
+  const common = {
+    config: { experimentId: 'custody-projection', sourceCommit: 'a'.repeat(40), scope: FOCUS },
+    policy: copy(POLICY), baseVersion: base, activeVersionId: base.id,
+    versions: [base], attempts: [], activationHistory: [], operations: [], gate: null,
+  };
+  const pendingOperationId = 'durable-dispatch-intent';
+  const cases = [[], [{ id: pendingOperationId, settled: false, reservationMicros: 1000 }],
+    [{ id: pendingOperationId, settled: true, reservationMicros: 1000,
+      maxCalls: 4, actualCalls: 4, actualMicros: null, privateDiagnostics: PRIVATE_CANARY }]];
+  for (const operations of cases) {
+    const projected = statusView({ ...common, operations }, { pendingOperationId });
+    assert.equal(projected.pendingOperation, pendingOperationId);
+    assert.equal(projected.budget.pendingExecutionOperations, 1);
+    assert.equal(projected.budget.complete, false);
+    assert.equal(projected.budget.unknownCostOperations, operations[0]?.settled ? 1 : 0);
+    excludesPrivate(projected);
   }
 });

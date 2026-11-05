@@ -1,4 +1,5 @@
-import { copy, procedure, requireThat, text } from './contracts.mjs';
+import { copy, identifier, procedure, requireThat, text } from './contracts.mjs';
+import { operationRunBalance } from './run-balance.mjs';
 
 /**
  * Trusted-host projection; the controller authenticates confirmation and each
@@ -40,8 +41,19 @@ export function reviewerInstructions({ originalInstructions, activeVersion, scop
 }
 
 /** Public app read model: counts and state, never private bank text or feedback. */
-export function statusView(state) {
+export function statusView(state, { pendingOperationId = null } = {}) {
   const attempts = state.attempts || [];
+  const balance = operationRunBalance(state.operations);
+  // Dispatch custody also covers the crash window before controller admission
+  // or after execution settlement but before dispatch closure. Do not report a
+  // complete accounting record while that durable intent remains unresolved.
+  if (pendingOperationId !== null) {
+    identifier(pendingOperationId, 'pending dispatch operationId');
+    if (!state.operations.some(item => item.id === pendingOperationId && !item.settled)) {
+      balance.pendingExecutionOperations++;
+    }
+    balance.complete = false;
+  }
   const counts = { attempted: attempts.length, scored: 0, duplicate: 0, unresolved: 0,
     invalid: 0, noCoverage: 0, rejected: 0, provisional: 0, confirmed: 0, activated: 0 };
   for (const attempt of attempts) {
@@ -61,9 +73,11 @@ export function statusView(state) {
       failureCode: state.baselineError ? state.baselineNonAdmission ? 'not-admitted' : 'unresolved' : null,
     },
     confirmedVersions: state.versions.filter(item => item.confirmed && item.origin !== 'frozen-base').length,
-    pendingOperation: state.operations.find(item => !item.settled)?.id || null,
+    pendingOperation: pendingOperationId || state.operations.find(item => !item.settled)?.id || null,
     budget: { ceilingMicros: state.policy.programmeCeilingMicros,
-      observedSpentMicros: state.budget.spentMicros, observedReservedMicros: state.budget.reservedMicros,
+      observedSpentMicros: balance.chargedMicros, observedReservedMicros: balance.reservedMicros,
+      unknownCostOperations: balance.unknownCostOperations, unknownCostCalls: balance.unknownCostCalls,
+      pendingExecutionOperations: balance.pendingExecutionOperations, complete: balance.complete,
       authoritative: 'external-gateway' },
     qualification: state.gate ? 'managed-source-gate-passed' : 'source-only-unqualified',
     deployment: 'not-managed-by-learning-core',

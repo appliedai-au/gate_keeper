@@ -78,7 +78,7 @@ function fixture(t) {
     ...identity, ...config.gatePolicy, status: 'passed', fullSuite: true, independent: true,
     baseCurrent: true, cleanupComplete: true, noSkippedChecks: true,
     runId: next('managed-run'), rawLogsDigest: sha('synthetic complete managed logs') });
-  const controls = { admission: null, settlement: null, turn: null, onAdmit: null, now: NOW };
+  const controls = { admission: null, settlement: null, turn: null, onAdmit: null, priceUnknown: false, now: NOW };
   const admissions = [], settlements = [], sessions = [], turnRequests = [], evaluationIssues = [], noveltyIssues = [];
   const remote = { spentMicros: 0, reservedMicros: 0, operations: new Map() };
   const bySession = new Map();
@@ -88,8 +88,8 @@ function fixture(t) {
     const held = remote.operations.get(operationId); assert.ok(held);
     if (held.settlementEnvelope) return held.settlementEnvelope;
     const actualCalls = turnRequests.filter(item => item.operationId === operationId).length;
-    const actualMicros = actualCalls * 100;
-    remote.spentMicros += actualMicros; remote.reservedMicros -= held.leaseEnvelope.body.reservationMicros;
+    const actualMicros = controls.priceUnknown ? null : actualCalls * 100;
+    remote.spentMicros += actualMicros ?? 0; remote.reservedMicros -= held.leaseEnvelope.body.reservationMicros;
     held.settlementEnvelope = seal('budget', { schema: 'gk-learning-v2-operation-settlement', receiptId: next('settlement'),
       ...budgetIdentity, operationId, leaseId: held.leaseEnvelope.body.receiptId,
       status: 'settled', actualCalls, actualMicros, spentMicros: remote.spentMicros, reservedMicros: remote.reservedMicros });
@@ -206,6 +206,26 @@ async function journalSnapshots(f) {
   return { controller: await f.journal('controller').read(), dispatch: await f.journal('dispatch').read() };
 }
 
+function statusReader(f) {
+  return createReadOnlyLearningStatusReader({
+    directory: f.directory, repositoryRoot: f.repositoryRoot,
+    binding: { ownerId: 'owner-fixture', experimentId: f.config.experimentId,
+      sourceCommit: f.config.sourceCommit }, trust: f.trust, configDigest: f.identity.configDigest,
+  });
+}
+
+async function usageReceipt(f, operationId, actualMicros, changes = {}, role = 'budget') {
+  const { state } = await f.host.inspect();
+  const operation = state.operations.find(item => item.id === operationId);
+  return f.seal(role, {
+    schema: 'gk-learning-v4-operation-usage', receiptId: `usage:${operation.kind}:${operationId}`,
+    ...f.identity, operationId, leaseId: operation.leaseId, requestDigest: operation.requestDigest,
+    settlementReceiptId: operation.settlementReceiptId, actualCalls: operation.actualCalls,
+    budgetId: f.config.budgetId, gatewayId: f.trust.budget.gatewayId,
+    provider: 'truefoundry', global: false, ceilingMicros: null, status: 'known', actualMicros, ...changes,
+  });
+}
+
 test('exclusive host initialization and complete baseline persist real private journals and survive reopening', async t => {
   const f = fixture(t); await f.start();
   assert.deepEqual((await f.host.status()).baseline, { status: 'not-planned', failureCode: null });
@@ -215,6 +235,8 @@ test('exclusive host initialization and complete baseline persist real private j
     assert.equal(inspected.dispatch.pending.operation.requestDigest, digest(request));
     assert.equal(inspected.dispatch.pending.admission, null);
     assert.equal(inspected.state.operations.length, 0);
+    assert.equal((await f.host.status()).budget.pendingExecutionOperations, 1);
+    assert.equal((await f.host.status()).budget.complete, false);
     assert.ok((await f.journal('dispatch').read()).head, 'admission intent must already be durable');
   };
   await f.host.dispatch('baseline');
@@ -638,4 +660,154 @@ test('read-only journal reader never acquires or steals a held writer lock', asy
   await f.host.dispatch('baseline');
   assert.deepEqual(await read(), await f.host.status());
   assert.equal(existsSync(lockedPath), false);
+});
+
+test('unknown baseline prices survive durable reopen and later reconcile without another provider call', async t => {
+  const f = fixture(t); f.controls.priceUnknown = true;
+  await f.start(); await f.host.dispatch('baseline');
+  const baseline = (await f.host.inspect()).state.operations[0], read = statusReader(f);
+  const initial = await f.host.status();
+  assert.equal(initial.budget.observedSpentMicros, 0);
+  assert.equal(initial.budget.unknownCostOperations, 1);
+  assert.equal(initial.budget.unknownCostCalls, 4);
+  assert.equal(initial.budget.complete, false);
+  assert.equal(initial.pendingOperation, null);
+  await f.reopen(); assert.deepEqual(await read(), initial);
+  f.controls.priceUnknown = false;
+  const attempt = await f.host.beginAttempt();
+  await f.host.dispatch('proposal', attempt.attemptId);
+  const prior = await f.host.inspect(), receipt = await usageReceipt(f, baseline.id, 400);
+  assert.equal((await f.host.status()).budget.observedSpentMicros, 100);
+  const serviceCounts = [f.admissions.length, f.settlements.length, f.turnRequests.length,
+    f.evaluationIssues.length, f.noveltyIssues.length];
+  const before = await journalSnapshots(f);
+  await f.host.reconcileOperationUsage(baseline.id, receipt);
+  const after = await journalSnapshots(f), current = await f.host.inspect();
+  assert.equal(after.controller.events.length, before.controller.events.length + 1);
+  assert.deepEqual(after.dispatch, before.dispatch);
+  assert.deepEqual(current.state.attempts, prior.state.attempts);
+  assert.deepEqual(current.state.versions, prior.state.versions);
+  assert.deepEqual(current.state.activationHistory, prior.state.activationHistory);
+  assert.equal(current.state.operations[0].actualMicros, null);
+  assert.equal(current.state.operations[0].actualCalls, 4);
+  assert.equal((await f.host.status()).budget.observedSpentMicros, 500);
+  assert.equal((await f.host.status()).budget.complete, true);
+  await f.reopen();
+  await f.host.reconcileOperationUsage(baseline.id, { signature: receipt.signature, body: receipt.body });
+  assert.deepEqual(await journalSnapshots(f), after);
+  assert.deepEqual(await read(), await f.host.status());
+  assert.deepEqual([f.admissions.length, f.settlements.length, f.turnRequests.length,
+    f.evaluationIssues.length, f.noveltyIssues.length], serviceCounts);
+  const publicBytes = JSON.stringify(await read());
+  assert.equal(publicBytes.includes(receipt.signature), false);
+  assert.equal(publicBytes.includes(receipt.body.receiptId), false);
+  assert.doesNotMatch(publicBytes, /usageReconciliation|serialized|receiptDigest/);
+});
+
+test('late prices can reconcile through pending admission or execution without closing or retrying it', async t => {
+  for (const failure of ['lost-after-reservation', 'lost-after-dispatch']) {
+    const f = fixture(t); f.controls.priceUnknown = true;
+    await f.start(); await f.host.dispatch('baseline');
+    const baseline = (await f.host.inspect()).state.operations[0];
+    const attempt = await f.host.beginAttempt();
+    if (failure === 'lost-after-reservation') f.controls.admission = failure;
+    else f.controls.turn = failure;
+    await assert.rejects(f.host.dispatch('proposal', attempt.attemptId));
+    const pending = await f.host.inspect(), operationId = pending.dispatch.pending.operation.id;
+    const read = statusReader(f), serviceCounts = [f.admissions.length, f.settlements.length, f.turnRequests.length];
+    const prior = await journalSnapshots(f);
+    const receipt = await usageReceipt(f, baseline.id, 400);
+    const status = await f.host.reconcileOperationUsage(baseline.id, receipt);
+    const after = await f.host.inspect();
+    assert.equal(status.pendingOperation, operationId);
+    assert.equal(status.budget.pendingExecutionOperations, 1);
+    assert.equal(status.budget.complete, false);
+    assert.equal(status.budget.unknownCostOperations, 0);
+    assert.equal(status.budget.observedSpentMicros, 400);
+    assert.deepEqual(after.dispatch, pending.dispatch);
+    assert.deepEqual(after.state.operations.slice(1), pending.state.operations.slice(1));
+    assert.deepEqual(after.state.attempts, pending.state.attempts);
+    assert.deepEqual((await journalSnapshots(f)).dispatch, prior.dispatch);
+    assert.deepEqual([f.admissions.length, f.settlements.length, f.turnRequests.length], serviceCounts);
+    await assert.rejects(f.host.beginAttempt(), /dispatch or execution unresolved/);
+    await f.reopen(); assert.deepEqual(await read(), await f.host.status());
+    const held = f.remote.operations.get(operationId);
+    await f.host.recover({ operationId, reason: 'Authenticated execution disposition; price remains unknown.',
+      admissionEnvelope: held.leaseEnvelope, settlementEnvelope: f.reconcile(operationId) });
+    const closed = await f.host.status();
+    assert.equal(closed.pendingOperation, null);
+    assert.equal(closed.budget.pendingExecutionOperations, 0);
+    assert.equal(closed.budget.unknownCostOperations, 1);
+    assert.equal(closed.budget.unknownCostCalls, failure === 'lost-after-dispatch' ? 1 : 0);
+    assert.equal(closed.budget.complete, false);
+    assert.equal((await f.host.beginAttempt()).number, 2, 'unknown prices do not repeat or block the next attempt');
+    assert.deepEqual([f.admissions.length, f.settlements.length, f.turnRequests.length], serviceCounts);
+    assert.deepEqual(await read(), await f.host.status());
+  }
+});
+
+test('a late charge preserves original null settlement across the controller-to-dispatch crash window', async t => {
+  const f = fixture(t); f.controls.priceUnknown = true; f.controls.settlement = 'lost-after-settlement';
+  await f.start(); await assert.rejects(f.host.dispatch('baseline'));
+  const operation = (await f.host.inspect()).state.operations[0];
+  const original = f.remote.operations.get(operation.id).settlementEnvelope;
+  const ledger = new DispatchLedger({ journal: f.journal('dispatch'),
+    experimentId: f.config.experimentId, configDigest: f.identity.configDigest });
+  const controller = new LearningController({ journal: f.journal('controller'), trust: f.trust, clock: () => f.controls.now });
+  // Reproduce an actual two-store commit boundary without mocking recovery:
+  // controller execution closes but its durable dispatch intent remains open.
+  await ledger.observe(operation.id, 'settlement', JSON.stringify(original));
+  await controller.settleOperation(operation.id, original);
+  const receipt = await usageReceipt(f, operation.id, 400);
+  await f.host.reconcileOperationUsage(operation.id, receipt);
+  const held = await f.host.inspect(), before = await journalSnapshots(f), read = statusReader(f);
+  assert.equal(held.state.operations[0].actualMicros, null);
+  assert.equal(held.state.operations[0].settlementReceiptId, original.body.receiptId);
+  assert.equal((await f.host.status()).budget.observedSpentMicros, 400);
+  assert.equal((await f.host.status()).budget.unknownCostOperations, 0);
+  assert.equal((await f.host.status()).budget.pendingExecutionOperations, 1);
+  assert.equal((await f.host.status()).budget.complete, false);
+  await f.reopen(); assert.deepEqual(await read(), await f.host.status());
+  await f.host.recover({ operationId: operation.id,
+    reason: 'Complete the existing dispatch using its original authenticated execution receipt.',
+    settlementEnvelope: original });
+  assert.deepEqual((await journalSnapshots(f)).controller, before.controller);
+  const after = await f.host.status();
+  assert.equal(after.pendingOperation, null);
+  assert.equal(after.budget.complete, true);
+  assert.equal(after.budget.observedSpentMicros, 400);
+  assert.deepEqual(await read(), after);
+  await assert.rejects(f.host.dispatch('baseline'), /already attempted/);
+  assert.equal(f.admissions.length, 1); assert.equal(f.settlements.length, 1); assert.equal(f.turnRequests.length, 4);
+});
+
+test('unpriced calls can finish every confirmation gate while activation still requires its separate authority', async t => {
+  const f = fixture(t); f.controls.priceUnknown = true;
+  const attempt = await readyAttempt(f);
+  await f.host.dispatch('proposal', attempt.attemptId);
+  await f.host.dispatch('screen', attempt.attemptId);
+  const provisional = await f.host.inspect();
+  assert.equal(provisional.state.attempts[0].status, 'provisional');
+  const provisionalId = provisional.state.attempts[0].version.id;
+  await assert.rejects(f.host.activateVersion(provisionalId, f.seal('activation', {})));
+  await f.host.dispatch('confirmation', attempt.attemptId);
+  const { state } = await f.host.inspect(), target = state.versions.find(item => item.id !== state.baseVersion.id);
+  assert.equal(state.attempts[0].status, 'confirmed');
+  assert.equal(state.activeVersionId, state.baseVersion.id);
+  assert.equal((await f.host.status()).budget.unknownCostOperations, 4);
+  assert.equal((await f.host.status()).budget.unknownCostCalls, 35);
+  assert.equal(f.turnRequests.length, 35);
+  const approval = { schema: 'gk-learning-v2-activation', receiptId: 'approved-after-unpriced-confirmation',
+    ...f.identity, action: 'activate', versionId: target.id, incumbentVersionId: state.activeVersionId,
+    originalVersionId: state.baseVersion.id, evidenceDigest: target.evidenceDigest,
+    purpose: 'experiment-incumbent-only', ...window() };
+  await assert.rejects(f.host.activateVersion(target.id, f.seal('budget', approval)));
+  await f.host.activateVersion(target.id, f.seal('activation', approval));
+  const activated = await f.host.status();
+  assert.equal(activated.incumbentVersion, target.id);
+  assert.equal(activated.counts.confirmed, 1);
+  assert.equal(activated.counts.activated, 1);
+  assert.equal(activated.budget.complete, false, 'learning completion never disguises incomplete prices');
+  await f.reopen(); assert.deepEqual(await statusReader(f)(), activated);
+  assert.equal(f.admissions.length, 4); assert.equal(f.settlements.length, 4); assert.equal(f.turnRequests.length, 35);
 });

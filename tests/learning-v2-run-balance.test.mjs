@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MemoryJournal } from '../scripts/learning-v2/journal.mjs';
-import { RunBalance } from '../scripts/learning-v2/run-balance.mjs';
+import { RunBalance, operationRunBalance } from '../scripts/learning-v2/run-balance.mjs';
+import { digest } from '../scripts/learning-v2/contracts.mjs';
 
 function rig() {
   const journal = new MemoryJournal();
@@ -126,4 +127,60 @@ test('unexpected delta, duplicate settlement or orphaned event is refused on reo
     receipt: { receiptId: 'r', runId: 'run-10', callId: 'never-recorded', chargedMicros: 1 },
   });
   await assert.rejects(() => f.balance.status(), /unrecorded or repeated settlement event/);
+});
+
+// Projection fixtures below represent facts already authenticated by the
+// controller. Signature authentication is exercised in controller/host tests.
+const finishedOperation = (id, actualCalls, actualMicros) => ({ id, settled: true,
+  reservationMicros: 10_000, maxCalls: 4, actualCalls, actualMicros });
+function pricedOperation(id, actualCalls, actualMicros) {
+  const serialized = JSON.stringify({ body: { receiptId: `receipt:${id}`, actualMicros }, signature: 'fixture' });
+  return { ...finishedOperation(id, actualCalls, null), usageReconciliation: {
+    receiptId: `receipt:${id}`, actualMicros, serialized, receiptDigest: digest(serialized),
+  } };
+}
+
+test('operation balance separates known prices unknown costs and pending execution without inventing call counts', () => {
+  const operations = [finishedOperation('known', 4, 100), finishedOperation('unknown', 4, null),
+    finishedOperation('zero-call-unknown-fee', 0, null),
+    { id: 'pending', settled: false, reservationMicros: 500, maxCalls: 1_000_000 }];
+  const before = structuredClone(operations);
+  assert.deepEqual(operationRunBalance(operations), {
+    chargedMicros: 100, reservedMicros: 500, unknownCostOperations: 2, unknownCostCalls: 4,
+    pendingExecutionOperations: 1, complete: false,
+  });
+  assert.deepEqual(operations, before);
+});
+
+test('operation balance counts an original or delayed charge once and preserves honest zero', () => {
+  const operations = [finishedOperation('original', 4, 100), pricedOperation('delayed', 4, 123),
+    pricedOperation('verified-free', 0, 0)];
+  assert.deepEqual(operationRunBalance(operations), {
+    chargedMicros: 223, reservedMicros: 0, unknownCostOperations: 0, unknownCostCalls: 0,
+    pendingExecutionOperations: 0, complete: true,
+  });
+  assert.equal(operations[1].actualMicros, null, 'projection cannot replace original settlement evidence');
+  assert.equal(operationRunBalance([finishedOperation('free', 4, 0)]).complete, true);
+  assert.equal(operationRunBalance([finishedOperation('unpriced', 0, null)]).complete, false);
+});
+
+test('operation balance refuses malformed facts double accounting altered receipt bytes and precision loss', () => {
+  const settled = finishedOperation('settled', 4, 10), delayed = pricedOperation('delayed', 4, 20);
+  const invalid = [
+    [settled, { ...settled }], [{ ...settled, actualCalls: 5 }],
+    [{ ...settled, actualCalls: null }], [{ ...settled, actualMicros: undefined }],
+    [{ ...settled, actualMicros: -1 }], [{ ...settled, reservationMicros: null }],
+    [{ ...delayed, actualMicros: 20 }],
+    [{ ...delayed, usageReconciliation: { ...delayed.usageReconciliation, actualMicros: null } }],
+    [{ ...delayed, usageReconciliation: { ...delayed.usageReconciliation, serialized: '{}' } }],
+    [{ ...delayed, settled: false }],
+    [finishedOperation('maximum', 4, Number.MAX_SAFE_INTEGER), finishedOperation('extra', 4, 1)],
+    [finishedOperation('maximum', 4, Number.MAX_SAFE_INTEGER),
+      { id: 'hold', settled: false, reservationMicros: 1 }],
+  ];
+  for (const operations of invalid) assert.throws(() => operationRunBalance(operations));
+  assert.deepEqual(operationRunBalance([]), {
+    chargedMicros: 0, reservedMicros: 0, unknownCostOperations: 0, unknownCostCalls: 0,
+    pendingExecutionOperations: 0, complete: true,
+  });
 });

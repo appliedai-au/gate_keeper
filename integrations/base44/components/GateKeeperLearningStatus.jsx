@@ -122,11 +122,14 @@ function RecordedStatus({ response }) {
         <div><span className="gk-learning-kicker">PER-RUN USAGE RECORD</span><h2 id="gk-learning-budget-title">Recorded run balance</h2></div>
       </div>
       <dl className="gk-learning-budget">
-        <div><dt>Observed spend</dt><dd>{formatUsd(status.budget.observedSpentMicros)}</dd></div>
-        <div><dt>Observed reservation</dt><dd>{formatUsd(status.budget.observedReservedMicros)}</dd></div>
+        <div><dt>Known charges</dt><dd>{formatUsd(status.budget.observedSpentMicros)}</dd></div>
+        <div><dt>Reserved estimate</dt><dd>{formatUsd(status.budget.observedReservedMicros)}</dd></div>
+        <div><dt>Unpriced operations</dt><dd>{status.budget.unknownCostOperations}</dd></div>
+        <div><dt>Calls awaiting prices</dt><dd>{status.budget.unknownCostCalls}</dd></div>
+        <div><dt>Accounting record</dt><dd>{status.budget.complete ? "Complete" : "Pending"}</dd></div>
         <div><dt>Spending gate</dt><dd>None — usage only</dd></div>
       </dl>
-      <p className="gk-learning-note">These are verified run charges and outstanding accounting observations, not an aggregate spending ceiling. Unreconciled calls are never treated as free.</p>
+      <p className="gk-learning-note">Known charges include only verified prices for this run. Unpriced operations remain unknown, including any operation with zero model calls. Delayed prices can be recorded later without repeating calls or holding up learning.</p>
     </section>
 
     <section className="gk-learning-section" aria-labelledby="gk-learning-identity-title">

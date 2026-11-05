@@ -44,6 +44,8 @@ function pendingStatus() {
   value.baseline = { status: 'planned', failureCode: null };
   value.qualification = 'managed-source-gate-passed';
   value.pendingOperation = 'baseline:pending';
+  value.budget.pendingExecutionOperations = 1;
+  value.budget.complete = false;
   value.dispatch.pending = {
     operationId: value.pendingOperation, kind: 'baseline', stage: 'admission-intent',
   };
@@ -76,7 +78,8 @@ test('shared contract accepts the current controller projection and exact host w
   assert.deepEqual(Object.keys(result.counts).sort(), [...COUNT_KEYS].sort());
   assert.deepEqual(Object.keys(result.baseline).sort(), ['failureCode', 'status']);
   assert.deepEqual(Object.keys(result.budget).sort(), [
-    'authoritative', 'ceilingMicros', 'observedReservedMicros', 'observedSpentMicros',
+    'authoritative', 'ceilingMicros', 'complete', 'observedReservedMicros', 'observedSpentMicros',
+    'pendingExecutionOperations', 'unknownCostCalls', 'unknownCostOperations',
   ]);
   assert.deepEqual(Object.keys(result.dispatch).sort(), ['completed', 'pending']);
   assert.deepEqual(result.policy, POLICY);
@@ -304,8 +307,8 @@ test('attempt counters are safe bounded integers while activation history can ex
   }
 });
 
-test('v3 status permits verified per-run charges above the former aggregate cap', () => {
-  assert.equal(POLICY.version, 3);
+test('v4 status permits verified per-run charges above the former aggregate cap', () => {
+  assert.equal(POLICY.version, 4);
   assert.equal(POLICY.programmeCeilingMicros, null);
   assert.equal(POLICY.usageMode, 'per-run-receipted');
   for (const [spent, reserved] of [
@@ -330,6 +333,44 @@ test('v3 status permits verified per-run charges above the former aggregate cap'
   assert.throws(() => projectLearningStatus(changedCeiling));
   const changedAuthority = status(); changedAuthority.budget.authoritative = 'model-estimate';
   assert.throws(() => projectLearningStatus(changedAuthority));
+});
+
+test('public accounting distinguishes known zero unpriced calls and unknown zero-call fees', () => {
+  for (const unknownCostCalls of [0, 4]) {
+    const value = status();
+    value.budget.unknownCostOperations = 1;
+    value.budget.unknownCostCalls = unknownCostCalls;
+    value.budget.complete = false;
+    assert.deepEqual(projectLearningStatus(value).budget, value.budget);
+    const falselyComplete = clone(value); falselyComplete.budget.complete = true;
+    assert.throws(() => projectLearningStatus(falselyComplete));
+  }
+  const knownZero = projectLearningStatus(status()).budget;
+  assert.equal(knownZero.observedSpentMicros, 0);
+  assert.equal(knownZero.complete, true);
+  for (const key of ['unknownCostOperations', 'unknownCostCalls', 'pendingExecutionOperations']) {
+    for (const invalid of [-1, 0.5, NaN, Infinity, '0', null, Number.MAX_SAFE_INTEGER + 1]) {
+      const value = status(); value.budget[key] = invalid;
+      assert.throws(() => projectLearningStatus(value), undefined, key);
+    }
+  }
+  const callsWithoutUnknownOperation = status(); callsWithoutUnknownOperation.budget.unknownCostCalls = 1;
+  assert.throws(() => projectLearningStatus(callsWithoutUnknownOperation));
+  for (const complete of [null, 0, 'true', false]) {
+    const value = status(); value.budget.complete = complete;
+    assert.throws(() => projectLearningStatus(value));
+  }
+});
+
+test('pending custody cannot disappear from the balance or report complete accounting', () => {
+  const valid = pendingStatus();
+  assert.equal(projectLearningStatus(valid).budget.pendingExecutionOperations, 1);
+  for (const change of [{ pendingExecutionOperations: 0 }, { pendingExecutionOperations: 2 }, { complete: true }]) {
+    const value = clone(valid); Object.assign(value.budget, change);
+    assert.throws(() => projectLearningStatus(value));
+  }
+  const phantom = status(); phantom.budget.pendingExecutionOperations = 1; phantom.budget.complete = false;
+  assert.throws(() => projectLearningStatus(phantom));
 });
 
 test('status identity and version fields reject malformed values without normalizing them', () => {
@@ -380,6 +421,8 @@ test('dispatch accepts exact kinds and stages with a matching pending operation'
     }
   }
   const fallback = status(); fallback.pendingOperation = 'controller:unsettled';
+  fallback.budget.pendingExecutionOperations = 1;
+  fallback.budget.complete = false;
   assert.deepEqual(projectLearningStatus(fallback).dispatch, { pending: null, completed: 0 });
   assert.equal(projectLearningStatus(fallback).pendingOperation, fallback.pendingOperation);
   for (const [key, invalid] of [

@@ -44,7 +44,7 @@ function stateIdentity(state) {
   };
 }
 
-async function rig({ history = [], withBaseline = true, withGate = true, extraCases = [],
+async function rig({ history = [], withBaseline = true, withGate = true, extraCases = [], baselineSettlement = {},
   openingSpentMicros = 0, openingReservedMicros = 0,
   openingCeilingMicros = POLICY.programmeCeilingMicros } = {}) {
   const privateKeys = {};
@@ -122,7 +122,7 @@ async function rig({ history = [], withBaseline = true, withGate = true, extraCa
     const body = evaluationBody(result, plan, operation);
     const envelope = result.sign('evaluation', body);
     await result.controller.recordBaseline(envelope);
-    await settle(result, operation);
+    await settle(result, operation, baselineSettlement);
     result.baseline = { plan, operation, body, envelope };
   }
   return result;
@@ -199,6 +199,19 @@ async function settle(r, operation, changes = {}) {
   const envelope = r.sign('budget', body);
   await r.controller.settleOperation(operation.id, envelope);
   return envelope;
+}
+
+async function operationUsage(r, operation, actualMicros, changes = {}, role = 'budget') {
+  const state = await r.controller.state();
+  const held = state.operations.find(item => item.id === operation.id);
+  return r.sign(role, {
+    schema: 'gk-learning-v4-operation-usage', receiptId: r.next('operation-usage'),
+    ...stateIdentity(state), operationId: operation.id, leaseId: held.leaseId,
+    requestDigest: held.requestDigest, settlementReceiptId: held.settlementReceiptId,
+    actualCalls: held.actualCalls, budgetId: state.config.budgetId,
+    gatewayId: r.trust.budget.gatewayId, provider: POLICY.provider,
+    global: false, ceilingMicros: null, status: 'known', actualMicros, ...changes,
+  });
 }
 
 function evaluationBody(r, expectation, operation, { fit = 2, check = 2, reuseFrom = null } = {}) {
@@ -637,18 +650,20 @@ test('model work requires the matching managed gate and complete source-bound ca
   assert.equal((await r.controller.state()).operations.length, 0);
 });
 
-test('unresolved run usage blocks duplicate execution and retains actual charges', async () => {
+test('unresolved execution blocks duplicate calls while stale cumulative charges do not block settlement', async () => {
   const r = await rig();
   const attempt = await propose(r, rule('billing-unresolved'), { verdict: 'uncertain', settle: false });
   const state = await r.controller.state();
   assert.equal(lastAttempt(state).status, 'unresolved');
   await assert.rejects(r.controller.beginAttempt(), /billing unresolved|operation/);
-  await assert.rejects(settle(r, attempt.operation, { spentMicros: 0 }), /spend|backwards/);
+  await assert.rejects(settle(r, attempt.operation, { actualCalls: null }), /actualCalls/);
   assert.equal((await r.controller.state()).operations.at(-1).settled, false);
-  await settle(r, attempt.operation);
+  await settle(r, attempt.operation, { spentMicros: 0, reservedMicros: 500_000_000 });
   const next = await r.controller.beginAttempt();
   assert.equal(next.number, 2);
-  assert.ok((await r.controller.status()).budget.observedSpentMicros > 0);
+  const balance = (await r.controller.status()).budget;
+  assert.equal(balance.observedSpentMicros, 5, 'sum this run\'s operation charges exactly once');
+  assert.equal(balance.observedReservedMicros, 0, 'ignore stale cumulative reservations');
 });
 
 test('complete baseline evidence cannot be settled as zero calls or release its billing hold', async () => {
@@ -775,7 +790,7 @@ async function assertAmbiguousAttemptRecovery(kind) {
   assert.equal(state.budget.spentMicros, beforeDispatch.budget.spentMicros);
   assert.equal(state.activeVersionId, beforeDispatch.activeVersionId);
   assert.equal(state.versions.length, beforeDispatch.versions.length);
-  await assert.rejects(r.controller.beginAttempt(), /operation or billing unresolved/);
+  await assert.rejects(r.controller.beginAttempt(), /operation execution unresolved/);
   await assert.rejects(r.controller.activateVersion(state.baseVersion.id, {}), /work is pending/);
   await assert.rejects(r.controller.settleOperation(operation.id, {}), /envelope/);
   assert.equal((await r.controller.state()).budget.reservedMicros, operation.reservationMicros);
@@ -1018,10 +1033,10 @@ test('baseline non-admission captures operation and original signing order befor
 });
 
 
-test('new v3 run has no programme spending gate and does not import historical charges', async () => {
+test('new v4 run has no programme spending gate and does not import historical charges', async () => {
   const r = await rig({ withBaseline: false, withGate: false });
   const state = await r.controller.state();
-  assert.equal(POLICY.version, 3);
+  assert.equal(POLICY.version, 4);
   assert.equal(POLICY.programmeCeilingMicros, null);
   assert.equal(POLICY.usageMode, 'per-run-receipted');
   assert.deepEqual(state.budget, {
@@ -1029,7 +1044,7 @@ test('new v3 run has no programme spending gate and does not import historical c
   });
 });
 
-test('new v3 run rejects importing prior programme charges as a fresh run', async () => {
+test('new v4 run rejects importing prior programme charges as a fresh run', async () => {
   for (const [spent, reserved] of [[47_000_000, 3_000_000],
     [1, 0], [0, 1]]) {
     await assert.rejects(rig({ withBaseline: false, withGate: false,
@@ -1040,7 +1055,7 @@ test('new v3 run rejects importing prior programme charges as a fresh run', asyn
     openingCeilingMicros: 20_000_000 }), /budget receipt ceilingMicros mismatch/);
 });
 
-test('provider-authenticated v3 reservation above former $50 gate is allowed', async () => {
+test('provider-authenticated v4 reservation above former $50 gate is allowed', async () => {
   const r = await rig({ withBaseline: false, withGate: true });
   await r.controller.planBaseline();
   const request = await r.controller.executionRequest('baseline');
@@ -1054,7 +1069,7 @@ test('provider-authenticated v3 reservation above former $50 gate is allowed', a
   assert.equal((await r.controller.state()).budget.reservedMicros, 60_000_000);
 });
 
-test('v3 initialization can open without a historical funding snapshot', async () => {
+test('v4 initialization can open without a historical funding snapshot', async () => {
   const r = await rig({ withBaseline: false, withGate: false });
   const fresh = new LearningController({ journal: new MemoryJournal(), trust: r.trust, clock: () => NOW });
   const result = await fresh.initialize(r.config);
@@ -1062,7 +1077,7 @@ test('v3 initialization can open without a historical funding snapshot', async (
   assert.equal(result.budget.observedReservedMicros, 0);
 });
 
-test('v3 actual call charging may exceed a zero monetary hold without blocking result', async () => {
+test('v4 actual call charging may exceed a zero monetary hold without blocking result', async () => {
   const r = await rig({ withBaseline: false, withGate: true });
   const plan = await r.controller.planBaseline();
   const operation = await reserve(r, 'baseline', null, {
@@ -1076,4 +1091,194 @@ test('v3 actual call charging may exceed a zero monetary hold without blocking r
   assert.equal(state.budget.spentMicros, 65_000_000);
   assert.equal(state.budget.reservedMicros, 0);
   assert.equal(state.operations[0].settled, true);
+});
+
+test('authenticated execution with an explicit unknown price closes custody and permits the next attempt', async () => {
+  const r = await rig({ baselineSettlement: { actualMicros: null, spentMicros: null, reservedMicros: null } });
+  const state = await r.controller.state(), operation = state.operations[0];
+  assert.equal(operation.settled, true);
+  assert.equal(operation.actualCalls, 4);
+  assert.equal(operation.actualMicros, null);
+  assert.deepEqual((await r.controller.status()).budget, {
+    ceilingMicros: null, observedSpentMicros: 0, observedReservedMicros: 0,
+    unknownCostOperations: 1, unknownCostCalls: 4, pendingExecutionOperations: 0,
+    complete: false, authoritative: 'external-gateway',
+  });
+  const reopened = new LearningController({ journal: r.journal, trust: r.trust, clock: () => NOW });
+  assert.equal((await reopened.beginAttempt()).number, 1);
+  assert.equal((await reopened.state()).operations[0].actualMicros, null);
+  assert.equal((await reopened.state()).activeVersionId, state.activeVersionId);
+});
+
+test('unknown pricing never excuses missing or contradictory execution counts or malformed costs', async () => {
+  const r = await rig({ withBaseline: false });
+  const plan = await r.controller.planBaseline();
+  const operation = await reserve(r, 'baseline');
+  await r.controller.recordBaseline(r.sign('evaluation', evaluationBody(r, plan, operation)));
+  const before = await r.journal.read();
+  for (const actualCalls of [undefined, null, -1, 0, 3, 5, 4.5]) {
+    await assert.rejects(settle(r, operation, { actualCalls, actualMicros: null }));
+    assert.deepEqual(await r.journal.read(), before);
+  }
+  for (const actualMicros of [undefined, -1, 0.5, '0', NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(settle(r, operation, { actualMicros }));
+    assert.deepEqual(await r.journal.read(), before);
+  }
+  await settle(r, operation, { actualMicros: null });
+  assert.equal((await r.controller.status()).budget.unknownCostCalls, 4);
+});
+
+test('zero signed charge is known while zero calls with an unknown operation charge stay unknown', async () => {
+  const known = await rig({ baselineSettlement: { actualMicros: 0 } });
+  assert.equal((await known.controller.status()).budget.complete, true);
+  assert.equal((await known.controller.status()).budget.unknownCostOperations, 0);
+  const r = await rig({ withBaseline: false });
+  await r.controller.planBaseline();
+  const { operation, request } = await baselineIntent(r);
+  const admission = await operationLease(r, operation, request, { spentMicros: 999_999, reservedMicros: 0 });
+  const state = await r.controller.state();
+  const settlement = r.sign('budget', {
+    schema: 'gk-learning-v2-operation-settlement', receiptId: r.next('zero-call-unknown'),
+    ...stateIdentity(state), operationId: operation.id, leaseId: admission.body.receiptId,
+    budgetId: state.config.budgetId, gatewayId: r.trust.budget.gatewayId,
+    provider: POLICY.provider, global: false, ceilingMicros: null,
+    status: 'settled', actualCalls: 0, actualMicros: null,
+  });
+  await r.controller.reconcileAdmission(operation, admission, settlement, 'Independently closed admission without calls; fee unknown.');
+  const balance = (await r.controller.status()).budget;
+  assert.equal(balance.observedSpentMicros, 0);
+  assert.equal(balance.observedReservedMicros, 0);
+  assert.equal(balance.unknownCostOperations, 1);
+  assert.equal(balance.unknownCostCalls, 0);
+  assert.equal(balance.complete, false);
+  const receipt = await operationUsage(r, operation, 0);
+  await r.controller.reconcileOperationUsage(operation.id, receipt);
+  assert.equal((await r.controller.status()).budget.complete, true);
+  assert.equal((await r.controller.state()).operations[0].actualMicros, null);
+  await assert.rejects(r.controller.planBaseline(), /baseline already planned|baseline/);
+});
+
+test('late authenticated operation charges persist once across reopen and envelope reordering', async () => {
+  const r = await rig({ baselineSettlement: { actualMicros: null } });
+  const original = (await r.controller.state()).operations[0];
+  const receipt = await operationUsage(r, original, 72_000_000);
+  const before = await r.journal.read();
+  await r.controller.reconcileOperationUsage(original.id, receipt);
+  const after = await r.journal.read();
+  assert.equal(after.events.length, before.events.length + 1);
+  const reopened = new LearningController({ journal: r.journal, trust: r.trust, clock: () => NOW });
+  const result = await reopened.reconcileOperationUsage(original.id, {
+    signature: receipt.signature, body: clone(receipt.body),
+  });
+  assert.deepEqual(await r.journal.read(), after, 'authentic replay never appends or replaces retained bytes');
+  assert.equal(result.budget.observedSpentMicros, 72_000_000);
+  assert.equal(result.budget.unknownCostOperations, 0);
+  assert.equal(result.budget.unknownCostCalls, 0);
+  assert.equal(result.budget.complete, true);
+  const held = (await reopened.state()).operations[0];
+  const { usageReconciliation, ...unchanged } = held;
+  assert.deepEqual(unchanged, original, 'original execution settlement is immutable');
+  assert.equal(usageReconciliation.serialized, JSON.stringify(receipt));
+  assert.equal(usageReconciliation.receiptDigest, digest(JSON.stringify(receipt)));
+  assert.equal(usageReconciliation.actualMicros, 72_000_000);
+  for (const changes of [{ actualMicros: 72_000_001 }, { receiptId: 'conflicting-second-receipt' }]) {
+    await assert.rejects(reopened.reconcileOperationUsage(original.id, r.sign('budget', {
+      ...receipt.body, ...changes,
+    })), /conflicting/);
+    assert.deepEqual(await r.journal.read(), after);
+  }
+});
+
+test('late usage requires the independent pinned budget signer and every immutable execution binding', async () => {
+  const r = await rig({ baselineSettlement: { actualMicros: null } });
+  const operation = (await r.controller.state()).operations[0];
+  const valid = await operationUsage(r, operation, 123);
+  const before = await r.journal.read();
+  const changes = [
+    { schema: 'gk-learning-v2-operation-settlement' }, { experimentId: 'another-experiment' },
+    { configDigest: sha('another config') }, { sourceCommit: 'f'.repeat(40) },
+    { operationId: 'another-operation' }, { leaseId: 'another-lease' },
+    { requestDigest: sha('another request') }, { settlementReceiptId: 'another-settlement' },
+    { actualCalls: 0 }, { budgetId: 'another-run' }, { gatewayId: 'another-gateway' },
+    { provider: 'another-provider' }, { global: true }, { ceilingMicros: 50_000_000 },
+    { status: 'estimated' }, { actualMicros: null }, { actualMicros: -1 }, { actualMicros: 0.5 },
+    { actualMicros: Number.MAX_SAFE_INTEGER + 1 }, { extraAssertion: 'not in the schema' },
+    { receiptId: r.initialBudget.body.receiptId },
+  ];
+  for (const change of changes) {
+    await assert.rejects(r.controller.reconcileOperationUsage(operation.id,
+      r.sign('budget', { ...valid.body, ...change })));
+    assert.deepEqual(await r.journal.read(), before);
+  }
+  for (const role of ['evaluation', 'novelty', 'activation']) {
+    await assert.rejects(r.controller.reconcileOperationUsage(operation.id, r.sign(role, valid.body)));
+    assert.deepEqual(await r.journal.read(), before);
+  }
+  const tampered = clone(valid); tampered.body.actualMicros++;
+  await assert.rejects(r.controller.reconcileOperationUsage(operation.id, tampered));
+  const missing = { ...valid.body }; delete missing.actualMicros;
+  await assert.rejects(r.controller.reconcileOperationUsage(operation.id, r.sign('budget', missing)));
+  assert.deepEqual(await r.journal.read(), before);
+});
+
+test('accounting can reconcile an earlier phase while another execution remains pending without changing its plan', async () => {
+  const r = await rig({ baselineSettlement: { actualMicros: null } });
+  const baseline = (await r.controller.state()).operations[0];
+  const attempt = await r.controller.beginAttempt();
+  const pending = await reserve(r, 'proposal', attempt.attemptId, { spentMicros: null, reservedMicros: null });
+  const before = await r.controller.state();
+  const request = await r.controller.executionRequest('proposal', attempt.attemptId);
+  await r.controller.reconcileOperationUsage(baseline.id, await operationUsage(r, baseline, 550));
+  const after = await r.controller.state(), balance = (await r.controller.status()).budget;
+  assert.deepEqual(after.operations[1], before.operations[1]);
+  assert.deepEqual(after.attempts, before.attempts);
+  assert.deepEqual(after.versions, before.versions);
+  assert.deepEqual(after.activationHistory, before.activationHistory);
+  assert.equal(after.activeVersionId, before.activeVersionId);
+  assert.deepEqual(await r.controller.executionRequest('proposal', attempt.attemptId), request);
+  assert.equal(balance.observedSpentMicros, 550);
+  assert.equal(balance.observedReservedMicros, 10_000);
+  assert.equal(balance.pendingExecutionOperations, 1);
+  assert.equal(balance.unknownCostOperations, 0);
+  assert.equal(balance.complete, false);
+  await assert.rejects(r.controller.reconcileOperationUsage(pending.id,
+    await operationUsage(r, baseline, 1)), /completed operation with unknown charge/);
+  await assert.rejects(r.controller.beginAttempt(), /operation execution unresolved|another attempt/);
+});
+
+test('known operation charges cannot be revised and a receipt ID cannot price two operations', async () => {
+  const known = await rig();
+  await assert.rejects(known.controller.reconcileOperationUsage(known.baseline.operation.id,
+    await operationUsage(known, known.baseline.operation, 99)), /unknown charge/);
+  const r = await rig({ baselineSettlement: { actualMicros: null } });
+  const baseline = (await r.controller.state()).operations[0];
+  const attempt = await propose(r, rule('late-usage-second'), { verdict: 'uncertain', settle: false });
+  await settle(r, attempt.operation, { actualMicros: null });
+  const receipt = await operationUsage(r, baseline, 400);
+  await r.controller.reconcileOperationUsage(baseline.id, receipt);
+  const reused = await operationUsage(r, attempt.operation, 100, { receiptId: receipt.body.receiptId });
+  const before = await r.journal.read();
+  await assert.rejects(r.controller.reconcileOperationUsage(attempt.operation.id, reused), /receipt replay/);
+  assert.deepEqual(await r.journal.read(), before);
+  await r.controller.reconcileOperationUsage(attempt.operation.id,
+    await operationUsage(r, attempt.operation, 100));
+  assert.equal((await r.controller.status()).budget.observedSpentMicros, 500);
+  assert.equal((await r.controller.status()).budget.complete, true);
+});
+
+test('policy v4 requires a new experiment and never migrates historical policy records', async () => {
+  const r = await rig({ withBaseline: false, withGate: false });
+  const source = (await r.journal.read()).events[0];
+  for (const priorVersion of [1, 2, 3]) {
+    const legacy = new MemoryJournal(), event = clone(source);
+    event.state.policy.version = priorVersion;
+    event.state.configDigest = digest({ config: event.state.config, policy: event.state.policy,
+      trustPins: event.state.trustPins, history: event.state.history });
+    await legacy.append(null, event);
+    const before = await legacy.read();
+    const reopened = new LearningController({ journal: legacy, trust: r.trust, clock: () => NOW });
+    await assert.rejects(reopened.state(), /policy changed; new experiment required/);
+    await assert.rejects(reopened.initialize(r.config), /already exists/);
+    assert.deepEqual(await legacy.read(), before);
+  }
 });
