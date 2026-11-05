@@ -591,25 +591,33 @@ test('a consumed stage cannot replay evidence or reclaim its namespace', async (
   assert.equal((await r.controller.state()).namespaces.filter(value => value === screening.plan.candidate.namespace).length, 1);
 });
 
-test('negative, unproven and inactive positive procedures never enter learner or reviewer projections', async () => {
+test('proposer retains historical and current learning while reviewer procedures require activation', async () => {
   const r = await rig({ history: [
     historyItem('negative-history', 'rejected', rule('HOST_REJECTED_CANARY')),
     historyItem('unproven-history', 'unproven', rule('HOST_UNPROVEN_CANARY')),
     historyItem('legacy-positive-history', 'legacy-positive', rule('HOST_LEGACY_POSITIVE_CANARY')),
   ] });
   const attempt = await propose(r, rule('CONFIRMED_POSITIVE_CANARY'));
-  assert.doesNotMatch(JSON.stringify(attempt.operation.request.learner), /CANARY/);
+  const historical = (await r.controller.state()).history.map(({ outcome, procedure }) => ({ outcome, procedure }));
+  assert.deepEqual(attempt.operation.request.learner.retainedProcedures, historical);
+  assert.deepEqual(attempt.operation.request.learner.confirmedProcedures, []);
   await screen(r, attempt.attemptId);
-  let learner = JSON.stringify(await r.controller.learnerInput());
-  assert.doesNotMatch(learner, /CANARY/);
+  let learner = await r.controller.learnerInput();
+  assert.deepEqual(learner.retainedProcedures, [...historical,
+    { outcome: 'provisional', procedure: procedure(rule('CONFIRMED_POSITIVE_CANARY'), 'concurrency') }]);
+  assert.deepEqual(learner.confirmedProcedures, []);
   await confirm(r, attempt.attemptId);
-  learner = JSON.stringify(await r.controller.learnerInput());
-  assert.doesNotMatch(learner, /CANARY/);
+  learner = await r.controller.learnerInput();
+  assert.equal(learner.retainedProcedures.at(-1).outcome, 'confirmed');
+  assert.deepEqual(learner.confirmedProcedures, [], 'confirmation does not itself activate a version');
   let state = await r.controller.state();
   await r.controller.activateVersion(lastAttempt(state).version.id, await approval(r, lastAttempt(state).version.id));
-  learner = JSON.stringify(await r.controller.learnerInput());
-  assert.match(learner, /CONFIRMED_POSITIVE_CANARY/);
-  assert.doesNotMatch(learner, /HOST_REJECTED_CANARY|HOST_UNPROVEN_CANARY|HOST_LEGACY_POSITIVE_CANARY|HOST_REVIEW_REASON_CANARY/);
+  learner = await r.controller.learnerInput();
+  assert.deepEqual(learner.confirmedProcedures, [procedure(rule('CONFIRMED_POSITIVE_CANARY'), 'concurrency')]);
+  assert.deepEqual(learner.retainedProcedures, [...historical,
+    { outcome: 'confirmed', procedure: procedure(rule('CONFIRMED_POSITIVE_CANARY'), 'concurrency') }]);
+  assert.doesNotMatch(JSON.stringify(learner),
+    /HOST_REVIEW_REASON_CANARY|negative-history|unproven-history|legacy-positive-history|synthetic-history-source|check-js/);
   state = await r.controller.state();
   const activeVersion = state.versions.find(item => item.id === state.activeVersionId);
   const first = reviewerInstructions({ originalInstructions: state.config.baseInstructions, activeVersion, scope: state.config.scope, caseId: 'fit-js', pass: 1 });
