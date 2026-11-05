@@ -15,6 +15,7 @@ import { createReadOnlyStatusHandler } from './status-listener.mjs';
 
 const UPSTREAM_PORT = 8790;
 const CONFIG_PATH = '/var/lib/gk-v2-private-journal/status-config.json';
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 const reject = reason => { throw new Error('GK_STATUS_ROUTER_REFUSED: ' + reason); };
 const noStore = Object.freeze({ 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' });
 
@@ -76,19 +77,34 @@ export function forwardTrueForge(req, res, createRequest = httpRequest) {
   delete headers['proxy-authorization'];
   delete headers['proxy-authenticate'];
   headers.host = '127.0.0.1:' + UPSTREAM_PORT;
-  const upstream = createRequest({
-    hostname: '127.0.0.1', port: UPSTREAM_PORT, path: req.url, method: req.method,
-    headers, agent: false,
-  }, incoming => {
-    res.writeHead(incoming.statusCode || 502, incoming.headers);
-    incoming.pipe(res);
-  });
-  upstream.on('error', () => {
+  const failResponse = () => {
+    if (res.destroyed || res.writableEnded) return;
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end('{"error":"trueforge_unavailable"}');
     } else res.destroy();
+  };
+  const upstream = createRequest({
+    hostname: '127.0.0.1', port: UPSTREAM_PORT, path: req.url, method: req.method,
+    headers, agent: false,
+  }, incoming => {
+    const truncated = () => {
+      upstream.destroy();
+      failResponse();
+    };
+    // pipe() handles backpressure, but does not forward readable failures.
+    // Once headers were sent, end the broken stream without inventing a
+    // successful HTTP/SSE terminator or retrying the upstream operation.
+    incoming.once('aborted', truncated);
+    incoming.on('error', truncated);
+    incoming.once('close', () => {
+      if (!incoming.complete) truncated();
+    });
+    if (res.destroyed) { incoming.destroy(); upstream.destroy(); return; }
+    res.writeHead(incoming.statusCode || 502, incoming.headers);
+    incoming.pipe(res);
   });
+  upstream.on('error', failResponse);
   // A completed GET has no active request body; SSE clients may disappear
   // hours later without req 'aborted'. Tie upstream custody to response close.
   res.once('close', () => {
@@ -98,6 +114,88 @@ export function forwardTrueForge(req, res, createRequest = httpRequest) {
   req.pipe(upstream);
 }
 
+/** Preserve TrueForge's configured turn/persistence drain, plus a small margin. */
+export function configuredShutdownGraceMs(env = process.env) {
+  const raw = env.GRACEFUL_TIMEOUT_SECONDS;
+  const seconds = raw === undefined || raw.trim() === '' ? 30 : Number(raw);
+  if (!Number.isInteger(seconds) || seconds < 1) reject('invalid child shutdown grace');
+  const milliseconds = seconds * 1000 + 5000;
+  // Node clamps overflowing timers to 1 ms; reject that transport limit,
+  // rather than silently killing the child before its configured drain.
+  if (!Number.isSafeInteger(milliseconds) || milliseconds > MAX_TIMEOUT_MS) {
+    reject('child shutdown grace exceeds timer range');
+  }
+  return milliseconds;
+}
+
+/** Own only transport/child lifetimes; this does not add agent authority. */
+export function superviseTrueForgeGateway({ server, child,
+  shutdownGraceMs = configuredShutdownGraceMs() }) {
+  if (!Number.isInteger(shutdownGraceMs) || shutdownGraceMs < 1 ||
+      shutdownGraceMs > MAX_TIMEOUT_MS) reject('invalid shutdown grace');
+  const sockets = new Set();
+  let stopping = false, serverClosed = false, childExited = false, childClosed = false;
+  let graceTimer, exitTimer, resolveStopped;
+  const stopped = new Promise(resolve => { resolveStopped = resolve; });
+  const connected = socket => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+  };
+  const finish = () => {
+    if (!stopping || !serverClosed || !childClosed) return;
+    clearTimeout(graceTimer);
+    clearTimeout(exitTimer);
+    process.off('SIGTERM', terminate);
+    process.off('SIGINT', interrupt);
+    server.off('connection', connected);
+    server.off('error', serverFailed);
+    resolveStopped();
+  };
+  const kill = signal => {
+    if (!childExited) {
+      try { child.kill(signal); } catch { /* final deadline still applies */ }
+    }
+  };
+  const stop = (signal = 'SIGTERM') => {
+    if (stopping) return stopped;
+    stopping = true;
+    server.close(() => { serverClosed = true; finish(); });
+    server.closeIdleConnections();
+    kill(signal);
+    graceTimer = setTimeout(() => {
+      // server.close() alone waits forever for an open SSE/keep-alive socket.
+      for (const socket of sockets) socket.destroy();
+      server.closeAllConnections();
+      kill('SIGKILL');
+      // Do not let a stuck child handle or shutdown hook keep this gateway
+      // alive indefinitely after the listener and sockets have been closed.
+      exitTimer = setTimeout(() => process.exit(process.exitCode || 1), 1000);
+      exitTimer.unref();
+      finish();
+    }, shutdownGraceMs);
+    graceTimer.unref();
+    return stopped;
+  };
+  const terminate = () => { void stop('SIGTERM'); };
+  const interrupt = () => { void stop('SIGINT'); };
+  const serverFailed = () => { process.exitCode = 1; void stop(); };
+  server.on('connection', connected);
+  server.on('error', serverFailed);
+  process.on('SIGTERM', terminate);
+  process.on('SIGINT', interrupt);
+  child.once('exit', code => {
+    childExited = true;
+    process.exitCode = code === 0 ? 1 : code || 1;
+    void stop();
+  });
+  child.once('error', () => {
+    process.exitCode = 1;
+    void stop();
+  });
+  child.once('close', () => { childClosed = true; finish(); });
+  return { stop, stopped };
+}
+
 /** Invoked only after the existing root-only volume preflight dropped UID. */
 export async function startTrueForgeStatusGateway({ env = process.env, run = spawn,
   statusHandler = configuredStatusHandler({ env }), port = Number(env.PORT || 8080) } = {}) {
@@ -105,6 +203,7 @@ export async function startTrueForgeStatusGateway({ env = process.env, run = spa
       env.GK_V3_HTTP_ROUTER !== 'enabled') reject('explicit non-root opt-in startup required');
   if (!Number.isInteger(port) || port < 1024 || port > 65535 || port === UPSTREAM_PORT ||
       port === 8791) reject('invalid external port');
+  const shutdownGraceMs = configuredShutdownGraceMs(env);
   const child = run(process.execPath, ['node_modules/@truefoundry/trueforge/dist/main.js'], {
     cwd: '/app', stdio: 'inherit',
     env: { ...env, HOST: '127.0.0.1', PORT: String(UPSTREAM_PORT) },
@@ -112,22 +211,18 @@ export async function startTrueForgeStatusGateway({ env = process.env, run = spa
   const server = createServer(createStatusRoutingHandler({
     statusHandler, proxyHandler: forwardTrueForge,
   }));
-  const stop = signal => {
-    try { child.kill(signal); } catch { /* child already stopped */ }
-    server.close();
-  };
-  process.once('SIGTERM', () => stop('SIGTERM'));
-  process.once('SIGINT', () => stop('SIGINT'));
-  child.once('exit', (code, signal) => {
-    server.close();
-    process.exitCode = code === 0 ? 1 : code || (signal ? 1 : 1);
-  });
-  await new Promise((resolve, fail) => {
-    server.once('error', fail);
-    server.listen(port, '0.0.0.0', () => {
-      server.off('error', fail);
-      resolve();
+  const lifecycle = superviseTrueForgeGateway({ server, child, shutdownGraceMs });
+  try {
+    await new Promise((resolve, fail) => {
+      server.once('error', fail);
+      server.listen(port, '0.0.0.0', () => {
+        server.off('error', fail);
+        resolve();
+      });
     });
-  });
+  } catch (error) {
+    await lifecycle.stop();
+    throw error;
+  }
   return { server, child };
 }
