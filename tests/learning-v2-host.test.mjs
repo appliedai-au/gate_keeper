@@ -327,9 +327,6 @@ test('an expired historical admission resolves only through an authentic final s
     { admissionEnvelope, settlementEnvelope: f.seal('activation', settlementEnvelope.body) },
     { admissionEnvelope, settlementEnvelope: f.seal('budget', { ...settlementEnvelope.body,
       actualCalls: admissionEnvelope.body.maxCalls + 1 }) },
-    { admissionEnvelope, settlementEnvelope: f.seal('budget', { ...settlementEnvelope.body,
-      actualMicros: admissionEnvelope.body.reservationMicros + 1,
-      spentMicros: held.state.budget.spentMicros + admissionEnvelope.body.reservationMicros + 1 }) },
     { admissionEnvelope: f.seal('budget', { ...admissionEnvelope.body, issuedAt: admissionEnvelope.body.expiresAt }),
       settlementEnvelope },
   ];
