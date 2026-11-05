@@ -89,6 +89,11 @@ export function forwardTrueForge(req, res) {
       res.end('{"error":"trueforge_unavailable"}');
     } else res.destroy();
   });
+  // A completed GET has no active request body; SSE clients may disappear
+  // hours later without req 'aborted'. Tie upstream custody to response close.
+  res.once('close', () => {
+    if (!res.writableFinished) upstream.destroy();
+  });
   req.on('aborted', () => upstream.destroy());
   req.pipe(upstream);
 }
