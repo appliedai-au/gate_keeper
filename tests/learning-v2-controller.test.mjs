@@ -883,7 +883,7 @@ test('baseline non-admission rejects identity substitutions wrong signatures and
     { sourceCommit: 'f'.repeat(40) }, { operationId: 'different-operation' },
     { requestDigest: 'f'.repeat(64) }, { budgetId: 'different-programme' },
     { gatewayId: 'different-gateway' }, { provider: 'different-provider' },
-    { global: false }, { ceilingMicros: POLICY.programmeCeilingMicros + 1 },
+    { global: true }, { ceilingMicros: 50_000_000 },
     { status: 'admitted' }, { reservationExists: true }, { actualCalls: 1 }, { actualMicros: 1 },
   ];
   for (const change of receiptChanges) {
