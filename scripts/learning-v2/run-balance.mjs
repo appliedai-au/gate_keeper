@@ -4,7 +4,8 @@
  * This records the verified charges for one run, and retains uncertain calls
  * without silently treating them as free. No provider API, model access,
  * programme ceiling, or retry authority is imported or constructed here.
- * Append-only small delta events prevent O(N²) storage across a long run.\n * Existing policy-v2 journals are never read or migrated by this module.
+ * Append-only small delta events prevent O(N²) storage across a long run.
+ * Existing policy-v2 journals are never read or migrated by this module.
  */
 import { canonical, copy, identifier, integer, record, requireThat, text } from './contracts.mjs';
 
