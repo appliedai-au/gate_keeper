@@ -4,10 +4,10 @@ export const LEARNING_STATUS_PATH = '/gatekeeper/learning-v2/status';
 export const MAX_STATUS_BYTES = 16_384;
 
 const POLICY = Object.freeze({
-  schema: 'gk-learning-v2-policy', version: 2, attempts: 10,
+  schema: 'gk-learning-v2-policy', version: 3, attempts: 10,
   minimumGain: 1, confirmationPairs: 3, additionalPairs: 0,
   confirmationDecision: 'every-pair-passes', passes: 2,
-  programmeCeilingMicros: 50_000_000, provider: 'truefoundry', memory: 'off',
+  programmeCeilingMicros: null, usageMode: 'per-run-receipted', provider: 'truefoundry', memory: 'off',
 });
 const COUNT_KEYS = ['attempted', 'scored', 'duplicate', 'unresolved', 'invalid',
   'noCoverage', 'rejected', 'provisional', 'confirmed', 'activated'];
@@ -95,9 +95,9 @@ export function projectLearningStatus(value, binding) {
 
   record(value.budget, ['ceilingMicros', 'observedSpentMicros', 'observedReservedMicros', 'authoritative']);
   check(value.budget.ceilingMicros === POLICY.programmeCeilingMicros);
-  const observedSpentMicros = integer(value.budget.observedSpentMicros, POLICY.programmeCeilingMicros);
-  const observedReservedMicros = integer(value.budget.observedReservedMicros, POLICY.programmeCeilingMicros);
-  check(observedSpentMicros + observedReservedMicros <= POLICY.programmeCeilingMicros);
+  const observedSpentMicros = integer(value.budget.observedSpentMicros);
+  const observedReservedMicros = integer(value.budget.observedReservedMicros);
+  check(Number.isSafeInteger(observedSpentMicros + observedReservedMicros));
   check(value.budget.authoritative === 'external-gateway');
   const qualification = choice(value.qualification, ['managed-source-gate-passed', 'source-only-unqualified']);
   check(value.deployment === 'not-managed-by-learning-core');
