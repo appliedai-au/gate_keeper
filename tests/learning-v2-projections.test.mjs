@@ -168,7 +168,7 @@ test('prompt identity binds reviewed case coverage and excludes wrapper diagnost
   assert.notEqual(first.artifact.rules[0].procedure.action, firstRule.procedure.action);
 });
 
-test('learner input contains only confirmed procedure fields and approved example text', () => {
+test('learner input keeps confirmed fields and approved fit text separate from raw historical wrappers', () => {
   const activeVersion = confirmedVersion([scopedRule({
     outcome: PRIVATE_CANARY, matchReasons: UNPROVEN_CANARY, scores: SCORE_CANARY,
   })]);
@@ -184,13 +184,66 @@ test('learner input contains only confirmed procedure fields and approved exampl
   });
   excludesPrivate(input);
   assert.deepEqual(Object.keys(input).sort(), [
-    'baselineInstructions', 'confirmedProcedures', 'fitExamples', 'instructions', 'scope',
+    'baselineInstructions', 'confirmedProcedures', 'fitExamples', 'instructions', 'retainedProcedures', 'scope',
   ]);
+  assert.deepEqual(input.retainedProcedures, []);
   assert.equal(input.baselineInstructions, BASE);
   assert.deepEqual(Object.keys(input.confirmedProcedures[0]).sort(), PROCEDURE_KEYS);
   assert.deepEqual(Object.keys(input.fitExamples[0]).sort(), ['code', 'feedback']);
   assert.equal(JSON.stringify(input).includes('host-only-case-id'), false);
   assert.match(input.confirmedProcedures[0].action, /lost update/);
+});
+
+test('retained proposer memory preserves joint bundles, opaque uncertainty, all scopes and recorded outcomes', () => {
+  const joint = procedure(proposal({ scope: 'authorization', languages: ['any'],
+    action: 'Rule 1: Check the exact signed bytes. Rule 2: Release the lock on every exit path.',
+    evidence: 'The historical negative observation concerns this combined bundle only.' }), 'authorization');
+  const opaque = procedure(proposal({ action: '[opaque-procedure-sha256:' + 'b'.repeat(64) + ']' }), FOCUS);
+  const historicalPositive = procedure(proposal({ action: 'Retained historical positive procedure.' }), FOCUS);
+  const unfinished = procedure(proposal({ action: 'Retained current proposal awaiting confirmation.' }), FOCUS);
+  const references = [
+    { id: 'private-history-id', sourceRef: 'private-source-reference', outcome: 'rejected', procedure: joint,
+      evaluation: { caseId: 'private-check-case', expectedBugs: 37, score: SCORE_CANARY },
+      reviewReason: UNPROVEN_CANARY, rawOutput: PRIVATE_CANARY },
+    { outcome: 'unproven', procedure: opaque },
+    { outcome: 'legacy-positive', procedure: historicalPositive },
+    { outcome: 'unresolved', procedure: opaque },
+    { outcome: 'provisional', procedure: unfinished },
+  ];
+  const input = learnerRequest({ scope: FOCUS, activeVersion: confirmedVersion([]),
+    baselineInstructions: BASE, retainedReferences: references });
+  assert.deepEqual(input.retainedProcedures, [
+    { outcome: 'rejected', procedure: joint },
+    { outcome: 'unproven', procedure: opaque },
+    { outcome: 'legacy-positive', procedure: historicalPositive },
+    { outcome: 'unresolved', procedure: opaque },
+    { outcome: 'provisional', procedure: unfinished },
+  ], 'preserve ordered references without filtering other scopes, splitting bundles or merging outcomes');
+  assert.deepEqual(input.confirmedProcedures, [], 'historical and provisional positives are not activated');
+  for (const retained of input.retainedProcedures) {
+    assert.deepEqual(Object.keys(retained).sort(), ['outcome', 'procedure']);
+    assert.deepEqual(Object.keys(retained.procedure).sort(), PROCEDURE_KEYS);
+  }
+  excludesPrivate(input);
+  assert.doesNotMatch(JSON.stringify(input), /private-history-id|private-source-reference|private-check-case|expectedBugs/);
+  assert.match(input.instructions, /legacy-positive outcome is historical/);
+  assert.match(input.instructions, /Opaque or hash-only historical markers leave the original content unknown/);
+  assert.match(input.instructions, /without establishing isolated outcomes for its components/);
+  references[0].procedure.action = 'MUTATED_AFTER_PROJECTION';
+  assert.doesNotMatch(JSON.stringify(input), /MUTATED_AFTER_PROJECTION/);
+});
+
+test('retained proposer memory rejects unknown outcomes and overflow instead of silently losing history', () => {
+  const request = { scope: FOCUS, activeVersion: confirmedVersion([]), baselineInstructions: BASE };
+  const retained = { outcome: 'rejected', procedure: procedure(proposal(), FOCUS) };
+  const atLimit = Array.from({ length: 256 + POLICY.attempts }, () => retained);
+  assert.equal(learnerRequest({ ...request, retainedReferences: atLimit }).retainedProcedures.length, atLimit.length);
+  assert.throws(() => learnerRequest({ ...request, retainedReferences: [...atLimit, retained] }), /retained procedure count/);
+  assert.throws(() => learnerRequest({ ...request,
+    retainedReferences: [{ ...retained, outcome: 'learner-certified-safe' }] }), /retained procedure outcome/);
+  assert.throws(() => learnerRequest({ ...request,
+    retainedReferences: [{ ...retained, procedure: { ...retained.procedure, checkScore: SCORE_CANARY } }] }),
+  /unexpected or missing fields/);
 });
 
 test('learner rejects provisional versions and diagnostic fields inside a procedure', () => {
