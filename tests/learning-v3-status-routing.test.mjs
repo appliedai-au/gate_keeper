@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { Readable, PassThrough } from 'node:stream';
 import {
-  configuredStatusHandler, createStatusRoutingHandler, startTrueForgeStatusGateway,
+  configuredStatusHandler, createStatusRoutingHandler, forwardTrueForge, startTrueForgeStatusGateway,
 } from '../scripts/learning-v2/trueforge-status-gateway.mjs';
 import { LEARNING_STATUS_PATH } from '../integrations/base44/shared/learning-status-contract.js';
 
@@ -87,4 +89,34 @@ test('default service image preserves existing production startup, and new path 
   assert.match(existing, /start-v2-host\.sh/);
   assert.doesNotMatch(existing, /launch-status-gateway/);
   assert.match(integrated, /start-v3-router\.sh/);
+});
+
+test('dropped long-lived SSE response destroys the upstream subscription', () => {
+  const req = Readable.from([]);
+  req.url = '/api/v1/events'; req.method = 'GET'; req.headers = {};
+  const res = new EventEmitter();
+  res.writableFinished = false;
+  res.writeHead = () => res;
+  res.end = () => res;
+  res.destroy = () => res;
+  const upstream = new PassThrough();
+  forwardTrueForge(req, res, () => upstream);
+  assert.equal(upstream.destroyed, false);
+  res.emit('close');
+  assert.equal(upstream.destroyed, true);
+});
+
+test('ordinary completed response does not cancel an already finished upstream', () => {
+  const req = Readable.from([]);
+  req.url = '/healthz'; req.method = 'GET'; req.headers = {};
+  const res = new EventEmitter();
+  res.writableFinished = true;
+  res.writeHead = () => res;
+  res.end = () => res;
+  res.destroy = () => res;
+  const upstream = new PassThrough();
+  forwardTrueForge(req, res, () => upstream);
+  res.emit('close');
+  assert.equal(upstream.destroyed, false);
+  upstream.destroy();
 });
