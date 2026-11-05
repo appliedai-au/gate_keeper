@@ -91,8 +91,20 @@ export function projectLegacyBank(bytes) {
     if (entry.rules !== undefined) out.rules = stringList(entry.rules);
     if (entry.scope !== undefined) out.scope = scope(entry.scope);
     for (const k of ['conditional', 'proposed']) if (entry[k] !== undefined) {
-      if (!Array.isArray(entry[k]) || entry[k].length > 100) fail('PREFLIGHT_CONDITIONS_INVALID');
-      out[k] = entry[k].map(condition);
+      const rejectedProposal = group === 'history' && k === 'proposed' && entry.kind === 'unscored-proposal';
+      if (!Array.isArray(entry[k]) || entry[k].length > 100) {
+        if (!rejectedProposal) fail('PREFLIGHT_CONDITIONS_INVALID');
+        out.unprojectableProposal = { reason: 'historical rejected proposal shape', evidenceDigest: sha256(JSON.stringify(entry[k])) };
+      } else out[k] = entry[k].map(value => {
+        try {
+          const projected = condition(value);
+          if (rejectedProposal && isObject(projected) && Object.keys(projected).length === 0) fail('PREFLIGHT_CONDITION_INVALID');
+          return projected;
+        } catch (error) {
+          if (!rejectedProposal) throw error;
+          return { unprojectable: true, reason: 'historical rejected proposal shape', evidenceDigest: sha256(JSON.stringify(value)) };
+        }
+      });
     }
     for (const k of ['baseline', 'candidate']) if (isObject(entry[k])) out[k] = numericFields(entry[k], ['net', 'caught', 'falseAlarms', 'fa', 'fit', 'check', 'unparsed']);
     if (entry.confirmation !== undefined && entry.confirmation !== null) {

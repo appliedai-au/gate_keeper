@@ -41,3 +41,17 @@ test('legacy export preserves negative and unproven provenance while excluding p
   assert.match(result.authority, /not v4 signed promotion/);
   assert.throws(() => projectLegacyBank(Buffer.from('{"version":1}')), /GROUP_INVALID/);
 });
+
+test('malformed historical rejected proposals remain accounted without aborting valid bank recovery', () => {
+  const rejected = [null, 3, { when: 7 }, { scope: { languages: 'invalid' } }, { unknown: 'SYNTHETIC_PRIVATE_REJECTED_PAYLOAD' }];
+  const result = projectLegacyBank(Buffer.from(JSON.stringify({ version: 1, accepted: [], harmful: [{ id: 'retained', rules: ['Do not retry this rejected procedure'] }], unproven: [], history: [
+    { kind: 'unscored-proposal', round: 1, proposed: rejected },
+    { kind: 'unscored-proposal', round: 2, proposed: Array(101).fill(null) }
+  ] })));
+  assert.equal(result.records[0].id, 'retained');
+  assert.equal(result.records[1].proposed.length, 5);
+  assert.ok(result.records[1].proposed.every(x => x.unprojectable === true && /^[a-f0-9]{64}$/.test(x.evidenceDigest)));
+  assert.match(result.records[2].unprojectableProposal.evidenceDigest, /^[a-f0-9]{64}$/);
+  assert.deepEqual(result.counts, { accepted: 0, harmful: 1, unproven: 0, history: 2 });
+  assert.equal(JSON.stringify(result).includes('SYNTHETIC_PRIVATE_REJECTED_PAYLOAD'), false);
+});
