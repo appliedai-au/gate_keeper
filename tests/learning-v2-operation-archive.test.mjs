@@ -122,7 +122,7 @@ test('operation reservation and request identities are checked before any archiv
 test('archive accepts exact call reservation above old programme cap without a spending gate', async () => {
   assert.equal(POLICY.version, 3);
   assert.equal(POLICY.programmeCeilingMicros, null);
-  for (const micros of [20_000_001, 60_000_000, 125_000_000]) {
+  for (const micros of [0, 20_000_001, 60_000_000, 125_000_000]) {
     const { operation, request } = fixture();
     const bound = { ...operation, reservationMicros: micros };
     const journal = new MemoryJournal();
@@ -131,7 +131,7 @@ test('archive accepts exact call reservation above old programme cap without a s
     assert.equal(claimed.operation.reservationMicros, micros);
     assert.equal((await new OperationArchive({ journal }).read()).operation.reservationMicros, micros);
   }
-  for (const micros of [0, Number.MAX_SAFE_INTEGER + 1]) {
+  for (const micros of [-1, Number.MAX_SAFE_INTEGER + 1]) {
     const { operation, request } = fixture();
     const journal = new MemoryJournal();
     await assert.rejects(new OperationArchive({ journal }).claimOperation({
