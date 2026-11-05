@@ -606,7 +606,7 @@ export class LearningController {
       requireThat(!state.receipts.includes(lease.receiptId), 'lease replay');
       integer(lease.maxCalls, 'lease maxCalls', 1, 1_000_000);
       requireThat(lease.maxCalls === request.requiredCalls, 'lease must cover exactly the complete planned call count');
-      integer(lease.reservationMicros, 'lease reservationMicros', 1, Number.MAX_SAFE_INTEGER);
+      integer(lease.reservationMicros, 'lease reservationMicros', 0, Number.MAX_SAFE_INTEGER);
       requireThat(lease.reservedMicros >= lease.reservationMicros, 'reservation absent from global total');
       this.#budget(state, lease);
       state.receipts.push(lease.receiptId);
@@ -644,7 +644,7 @@ export class LearningController {
       requireThat(!state.receipts.includes(admission.receiptId), 'historical admission receipt replay');
       integer(admission.maxCalls, 'historical maxCalls', 1, 1_000_000);
       requireThat(admission.maxCalls === request.requiredCalls, 'historical admission call count differs from plan');
-      integer(admission.reservationMicros, 'historical reservationMicros', 1, Number.MAX_SAFE_INTEGER);
+      integer(admission.reservationMicros, 'historical reservationMicros', 0, Number.MAX_SAFE_INTEGER);
       integer(admission.spentMicros, 'historical spentMicros', 0, Number.MAX_SAFE_INTEGER);
       integer(admission.reservedMicros, 'historical reservedMicros', 0, Number.MAX_SAFE_INTEGER);
       requireThat(admission.reservedMicros >= admission.reservationMicros &&
@@ -658,7 +658,7 @@ export class LearningController {
       requireThat(!state.receipts.includes(settlement.receiptId) && settlement.receiptId !== admission.receiptId,
         'historical settlement receipt replay');
       integer(settlement.actualCalls, 'reconciled actualCalls', 0, admission.maxCalls);
-      integer(settlement.actualMicros, 'reconciled actualMicros', 0, admission.reservationMicros);
+      integer(settlement.actualMicros, 'reconciled actualMicros', 0, Number.MAX_SAFE_INTEGER);
       requireThat(settlement.spentMicros >= Math.max(state.budget.spentMicros, admission.spentMicros) + settlement.actualMicros,
         'historical settlement omitted spend');
       this.#budget(state, settlement);
@@ -691,7 +691,7 @@ export class LearningController {
       });
       requireThat(!state.receipts.includes(receipt.receiptId), 'settlement replay');
       integer(receipt.actualCalls, 'actualCalls', 0, operation.maxCalls);
-      integer(receipt.actualMicros, 'actualMicros', 0, operation.reservationMicros);
+      integer(receipt.actualMicros, 'actualMicros', 0, Number.MAX_SAFE_INTEGER);
       requireThat(receipt.actualCalls >= operation.observedFreshCalls &&
         (!operation.evidenceComplete || receipt.actualCalls === operation.maxCalls),
       'billing call count contradicts verified execution evidence');
