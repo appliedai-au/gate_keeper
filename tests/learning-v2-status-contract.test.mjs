@@ -304,25 +304,29 @@ test('attempt counters are safe bounded integers while activation history can ex
   }
 });
 
-test('cumulative spend and reservations must fit the fixed programme ceiling together', () => {
-  const ceiling = POLICY.programmeCeilingMicros;
-  for (const [spent, reserved] of [[0, 0], [ceiling, 0], [0, ceiling], [12_000_000, 8_000_000], [47_000_000, 3_000_000]]) {
+test('v3 status permits verified per-run charges above the former aggregate cap', () => {
+  assert.equal(POLICY.version, 3);
+  assert.equal(POLICY.programmeCeilingMicros, null);
+  assert.equal(POLICY.usageMode, 'per-run-receipted');
+  for (const [spent, reserved] of [
+    [0, 0], [60_000_000, 0], [130_000_000, 100_000_000],
+  ]) {
     const value = status();
-    value.budget.observedSpentMicros = spent; value.budget.observedReservedMicros = reserved;
+    value.budget.observedSpentMicros = spent;
+    value.budget.observedReservedMicros = reserved;
     assert.deepEqual(projectLearningStatus(value).budget, value.budget);
   }
   for (const key of ['observedSpentMicros', 'observedReservedMicros']) {
-    for (const invalid of [-1, ceiling + 1, 0.5, NaN, Infinity, '0', null]) {
+    for (const invalid of [-1, 0.5, NaN, Infinity, '0', null]) {
       const value = status(); value.budget[key] = invalid;
       assert.throws(() => projectLearningStatus(value), undefined, key);
     }
   }
-  for (const [spent, reserved] of [[ceiling, 1], [1, ceiling], [35_000_001, 15_000_000]]) {
-    const value = status();
-    value.budget.observedSpentMicros = spent; value.budget.observedReservedMicros = reserved;
-    assert.throws(() => projectLearningStatus(value), undefined, 'combined programme balance');
-  }
-  const changedCeiling = status(); changedCeiling.budget.ceilingMicros = ceiling + 1;
+  const overflow = status();
+  overflow.budget.observedSpentMicros = Number.MAX_SAFE_INTEGER;
+  overflow.budget.observedReservedMicros = 1;
+  assert.throws(() => projectLearningStatus(overflow), undefined, 'precision');
+  const changedCeiling = status(); changedCeiling.budget.ceilingMicros = 50_000_000;
   assert.throws(() => projectLearningStatus(changedCeiling));
   const changedAuthority = status(); changedAuthority.budget.authoritative = 'model-estimate';
   assert.throws(() => projectLearningStatus(changedAuthority));
