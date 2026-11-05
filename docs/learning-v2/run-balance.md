@@ -7,7 +7,9 @@ never reinterpret old US$50 receipts as run-balance v1 records.
 
 `RunBalance` uses the existing durable journal CAS and a separately supplied
 provider charge-receipt verifier. It stores one run ID, model and provider,
-with a distinct identity for every call. It appends bounded, immutable\n`opened`, `call` and `settled` delta events, not repeated full-state\nsnapshots. Journal storage grows linearly with calls. Record the call *before* dispatch.
+with a distinct identity for every call. It appends bounded, immutable
+`opened`, `call` and `settled` delta events, not repeated full-state
+snapshots. Journal storage grows linearly with calls. Record the call *before* dispatch.
 Unknown, timed-out, errored or not-yet-reconciled calls remain **unreconciled**
 and cannot be silently counted as free. The visible balance is the sum of
 **verified actual charges only**, with the count of unreconciled calls and a
