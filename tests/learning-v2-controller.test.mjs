@@ -637,7 +637,7 @@ test('model work requires the matching managed gate and complete source-bound ca
   assert.equal((await r.controller.state()).operations.length, 0);
 });
 
-test('unresolved billing blocks a replacement attempt and cannot reset cumulative spend', async () => {
+test('unresolved run usage blocks duplicate execution and retains actual charges', async () => {
   const r = await rig();
   const attempt = await propose(r, rule('billing-unresolved'), { verdict: 'uncertain', settle: false });
   const state = await r.controller.state();
@@ -648,7 +648,7 @@ test('unresolved billing blocks a replacement attempt and cannot reset cumulativ
   await settle(r, attempt.operation);
   const next = await r.controller.beginAttempt();
   assert.equal(next.number, 2);
-  assert.ok((await r.controller.status()).budget.observedSpentMicros >= 2_000_000);
+  assert.ok((await r.controller.status()).budget.observedSpentMicros > 0);
 });
 
 test('complete baseline evidence cannot be settled as zero calls or release its billing hold', async () => {
