@@ -348,7 +348,19 @@ test('paid proposal durably pauses for protected semantic review and resumes sam
   const state = await f.authority().initialize();
   const reconstructed = reconstructAuthorityRequest(f.bundle, state, 'proposal', next);
   assert.equal(digest(reconstructed.request), digest(await f.controller.executionRequest('proposal', next)));
-  assert.equal(reconstructed.request.learner.fitExamples.some(item => item.caseId.startsWith('t6-')), false);
+  const fitCases = corpus.cases.filter(item => item.split === 'fit');
+  const checkCases = corpus.cases.filter(item => item.split === 'check');
+  assert.equal(fitCases.length, 5);
+  assert.equal(checkCases.length, 2);
+  assert.deepEqual(feedback.body.examples.map(({ caseId, code }) => ({ caseId, code })),
+    fitCases.map(({ caseId, prompt }) => ({ caseId, code: prompt })),
+    'authenticated feedback contains exactly the five frozen fit inputs');
+  assert.deepEqual(reconstructed.request.learner.fitExamples,
+    feedback.body.examples.map(({ code, feedback }) => ({ code, feedback })),
+    'learner receives only code and authenticated fit feedback, without case identifiers');
+  assert.equal(reconstructed.request.learner.fitExamples.some(example =>
+    checkCases.some(item => item.prompt === example.code)), false,
+    'neither burned check input is supplied to the learner');
   const conflict = copy(decision); conflict.verdict = 'novel';
   await assert.rejects(f.authority().applyProtectedReview(conflict), /overwrite/);
 });
