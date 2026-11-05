@@ -98,3 +98,32 @@ test('invalid configuration, unknown settlements and monetary overflow refuse wi
     /precision exceeded/);
   assert.equal((await f.journal.read()).head, before);
 });
+
+test('journal stores bounded deltas instead of quadratic full-state snapshots', async () => {
+  const f = rig();
+  await f.balance.initialize({ runId: 'run-10', provider: 'truefoundry', model: 'tfy-managed/test' });
+  for (let i = 0; i < 25; i++) {
+    const id = 'call-' + i;
+    await f.balance.recordCall(id);
+    await f.balance.settleCall(id, f.receipt('receipt-' + i, id, i + 1));
+  }
+  const entries = (await f.journal.read()).events;
+  assert.equal(entries.length, 51);
+  assert.equal(entries[0].kind, 'opened');
+  assert.equal(entries.filter(item => item.kind === 'call').length, 25);
+  assert.equal(entries.filter(item => item.kind === 'settled').length, 25);
+  assert.ok(entries.every(item => Object.keys(item).length <= 5));
+  assert.ok(entries.every(item => JSON.stringify(item).length < 400));
+  assert.equal((await f.balance.status()).chargedMicros, 325);
+});
+
+test('unexpected delta, duplicate settlement or orphaned event is refused on reopening', async () => {
+  const f = rig();
+  await f.balance.initialize({ runId: 'run-10', provider: 'truefoundry', model: 'tfy-managed/test' });
+  const before = await f.journal.read();
+  await f.journal.append(before.head, {
+    schema: 'gk-run-balance-v1', kind: 'settled', callId: 'never-recorded',
+    receipt: { receiptId: 'r', runId: 'run-10', callId: 'never-recorded', chargedMicros: 1 },
+  });
+  await assert.rejects(() => f.balance.status(), /unrecorded or repeated settlement event/);
+});
