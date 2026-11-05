@@ -4,7 +4,7 @@
  * This records the verified charges for one run, and retains uncertain calls
  * without silently treating them as free. No provider API, model access,
  * programme ceiling, or retry authority is imported or constructed here.
- * Existing policy-v2 journals are never read or migrated by this module.
+ * Append-only small delta events prevent O(N²) storage across a long run.\n * Existing policy-v2 journals are never read or migrated by this module.
  */
 import { canonical, copy, identifier, integer, record, requireThat, text } from './contracts.mjs';
 
@@ -80,8 +80,40 @@ export class RunBalance {
   async #read() {
     const snapshot = await this.#journal.read();
     requireThat(snapshot.events.length !== 0, 'run balance not initialized');
-    const last = snapshot.events.at(-1);
-    return { head: snapshot.head, state: validate(last) };
+    const [opened, ...deltas] = snapshot.events;
+    record(opened, ['schema', 'kind', 'runId', 'provider', 'model'], 'run balance opener');
+    requireThat(opened.schema === STATE_SCHEMA && opened.kind === 'opened',
+      'unknown run balance opener');
+    const state = { schema: STATE_SCHEMA, runId: opened.runId,
+      provider: opened.provider, model: opened.model, calls: [] };
+    const calls = new Map();
+    const receipts = new Set();
+    for (const event of deltas) {
+      requireThat(event?.schema === STATE_SCHEMA, 'unexpected run balance event schema');
+      if (event.kind === 'call') {
+        record(event, ['schema', 'kind', 'callId'], 'run balance call event');
+        identifier(event.callId, 'callId');
+        requireThat(!calls.has(event.callId) && calls.size < 100_000,
+          'duplicate or excessive run call event');
+        const entry = { callId: event.callId, state: 'unreconciled', receipt: null };
+        calls.set(event.callId, entry);
+        state.calls.push(entry);
+      } else if (event.kind === 'settled') {
+        record(event, ['schema', 'kind', 'callId', 'receipt'], 'run balance settlement event');
+        const entry = calls.get(event.callId);
+        requireThat(entry && entry.state === 'unreconciled',
+          'unrecorded or repeated settlement event');
+        const receipt = validReceipt(event.receipt);
+        requireThat(receipt.runId === state.runId && receipt.callId === event.callId &&
+          !receipts.has(receipt.receiptId), 'settlement event binding or receipt replay');
+        entry.state = 'settled';
+        entry.receipt = receipt;
+        receipts.add(receipt.receiptId);
+      } else {
+        requireThat(false, 'unknown run balance event kind');
+      }
+    }
+    return { head: snapshot.head, state: validate(state) };
   }
   async initialize({ runId, provider, model }) {
     identifier(runId, 'runId');
@@ -91,7 +123,8 @@ export class RunBalance {
     requireThat(snapshot.events.length === 0 && snapshot.head === null,
       'run balance already initialized');
     const state = validate({ schema: STATE_SCHEMA, runId, provider, model, calls: [] });
-    await this.#journal.append(null, state);
+    await this.#journal.append(null, { schema: STATE_SCHEMA, kind: 'opened',
+      runId: state.runId, provider: state.provider, model: state.model });
     return project(state);
   }
   async recordCall(callId) {
@@ -100,7 +133,8 @@ export class RunBalance {
     requireThat(!state.calls.some(call => call.callId === callId), 'call already recorded');
     requireThat(state.calls.length < 100_000, 'run call record bound');
     state.calls.push({ callId, state: 'unreconciled', receipt: null });
-    await this.#journal.append(head, validate(state));
+    validate(state);
+    await this.#journal.append(head, { schema: STATE_SCHEMA, kind: 'call', callId });
     return project(state);
   }
   async settleCall(callId, receiptEnvelope) {
@@ -122,7 +156,9 @@ export class RunBalance {
     call.receipt = verified;
     validate(state);
     project(state); // detect precision overflow before publication
-    await this.#journal.append(head, state);
+    await this.#journal.append(head, {
+      schema: STATE_SCHEMA, kind: 'settled', callId, receipt: verified,
+    });
     return project(state);
   }
   async status() { return project((await this.#read()).state); }
