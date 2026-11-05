@@ -35,7 +35,7 @@ function hostFixture(pending = false) {
     baselineNonAdmission: null, baselinePlan: pending ? { privatePlan: PRIVATE } : null,
     budget: { spentMicros: 0, reservedMicros: 0, privateReceipt: PRIVATE },
     gate: pending ? { privateEvidence: PRIVATE } : null, history: [{ privateFeedback: PRIVATE }] };
-  return { state, status: () => ({ ...statusView(state), pendingOperation: pending ? 'operation:fixture' : null,
+  return { state, status: () => ({ ...statusView(state, { pendingOperationId: pending ? 'operation:fixture' : null }),
     dispatch: { pending: pending ? { operationId: 'operation:fixture', kind: 'baseline',
       stage: 'admission-intent' } : null, completed: 0 } }) };
 }

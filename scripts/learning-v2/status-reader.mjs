@@ -115,8 +115,7 @@ export function createReadOnlyLearningStatusReader({ directory, repositoryRoot, 
     const stage = pending ? pending.notAdmitted ? 'not-admitted-observed' :
       pending.settlement ? 'settlement-observed' :
         pending.admission ? 'admission-observed' : 'admission-intent' : null;
-    const projected = { ...statusView(state),
-      pendingOperation: pending?.operation.id || state.operations.find(item => !item.settled)?.id || null,
+    const projected = { ...statusView(state, { pendingOperationId: pending?.operation.id || null }),
       dispatch: { pending: pending ?
         { operationId: pending.operation.id, kind: pending.operation.kind, stage } : null,
         completed: dispatch.entries.filter(item => item.resolution).length } };

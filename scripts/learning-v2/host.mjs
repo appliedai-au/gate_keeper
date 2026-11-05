@@ -166,8 +166,7 @@ function compose(prepared, createDirectories) {
     const pending = dispatch.pending;
     const stage = pending ? pending.notAdmitted ? 'not-admitted-observed' :
       pending.settlement ? 'settlement-observed' : pending.admission ? 'admission-observed' : 'admission-intent' : null;
-    return { ...statusView(state), pendingOperation: pending?.operation.id ||
-      state.operations.find(item => !item.settled)?.id || null,
+    return { ...statusView(state, { pendingOperationId: pending?.operation.id || null }),
     dispatch: { pending: pending ? { operationId: pending.operation.id, kind: pending.operation.kind, stage } : null,
       completed: dispatch.entries.filter(item => item.resolution).length } };
   }
@@ -182,7 +181,7 @@ function compose(prepared, createDirectories) {
   async function idle() {
     const result = await bound();
     requireThat(!result.dispatch.pending && !result.state.operations.some(item => !item.settled),
-      'dispatch or billing unresolved; inspect and reconcile without retry');
+      'dispatch or execution unresolved; inspect and reconcile without retry');
     return result;
   }
 
@@ -256,6 +255,17 @@ function compose(prepared, createDirectories) {
     async activateVersion(id, value, action = 'activate') {
       const signed = envelope(value);
       return exclusive(async () => { await idle(); await controller.activateVersion(id, signed, action); return status(); });
+    },
+    async reconcileOperationUsage(id, value) {
+      identifier(id, 'usage operationId');
+      const signed = envelope(value);
+      // Accounting may catch up while an unrelated dispatch awaits recovery.
+      // This cannot admit, settle, retry, or complete any dispatch operation.
+      return exclusive(async () => {
+        await bound();
+        await controller.reconcileOperationUsage(id, signed);
+        return status();
+      });
     },
     async dispatch(kind, attemptId = null) {
       requireThat(KINDS.includes(kind), 'host operation kind');

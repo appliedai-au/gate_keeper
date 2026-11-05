@@ -4,7 +4,7 @@ export const LEARNING_STATUS_PATH = '/gatekeeper/learning-v2/status';
 export const MAX_STATUS_BYTES = 16_384;
 
 const POLICY = Object.freeze({
-  schema: 'gk-learning-v2-policy', version: 3, attempts: 10,
+  schema: 'gk-learning-v2-policy', version: 4, attempts: 10,
   minimumGain: 1, confirmationPairs: 3, additionalPairs: 0,
   confirmationDecision: 'every-pair-passes', passes: 2,
   programmeCeilingMicros: null, usageMode: 'per-run-receipted', provider: 'truefoundry', memory: 'off',
@@ -93,11 +93,19 @@ export function projectLearningStatus(value, binding) {
   const confirmedVersions = integer(value.confirmedVersions, POLICY.attempts);
   const pendingOperation = value.pendingOperation === null ? null : identifier(value.pendingOperation);
 
-  record(value.budget, ['ceilingMicros', 'observedSpentMicros', 'observedReservedMicros', 'authoritative']);
+  record(value.budget, ['ceilingMicros', 'observedSpentMicros', 'observedReservedMicros',
+    'unknownCostOperations', 'unknownCostCalls', 'pendingExecutionOperations', 'complete', 'authoritative']);
   check(value.budget.ceilingMicros === POLICY.programmeCeilingMicros);
   const observedSpentMicros = integer(value.budget.observedSpentMicros);
   const observedReservedMicros = integer(value.budget.observedReservedMicros);
   check(Number.isSafeInteger(observedSpentMicros + observedReservedMicros));
+  const unknownCostOperations = integer(value.budget.unknownCostOperations);
+  const unknownCostCalls = integer(value.budget.unknownCostCalls);
+  const pendingExecutionOperations = integer(value.budget.pendingExecutionOperations, 1);
+  check(unknownCostOperations !== 0 || unknownCostCalls === 0);
+  check((pendingOperation === null) === (pendingExecutionOperations === 0));
+  const complete = unknownCostOperations === 0 && pendingExecutionOperations === 0;
+  check(value.budget.complete === complete);
   check(value.budget.authoritative === 'external-gateway');
   const qualification = choice(value.qualification, ['managed-source-gate-passed', 'source-only-unqualified']);
   check(value.deployment === 'not-managed-by-learning-core');
@@ -120,7 +128,8 @@ export function projectLearningStatus(value, binding) {
     policy: { ...POLICY }, counts, originalVersion, incumbentVersion,
     baseline: { status: baselineStatus, failureCode }, confirmedVersions, pendingOperation,
     budget: { ceilingMicros: POLICY.programmeCeilingMicros, observedSpentMicros,
-      observedReservedMicros, authoritative: 'external-gateway' },
+      observedReservedMicros, unknownCostOperations, unknownCostCalls,
+      pendingExecutionOperations, complete, authoritative: 'external-gateway' },
     qualification, deployment: 'not-managed-by-learning-core', dispatch: { pending, completed },
   };
 }

@@ -7,7 +7,65 @@
  * Append-only small delta events prevent O(N²) storage across a long run.
  * Existing policy-v2 journals are never read or migrated by this module.
  */
-import { canonical, copy, identifier, integer, record, requireThat, text } from './contracts.mjs';
+import { canonical, copy, digest, hash, identifier, integer, record, requireThat, text } from './contracts.mjs';
+
+/**
+ * Operation-level run balance for the controller's existing durable journal.
+ * A provider may price an operation as a batch; do not invent a per-call split.
+ * The controller authenticates each original settlement and any later charge
+ * before recording it. This projection never signs or grants execution rights.
+ * Null means unknown, including when the operation made zero model calls.
+ */
+export function operationRunBalance(operations) {
+  requireThat(Array.isArray(operations), 'operation run balance requires operations');
+  canonical(operations);
+  const seen = new Set();
+  const balance = { chargedMicros: 0, reservedMicros: 0,
+    unknownCostOperations: 0, unknownCostCalls: 0, pendingExecutionOperations: 0, complete: true };
+  const add = (key, amount) => {
+    integer(amount, `operation balance ${key}`);
+    const total = balance[key] + amount;
+    requireThat(Number.isSafeInteger(total), 'operation run balance precision exceeded');
+    balance[key] = total;
+  };
+  for (const operation of operations) {
+    identifier(operation.id, 'run operation id');
+    requireThat(!seen.has(operation.id), 'duplicate run operation');
+    seen.add(operation.id);
+    requireThat(typeof operation.settled === 'boolean', 'operation execution disposition required');
+    integer(operation.reservationMicros, 'operation reservationMicros');
+    if (!operation.settled) {
+      requireThat(!operation.usageReconciliation, 'pending execution cannot have reconciled charges');
+      add('reservedMicros', operation.reservationMicros);
+      add('pendingExecutionOperations', 1);
+      continue;
+    }
+    integer(operation.maxCalls, 'operation maxCalls', 1, 1_000_000);
+    integer(operation.actualCalls, 'operation actualCalls', 0, operation.maxCalls);
+    let charge = operation.actualMicros;
+    if (operation.usageReconciliation) {
+      requireThat(charge === null, 'known operation charge cannot be replaced');
+      const reconciled = operation.usageReconciliation;
+      record(reconciled, ['receiptId', 'actualMicros', 'receiptDigest', 'serialized'], 'operation usage reconciliation');
+      identifier(reconciled.receiptId, 'usage receiptId');
+      hash(reconciled.receiptDigest, 'usage receiptDigest');
+      text(reconciled.serialized, 'original usage receipt', 16_384);
+      requireThat(digest(reconciled.serialized) === reconciled.receiptDigest, 'usage receipt bytes changed');
+      integer(reconciled.actualMicros, 'reconciled operation actualMicros');
+      charge = reconciled.actualMicros;
+    }
+    if (charge === null) {
+      add('unknownCostOperations', 1);
+      add('unknownCostCalls', operation.actualCalls);
+    } else {
+      add('chargedMicros', charge);
+    }
+  }
+  requireThat(Number.isSafeInteger(balance.chargedMicros + balance.reservedMicros),
+    'operation run total precision exceeded');
+  balance.complete = balance.unknownCostOperations === 0 && balance.pendingExecutionOperations === 0;
+  return balance;
+}
 
 const STATE_SCHEMA = 'gk-run-balance-v1';
 const CALL_STATES = ['unreconciled', 'settled'];

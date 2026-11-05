@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 export const POLICY = Object.freeze({
-  schema: 'gk-learning-v2-policy', version: 3, attempts: 10,
+  schema: 'gk-learning-v2-policy', version: 4, attempts: 10,
   minimumGain: 1, confirmationPairs: 3, additionalPairs: 0,
   confirmationDecision: 'every-pair-passes', passes: 2,
   programmeCeilingMicros: null, usageMode: 'per-run-receipted', provider: 'truefoundry', memory: 'off',
