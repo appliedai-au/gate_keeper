@@ -192,8 +192,8 @@ export class LearningController {
       managedGateDigest: state.gate?.digest || null, requiredCalls, plan, prompts, learner });
   }
 
-  /** Host manifest, not a model prompt. Historical rejected/unresolved rules
-   * are excluded; only the current proposal is included for its own evaluation. */
+  /** The host manifest binds the learner's retained procedural memory separately
+   * from the version artifacts used to evaluate the incumbent and candidate. */
   async executionRequest(kind, attemptId = null) {
     return this.#request(await this.state(), kind, attemptId);
   }
@@ -549,7 +549,8 @@ export class LearningController {
       examples = body.examples;
     }
     return learnerRequest({ scope: state.config.scope, activeVersion: currentVersion(state),
-      baselineInstructions: state.config.baseInstructions, fitExamples: examples });
+      baselineInstructions: state.config.baseInstructions, fitExamples: examples,
+      retainedReferences: referenceHistory(state) });
   }
 
   async learnerInput(feedbackEnvelope = null) {

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { POLICY, version } from '../scripts/learning-v2/contracts.mjs';
 import { statusView } from '../scripts/learning-v2/prompts.mjs';
 import {
-  LEARNING_STATUS_PATH, MAX_STATUS_BYTES, projectLearningStatus,
+  LEARNING_STATUS_PATH, PUBLIC_LEARNING_STATUS_PATH, MAX_STATUS_BYTES, projectLearningStatus,
   projectLearningStatusResponse, validateLearningStatusBinding,
 } from '../integrations/base44/shared/learning-status-contract.js';
 
@@ -65,6 +65,7 @@ const RECORDS = [
 
 test('shared route and transport byte ceiling remain explicit constants', () => {
   assert.equal(LEARNING_STATUS_PATH, '/gatekeeper/learning-v2/status');
+  assert.equal(PUBLIC_LEARNING_STATUS_PATH, '/gatekeeper/learning-v3/status');
   assert.equal(MAX_STATUS_BYTES, 16_384);
   // The transport enforces its byte ceiling; the pure projector validates data.
   assert.ok(Buffer.byteLength(JSON.stringify(response()), 'utf8') < MAX_STATUS_BYTES);
@@ -450,3 +451,4 @@ test('completed dispatch count permits safe history growth and refuses invalid n
     assert.throws(() => projectLearningStatus(value));
   }
 });
+

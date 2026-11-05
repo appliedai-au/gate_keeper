@@ -1,13 +1,28 @@
-import { copy, identifier, procedure, requireThat, text } from './contracts.mjs';
+import { POLICY, canonical, copy, identifier, procedure, requireThat, text } from './contracts.mjs';
 import { operationRunBalance } from './run-balance.mjs';
+
+const RETAINED_OUTCOMES = new Set(['rejected', 'unproven', 'legacy-positive', 'duplicate', 'unresolved',
+  'invalid', 'noCoverage', 'ready', 'screenPlanned', 'provisional', 'confirmationPlanned', 'confirmed']);
+
+/** Normalized procedural memory only; never raw bank records or evaluation evidence. */
+function retainedProcedureMemory(references) {
+  requireThat(Array.isArray(references) && references.length <= 256 + POLICY.attempts,
+    'retained procedure count');
+  canonical(references);
+  return references.map(reference => {
+    requireThat(reference && typeof reference === 'object' && !Array.isArray(reference), 'retained reference');
+    requireThat(RETAINED_OUTCOMES.has(reference.outcome), 'retained procedure outcome');
+    return { outcome: reference.outcome, procedure: procedure(reference.procedure, reference.procedure?.scope) };
+  });
+}
 
 /**
  * Trusted-host projection; the controller authenticates confirmation and each
  * original-baseline fit example before calling it. Bank rows are never example
- * inputs. This helper emits only validated procedure fields and example text;
- * wrapper metadata and historical decision records have no output path.
+ * inputs. Retained normalized procedures carry only their recorded disposition;
+ * source identifiers, review reasons and evaluation evidence have no output path.
  */
-export function learnerRequest({ scope, activeVersion, baselineInstructions, fitExamples = [] }) {
+export function learnerRequest({ scope, activeVersion, baselineInstructions, fitExamples = [], retainedReferences = [] }) {
   text(scope, 'fault focus', 128);
   requireThat(activeVersion && activeVersion.confirmed === true && Array.isArray(activeVersion.rules),
     'confirmed version required');
@@ -16,10 +31,16 @@ export function learnerRequest({ scope, activeVersion, baselineInstructions, fit
     instructions: 'Propose exactly one conditional code-review procedure for the supplied fault focus. ' +
       'Return JSON with scope, languages, applicability, trigger, evidence, action, and sufficientGuard. ' +
       'State a concrete evidence test and when the existing guard is sufficient. ' +
+      'Use retainedProcedures to avoid repeating or paraphrasing prior proposals; propose a substantively different procedure. ' +
+      'Only confirmedProcedures are active. A legacy-positive outcome is historical, not current confirmation. ' +
+      'Unproven, unresolved and in-progress outcomes do not establish benefit. ' +
+      'Opaque or hash-only historical markers leave the original content unknown; never invent its meaning. ' +
+      'A rejected combined rule bundle records the combined outcome without establishing isolated outcomes for its components. ' +
       'Do not include task identifiers, scores, claims of novelty, or activation instructions.',
     scope,
     baselineInstructions: text(baselineInstructions, 'baseline instructions', 100_000),
     confirmedProcedures: activeVersion.rules.map(rule => procedure(rule.procedure, scope)),
+    retainedProcedures: retainedProcedureMemory(retainedReferences),
     fitExamples: fitExamples.map(example => ({ code: text(example.code, 'fit code', 50_000),
       feedback: text(example.feedback, 'fit feedback', 10_000) })),
   };

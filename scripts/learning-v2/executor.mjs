@@ -155,7 +155,8 @@ export function createLearningExecutor({ controller, client, runtime, caseInputs
 
     if (held.kind === 'proposal') {
       const learner = request.learner;
-      record(learner, ['instructions', 'scope', 'baselineInstructions', 'confirmedProcedures', 'fitExamples'], 'learner projection');
+      record(learner, ['instructions', 'scope', 'baselineInstructions', 'confirmedProcedures',
+        'retainedProcedures', 'fitExamples'], 'learner projection');
       const { instructions, ...visible } = learner;
       const result = await invoke({ kind: 'proposal' }, { instructions, message: canonical(visible) });
       let candidate;
