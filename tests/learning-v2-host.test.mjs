@@ -198,6 +198,111 @@ function fixture(t) {
   return f;
 }
 
+async function pausedProposalReview(f, verdict = 'novel') {
+  const originalIssue = f.options.authorities.novelty.issue;
+  let review;
+  f.options.authorities.novelty.issue = async input => {
+    const issued = await originalIssue(input);
+    review = f.seal('novelty', { ...issued.body, verdict });
+    const error = new Error('Independent fixture review queued');
+    error.code = 'GK_AUTHORITY_REVIEW_PENDING'; throw error;
+  };
+  await f.start();
+  await f.host.dispatch('baseline');
+  const attempt = await f.host.beginAttempt();
+  await assert.rejects(f.host.dispatch('proposal', attempt.attemptId), /MANAGED_OPERATION_UNRESOLVED/);
+  const snapshot = await f.host.inspect();
+  assert.equal(snapshot.state.attempts.at(-1).status, 'reserved');
+  assert.ok(snapshot.dispatch.pending);
+  return { operationId: snapshot.dispatch.pending.operation.id, noveltyEnvelope: review, attemptId: attempt.attemptId };
+}
+
+test('delayed proposal review resumes the original call and preserves first receipt bytes on replay', async t => {
+  const f = fixture(t), resume = await pausedProposalReview(f);
+  const calls = f.turnRequests.length, admissions = f.admissions.length;
+  f.controls.priceUnknown = true;
+  await f.reopen();
+  await f.host.resumeProposalReview({ operationId: resume.operationId, noveltyEnvelope: resume.noveltyEnvelope });
+  let saved = await f.host.inspect();
+  assert.equal(saved.dispatch.pending, null);
+  assert.equal(saved.state.attempts.at(-1).status, 'ready');
+  const operation = saved.state.operations.find(item => item.id === resume.operationId);
+  assert.equal(operation.actualCalls, 1);
+  assert.equal(operation.actualMicros, null);
+  const archive = await f.host.inspectOperation(resume.operationId);
+  const firstBytes = archive.archive.artifacts.find(item => item.id === 'novelty-receipt').payload.serialized;
+  assert.equal(firstBytes, JSON.stringify(resume.noveltyEnvelope));
+  const before = await f.journal('controller').read(), dispatchBefore = await f.journal('dispatch').read();
+  const settlements = f.settlements.length;
+  await f.reopen();
+  await f.host.resumeProposalReview({ operationId: resume.operationId,
+    noveltyEnvelope: { signature: resume.noveltyEnvelope.signature, body: resume.noveltyEnvelope.body } });
+  assert.equal((await f.journal('controller').read()).head, before.head);
+  assert.equal((await f.journal('dispatch').read()).head, dispatchBefore.head);
+  assert.equal((await f.host.inspectOperation(resume.operationId)).archive.artifacts[0].payload.serialized, firstBytes);
+  assert.equal(f.turnRequests.length, calls); assert.equal(f.admissions.length, admissions);
+  assert.equal(f.settlements.length, settlements);
+});
+
+test('delayed review rejects wrong role and candidate bindings without consuming the pending proposal', async t => {
+  const f = fixture(t), resume = await pausedProposalReview(f);
+  const before = await f.journal('controller').read(), calls = f.turnRequests.length;
+  await assert.rejects(f.host.resumeProposalReview({ operationId: resume.operationId,
+    noveltyEnvelope: f.seal('evaluation', resume.noveltyEnvelope.body) }));
+  await assert.rejects(f.host.resumeProposalReview({ operationId: resume.operationId,
+    noveltyEnvelope: f.seal('novelty', { ...resume.noveltyEnvelope.body, candidateDigest: sha('wrong candidate') }) }),
+  /proposal review candidateDigest mismatch/);
+  assert.equal((await f.journal('controller').read()).head, before.head);
+  const saved = await f.host.inspect();
+  assert.equal(saved.state.attempts.at(-1).status, 'reserved');
+  assert.equal(saved.dispatch.pending.operation.id, resume.operationId);
+  assert.equal(f.turnRequests.length, calls);
+  assert.deepEqual((await f.host.inspectOperation(resume.operationId)).archive.artifacts, []);
+});
+
+test('negative novelty still requires the one executed proposal call, even with unknown price', async t => {
+  const f = fixture(t), resume = await pausedProposalReview(f, 'uncertain');
+  f.controls.priceUnknown = true;
+  const originalSettle = f.options.gateway.settle;
+  f.options.gateway.settle = async input => {
+    const signed = await originalSettle(input);
+    return f.seal('budget', { ...signed.body, actualCalls: 0 });
+  };
+  const calls = f.turnRequests.length, admissions = f.admissions.length;
+  await f.reopen();
+  await assert.rejects(f.host.resumeProposalReview({ operationId: resume.operationId,
+    noveltyEnvelope: resume.noveltyEnvelope }), /host gateway actualCalls mismatch/);
+  let saved = await f.host.inspect();
+  assert.equal(saved.state.attempts.at(-1).status, 'unresolved');
+  assert.equal(saved.state.operations.find(item => item.id === resume.operationId).settled, false);
+  assert.equal(saved.dispatch.pending.settlement, null);
+  f.options.gateway.settle = originalSettle;
+  await f.reopen();
+  await f.host.resumeProposalReview({ operationId: resume.operationId, noveltyEnvelope: resume.noveltyEnvelope });
+  saved = await f.host.inspect();
+  assert.equal(saved.dispatch.pending, null);
+  const operation = saved.state.operations.find(item => item.id === resume.operationId);
+  assert.equal(operation.actualCalls, 1); assert.equal(operation.actualMicros, null);
+  assert.equal(f.turnRequests.length, calls); assert.equal(f.admissions.length, admissions);
+});
+
+test('delayed review settlement recovery consumes no new proposal and refuses a different decision', async t => {
+  const f = fixture(t), resume = await pausedProposalReview(f);
+  f.controls.settlement = 'lost-after-settlement';
+  const calls = f.turnRequests.length, admissions = f.admissions.length;
+  await assert.rejects(f.host.resumeProposalReview({ operationId: resume.operationId,
+    noveltyEnvelope: resume.noveltyEnvelope }), /fixture settlement response lost/);
+  assert.equal((await f.host.inspect()).state.attempts.at(-1).status, 'ready');
+  await f.reopen();
+  await assert.rejects(f.host.resumeProposalReview({ operationId: resume.operationId,
+    noveltyEnvelope: f.seal('novelty', { ...resume.noveltyEnvelope.body, verdict: 'uncertain' }) }),
+  /proposal review differs from first retained receipt/);
+  f.controls.settlement = null;
+  await f.host.resumeProposalReview({ operationId: resume.operationId, noveltyEnvelope: resume.noveltyEnvelope });
+  assert.equal((await f.host.inspect()).dispatch.pending, null);
+  assert.equal(f.turnRequests.length, calls); assert.equal(f.admissions.length, admissions);
+});
+
 async function readyAttempt(f) {
   await f.start(); await f.host.dispatch('baseline'); return f.host.beginAttempt();
 }

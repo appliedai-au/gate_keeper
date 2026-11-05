@@ -1,6 +1,7 @@
 // Shared public boundary only. Safe to include in the browser and Deno bundles.
 // No host state, credentials, model clients, prompts or journal imports belong here.
 export const LEARNING_STATUS_PATH = '/gatekeeper/learning-v2/status';
+export const PUBLIC_LEARNING_STATUS_PATH = '/gatekeeper/learning-v3/status';
 export const MAX_STATUS_BYTES = 16_384;
 
 const POLICY = Object.freeze({
@@ -144,3 +145,4 @@ export function projectLearningStatusResponse(value, binding) {
   return { schema: 'gk-learning-v2-status-response', checkedAt: value.checkedAt,
     status: projectLearningStatus(value.status, binding) };
 }
+

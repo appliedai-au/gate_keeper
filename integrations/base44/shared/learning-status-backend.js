@@ -1,6 +1,6 @@
 // Portable Web API bridge. Credentials and auth are injected by the selected
 // Base44 runtime entrypoint; this module must never be included in a UI bundle.
-import { LEARNING_STATUS_PATH, MAX_STATUS_BYTES, projectLearningStatusResponse,
+import { PUBLIC_LEARNING_STATUS_PATH, MAX_STATUS_BYTES, projectLearningStatusResponse,
   validateLearningStatusBinding } from './learning-status-contract.js';
 
 const ORIGIN = 'https://proxy-production-9553.up.railway.app';
@@ -12,8 +12,6 @@ const json = (value, status) => Response.json(value, { status, headers: NO_STORE
 const unavailable = () => json({ error: 'learning_status_unavailable' }, 503);
 const isIdentifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 const isToken = value => typeof value === 'string' && /^[A-Za-z0-9_-]{32,256}$/.test(value);
-const isCredential = value => typeof value === 'string' && value.length > 0 && value.length <= 1024 &&
-  /^[\x20-\x7e]+$/.test(value);
 
 // Fetch timeout covers headers AND the response stream. Bound actual bytes,
 // independently of an absent, dishonest or compressed Content-Length header.
@@ -97,20 +95,18 @@ export function createLearningStatusBackend({ authenticate, readSecret, fetchImp
 
     let upstream;
     try {
-      const [experimentId, sourceCommit, readToken, username, password] = await Promise.all([
+      const [experimentId, sourceCommit, readToken] = await Promise.all([
         readSecret('GATEKEEPER_LEARNING_EXPERIMENT_ID'), readSecret('GATEKEEPER_LEARNING_SOURCE_COMMIT'),
-        readSecret('GATEKEEPER_LEARNING_READ_TOKEN'), readSecret('GATEKEEPER_PROXY_USERNAME'),
-        readSecret('GATEKEEPER_PROXY_PASSWORD'),
+        readSecret('GATEKEEPER_LEARNING_READ_TOKEN'),
       ]);
       const binding = validateLearningStatusBinding({ ownerId, experimentId, sourceCommit });
-      if (!isToken(readToken) || !isCredential(username) || username.includes(':') || !isCredential(password)) {
+      if (!isToken(readToken)) {
         return unavailable();
       }
       const signal = AbortSignal.timeout(TIMEOUT_MS);
-      upstream = await fetchImpl(ORIGIN + LEARNING_STATUS_PATH, {
+      upstream = await fetchImpl(ORIGIN + PUBLIC_LEARNING_STATUS_PATH, {
         method: 'GET', redirect: 'error', cache: 'no-store', signal,
-        headers: { Authorization: 'Basic ' + btoa(username + ':' + password),
-          'X-Gatekeeper-Learning-Token': readToken,
+        headers: { 'X-Gatekeeper-Learning-Token': readToken,
           'X-Gatekeeper-Learning-Owner': ownerId, Accept: 'application/json' },
       });
       if (upstream.status !== 200 || upstream.redirected) { await discard(upstream); return unavailable(); }
@@ -124,3 +120,4 @@ export function createLearningStatusBackend({ authenticate, readSecret, fetchImp
     }
   };
 }
+

@@ -22,9 +22,11 @@ runtime-reachability check; it cannot establish learning progress or qualificati
 The source path is the Learning component, the shared strict public contract,
 one of the two Base44 function entrypoints, and a capability-only handler in the
 owned runtime integration. The fixed upstream path is
-`https://proxy-production-9553.up.railway.app/gatekeeper/learning-v2/status`.
-That route is **not mounted** by the current Dockerfile or packaged TrueForge
-entrypoint. Its authenticated absence must remain an unavailable state.
+`https://proxy-production-9553.up.railway.app/gatekeeper/learning-v3/status`.
+The reviewed public Proxy recipe rewrites only that path to the existing private
+status handler. Deploy `Dockerfile.status-proxy` after full qualification; until
+the route and private owner binding are configured, the app remains unavailable.
+See [the public status transport](../../docs/learning-v2/public-status-transport.md).
 
 | Prepared file | Responsibility |
 | --- | --- |
@@ -48,12 +50,13 @@ mismatched token/owner configuration; it never selects a different experiment.
 
 Server configuration requires `GATEKEEPER_LEARNING_OWNER_ID`,
 `GATEKEEPER_LEARNING_EXPERIMENT_ID`, `GATEKEEPER_LEARNING_SOURCE_COMMIT`,
-`GATEKEEPER_LEARNING_READ_TOKEN`, and the existing
-`GATEKEEPER_PROXY_USERNAME` / `GATEKEEPER_PROXY_PASSWORD`. No values are included
-in source, and none were provisioned for this increment. The read token must be
+`GATEKEEPER_LEARNING_READ_TOKEN`. The Learning function does not read or forward
+general Proxy credentials. No values are included in source. The read token must be
 an independently provisioned opaque 32–256-character base64url value, scoped by
 the host to the same fixed owner, experiment and source. The existing broad
-Basic proxy credential alone does not authorize a learning-state read.
+Basic proxy credential alone does not authorize a learning-state read. Ordinary
+TrueForge routes retain that credential; the separate legacy readiness function
+continues to have its own existing configuration requirements.
 
 Use only the function convention verified in the existing app. Include both
 shared modules in its server function bundle, and the contract module in its
@@ -181,4 +184,5 @@ See `docs/review-control-settings.md` for the complete checkpoint, RLS, installa
 ## Current status
 
 The code in `functions/` and `components/` is **prepared only**. It has not been installed, deployed or tested inside the Base44 app. The CLI and Base44 editor require the authenticated owner's Base44 session. Railway has not been changed by this source-only work.
+
 

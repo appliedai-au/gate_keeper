@@ -5,7 +5,7 @@ import { statusView } from '../scripts/learning-v2/prompts.mjs';
 import { createLearningStatusEndpoint, createLearningStatusTokenAuthenticator }
   from '../scripts/learning-v2/status-endpoint.mjs';
 import { createLearningStatusBackend } from '../integrations/base44/shared/learning-status-backend.js';
-import { LEARNING_STATUS_PATH, MAX_STATUS_BYTES }
+import { LEARNING_STATUS_PATH, PUBLIC_LEARNING_STATUS_PATH, MAX_STATUS_BYTES }
   from '../integrations/base44/shared/learning-status-contract.js';
 
 // SOURCE ONLY for the managed remote gate. The HTTP handlers, authenticator and
@@ -21,7 +21,7 @@ const BASIC = 'Basic ' + Buffer.from(`${USERNAME}:${PASSWORD}`).toString('base64
 const PRIVATE = 'PRIVATE_HOST_STATE_CANARY';
 const ERROR = 'PRIVATE_SERVICE_ERROR_CANARY';
 const BROWSER_AUTH = 'BROWSER_AUTH_PRIVATE_CANARY';
-const PROXY_URL = 'https://proxy-production-9553.up.railway.app' + LEARNING_STATUS_PATH;
+const PROXY_URL = 'https://proxy-production-9553.up.railway.app' + PUBLIC_LEARNING_STATUS_PATH;
 const BROWSER_URL = 'https://base44.example/functions/getLearningStatus';
 const OWNER_SECRET = 'GATEKEEPER_LEARNING_OWNER_ID';
 const fixedClock = () => new Date(NOW);
@@ -104,8 +104,7 @@ function backendFixture({ user = { id: BINDING.ownerId, role: 'admin' }, secrets
   const configured = { [OWNER_SECRET]: BINDING.ownerId,
     GATEKEEPER_LEARNING_EXPERIMENT_ID: BINDING.experimentId,
     GATEKEEPER_LEARNING_SOURCE_COMMIT: BINDING.sourceCommit,
-    GATEKEEPER_LEARNING_READ_TOKEN: TOKEN, GATEKEEPER_PROXY_USERNAME: USERNAME,
-    GATEKEEPER_PROXY_PASSWORD: PASSWORD, ...secrets };
+    GATEKEEPER_LEARNING_READ_TOKEN: TOKEN, ...secrets };
   const events = [], secretReads = [], fetchCalls = [];
   const handle = createLearningStatusBackend({
     authenticate: async request => { events.push('authenticate');
@@ -256,7 +255,7 @@ test('backend accepts only the fixed empty JSON request and cancels early reject
 test('backend refuses missing or unsafe server configuration without sending credentials', async () => {
   for (const secrets of [
     { GATEKEEPER_LEARNING_READ_TOKEN: undefined }, { GATEKEEPER_LEARNING_READ_TOKEN: 'short' },
-    { GATEKEEPER_PROXY_PASSWORD: undefined }, { GATEKEEPER_PROXY_USERNAME: 'ambiguous:user' },
+    { GATEKEEPER_LEARNING_READ_TOKEN: 'x'.repeat(257) }, { GATEKEEPER_LEARNING_EXPERIMENT_ID: '../foreign' },
     { GATEKEEPER_LEARNING_SOURCE_COMMIT: 'not-a-commit' },
   ]) {
     const f = backendFixture({ secrets });
@@ -286,12 +285,14 @@ test('real backend, token authenticator and endpoint compose a fixed read-only p
       assert.equal(Object.hasOwn(init, 'body'), false);
       assert.ok(init.signal instanceof AbortSignal);
       const headers = new Headers(init.headers);
-      assert.equal(headers.get('Authorization'), BASIC);
+      assert.equal(headers.get('Authorization'), null);
       assert.equal(headers.get('X-Gatekeeper-Learning-Token'), TOKEN);
       assert.equal(headers.get('X-Gatekeeper-Learning-Owner'), BINDING.ownerId);
       assert.equal(headers.get('Accept'), 'application/json');
       assert.equal(headers.get('X-Caller-Private'), null);
-      const result = await endpoint(new Request(url, { method: init.method, headers, signal: init.signal }));
+      // The separately qualified Caddy route rewrites only this exact path.
+      const internalUrl = new URL(url); internalUrl.pathname = LEARNING_STATUS_PATH;
+      const result = await endpoint(new Request(internalUrl, { method: init.method, headers, signal: init.signal }));
       result.headers.set('Set-Cookie', PRIVATE);
       return result;
     } });
@@ -315,7 +316,8 @@ test('cross-owner token configuration cannot expose the same experiment and sour
   const f = backendFixture({ secrets: { GATEKEEPER_LEARNING_READ_TOKEN: foreignToken },
     fetchImpl: async (url, init) => {
       assert.equal(new Headers(init.headers).get('X-Gatekeeper-Learning-Owner'), BINDING.ownerId);
-      const result = await endpoint(new Request(url, { method: init.method, headers: init.headers }));
+      const internalUrl = new URL(url); internalUrl.pathname = LEARNING_STATUS_PATH;
+      const result = await endpoint(new Request(internalUrl, { method: init.method, headers: init.headers }));
       upstreamStatus = result.status; return result;
     } });
   await responseBody(await f.handle(browserRequest({
@@ -375,3 +377,4 @@ test('backend bounds actual upstream bytes and cancels overflow before reading t
   assert.equal(body.observed.pulls, 0);
   assert.equal(body.observed.cancelled, 1);
 });
+

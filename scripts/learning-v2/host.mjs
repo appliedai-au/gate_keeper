@@ -8,7 +8,8 @@
 import { createHash, createPublicKey } from 'node:crypto';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { verifyEnvelope } from '../learning-trust.mjs';
-import { canonical, configuration, copy, digest, identifier, record, requireThat, text } from './contracts.mjs';
+import { canonical, configuration, copy, digest, identifier, procedure, procedureFingerprint,
+  record, requireThat, text } from './contracts.mjs';
 import { LearningController } from './controller.mjs';
 import { DispatchLedger } from './dispatch-ledger.mjs';
 import { createLearningExecutor } from './executor.mjs';
@@ -16,6 +17,7 @@ import { FileJournal } from './journal.mjs';
 import { OperationArchive } from './operation-archive.mjs';
 import { statusView } from './prompts.mjs';
 import { dispatchManagedOperation } from './runtime.mjs';
+import { turnInputDigest } from './trueforge-turn.mjs';
 
 const KINDS = ['baseline', 'proposal', 'screen', 'confirmation'];
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -264,6 +266,131 @@ function compose(prepared, createDirectories) {
       return exclusive(async () => {
         await bound();
         await controller.reconcileOperationUsage(id, signed);
+        return status();
+      });
+    },
+    /** Consume a delayed independent review of the original archived proposal.
+     * This explicit recovery path neither admits nor invokes an executor. The
+     * first receipt bytes and original call survive every settlement crash. */
+    async resumeProposalReview(value) {
+      record(value, ['operationId', 'noveltyEnvelope'], 'proposal review resume');
+      identifier(value.operationId, 'review operationId');
+      const id = value.operationId, signed = envelope(value.noveltyEnvelope);
+      return exclusive(async () => {
+        let { state, dispatch } = await bound();
+        const entry = dispatch.entries.find(item => item.operation.id === id);
+        let held = state.operations.find(item => item.id === id);
+        requireThat(entry && held?.kind === 'proposal' && held.maxCalls === 1,
+          'recorded proposal operation required');
+        requireThat(entry.resolution || dispatch.pending?.operation.id === id,
+          'proposal review cannot replace another pending dispatch');
+        const attempt = state.attempts.find(item => item.id === held.attemptId);
+        requireThat(attempt, 'proposal attempt missing');
+        const archive = archiveFor(id), saved = await archive.read();
+        const request = saved.request;
+        requireThat(saved.operation?.id === id && saved.operation.leaseId === held.leaseId &&
+          saved.operation.requestDigest === held.requestDigest && digest(request) === held.requestDigest &&
+          entry.operation.requestDigest === held.requestDigest && request.kind === 'proposal' &&
+          request.attemptId === attempt.id && request.requiredCalls === 1 &&
+          request.experimentId === state.config.experimentId && request.configDigest === state.configDigest &&
+          request.sourceCommit === state.config.sourceCommit && request.runtimeDigest === state.config.runtimeDigest &&
+          request.originalVersionId === state.baseVersion.id && request.incumbentVersionId === attempt.incumbentVersionId &&
+          canonical(request.authorityPins) === canonical(state.trustPins) &&
+          canonical(request.learner) === canonical(attempt.learner),
+        'archived proposal request differs from frozen state');
+        if (!held.consumed) requireThat(digest(await controller.executionRequest('proposal', attempt.id)) === held.requestDigest,
+          'pending proposal plan changed');
+        const { instructions, ...visible } = request.learner;
+        const expectedCall = { callId: `call-${digest({ operationId: id, slot: { kind: 'proposal' } })}`,
+          operationId: id, leaseId: held.leaseId, requestDigest: held.requestDigest,
+          sourceCommit: state.config.sourceCommit, runtimeDigest: state.config.runtimeDigest,
+          model: p.runtime.model, instructions, message: canonical(visible) };
+        requireThat(saved.calls.length === 1 && canonical(saved.calls[0].call) === canonical(expectedCall),
+          'one original proposal call required');
+        const stages = saved.calls[0].stages, result = stages.at(-1)?.payload;
+        requireThat(stages.length === 3 && stages.map(item => item.stage).join(',') === 'session,turn,final' &&
+          result.callId === expectedCall.callId && result.inputDigest === turnInputDigest(expectedCall) &&
+          result.complete === true && result.finishReason === 'stop' &&
+          Array.isArray(result.toolCalls) && result.toolCalls.length === 0 &&
+          Array.isArray(result.requiredActions) && result.requiredActions.length === 0 &&
+          typeof result.text === 'string' && result.text.trim().length > 0 &&
+          result.outputDigest === sha(result.text), 'complete original proposal output required');
+        let output = result.text.trim();
+        const fence = output.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u);
+        if (fence) output = fence[1];
+        const candidate = procedure(JSON.parse(output), state.config.scope);
+        const candidateDigest = procedureFingerprint(candidate);
+        const references = [...state.history, ...state.attempts.filter(item => item.number < attempt.number && item.candidate)
+          .map(item => ({ id: item.id, procedure: item.candidate, outcome: item.status, sourceRef: state.config.sourceCommit }))];
+        requireThat(digest(references) === attempt.historyDigest &&
+          !references.some(item => procedureFingerprint(item.procedure) === candidateDigest),
+        'proposal review history differs or candidate is an exact duplicate');
+        const body = verifyEnvelope({ ...p.trust.novelty, ...signed });
+        identifier(body.receiptId, 'novelty receiptId');
+        const expected = { schema: 'gk-learning-v2-novelty', experimentId: state.config.experimentId,
+          configDigest: state.configDigest, sourceCommit: state.config.sourceCommit, attemptId: attempt.id,
+          candidateDigest, incumbentVersionId: attempt.incumbentVersionId, originalVersionId: state.baseVersion.id,
+          historyDigest: attempt.historyDigest, policyVersion: 'gk-procedure-equivalence-v1',
+          sourceScopeVerified: true, operationId: id, requestDigest: held.requestDigest };
+        for (const [key, expectedValue] of Object.entries(expected)) requireThat(
+          canonical(body[key]) === canonical(expectedValue), `proposal review ${key} mismatch`);
+        requireThat(['novel', 'equivalent', 'uncertain'].includes(body.verdict) &&
+          Array.isArray(body.comparisons) && body.comparisons.length === references.length,
+        'proposal review comparison coverage');
+        const reviewed = new Set();
+        for (const comparison of body.comparisons) {
+          record(comparison, ['priorId', 'relation', 'reason'], 'proposal review comparison');
+          requireThat(references.some(item => item.id === comparison.priorId) && !reviewed.has(comparison.priorId) &&
+            ['distinct', 'equivalent', 'uncertain'].includes(comparison.relation), 'proposal review prior binding');
+          text(comparison.reason, 'proposal review reason', 4000); reviewed.add(comparison.priorId);
+        }
+        const equivalent = body.comparisons.some(item => item.relation === 'equivalent');
+        requireThat((body.verdict === 'equivalent') === equivalent &&
+          (body.verdict !== 'novel' || !body.comparisons.some(item => item.relation !== 'distinct')),
+        'proposal review verdict contradicts comparisons');
+        requireThat(Array.isArray(body.coverageCaseIds) && new Set(body.coverageCaseIds).size === body.coverageCaseIds.length &&
+          body.coverageCaseIds.every(caseId => state.config.cases.some(item => item.caseId === caseId &&
+            item.scope === state.config.scope)), 'proposal review case coverage');
+        const prior = saved.artifacts.find(item => item.id === 'novelty-receipt');
+        const serialized = JSON.stringify(signed);
+        let retained = signed;
+        if (prior) {
+          requireThat(prior.kind === 'novelty' && typeof prior.payload.serialized === 'string',
+            'proposal review archive shape');
+          retained = parsedEnvelope(prior.payload.serialized);
+          const firstBody = verifyEnvelope({ ...p.trust.novelty, ...retained });
+          requireThat(canonical(firstBody) === canonical(body), 'proposal review differs from first retained receipt');
+        }
+        else {
+          requireThat(!held.consumed && !entry.resolution && saved.artifacts.length === 0,
+            'proposal already disposed without this review');
+          requireThat(!state.receipts.includes(body.receiptId), 'proposal review receipt replay');
+          await archive.recordArtifact('novelty-receipt', 'novelty', { serialized });
+        }
+        if (!held.consumed) {
+          requireThat(!state.receipts.includes(body.receiptId), 'proposal review receipt replay');
+          await controller.recordProposal(attempt.id, candidate, retained);
+          state = await controller.state(); held = state.operations.find(item => item.id === id);
+        }
+        const recorded = state.attempts.find(item => item.id === attempt.id);
+        requireThat(held.consumed && recorded.candidateDigest === candidateDigest &&
+          canonical(recorded.novelty) === canonical(body) && state.receipts.includes(body.receiptId),
+        'proposal review was not retained as the original disposition');
+        if (entry.resolution) {
+          requireThat(held.settled && entry.resolution.kind === 'settled' &&
+            entry.resolution.receiptId === held.settlementReceiptId, 'proposal review resolution mismatch');
+          return status();
+        }
+        const settlement = entry.settlement ? parsedEnvelope(entry.settlement) :
+          envelope(await p.settle({ operationId: id, leaseId: held.leaseId, requestDigest: held.requestDigest }));
+        const checked = gatewayReceipt(settlement, 'gk-learning-v2-operation-settlement', state,
+          { operationId: id, leaseId: held.leaseId, status: 'settled', actualCalls: 1 });
+        await observe(id, 'settlement', checked.signed);
+        if (held.settled) requireThat(checked.body.receiptId === held.settlementReceiptId &&
+          checked.body.actualCalls === held.actualCalls && checked.body.actualMicros === held.actualMicros,
+        'proposal review settlement differs from original evidence');
+        else await controller.settleOperation(id, checked.signed);
+        await ledger.complete(id, { kind: 'settled', receiptId: checked.body.receiptId });
         return status();
       });
     },
