@@ -71,12 +71,12 @@ export function createStatusRoutingHandler({ statusHandler, proxyHandler }) {
   };
 }
 
-export function forwardTrueForge(req, res) {
+export function forwardTrueForge(req, res, createRequest = httpRequest) {
   const headers = { ...req.headers };
   delete headers['proxy-authorization'];
   delete headers['proxy-authenticate'];
   headers.host = '127.0.0.1:' + UPSTREAM_PORT;
-  const upstream = httpRequest({
+  const upstream = createRequest({
     hostname: '127.0.0.1', port: UPSTREAM_PORT, path: req.url, method: req.method,
     headers, agent: false,
   }, incoming => {
