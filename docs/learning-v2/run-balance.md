@@ -21,13 +21,11 @@ another call reusing a receipt ID are refused. There is **no US$50 cap** or
 aggregate spending comparison in this ledger. Even $125 of genuine per-run
 charge is recorded accurately.
 
-This is a necessary run-accounting component, **not yet a full migration of
-the v2 controller**: its old policy, signed operation-lease gateway and host
-capability contract still impose the historical US$50 programme limit.
-Do NOT claim the pilot can run without that gate until its v3 operation
-interface, status schema, trust/call lifecycle, and tests are revised and
-independently qualified. Do not patch old signed evidence or bypass the
-existing gateway. No live provider API calls or learning activation in this
-change.
+The v3 controller policy removes the historical US$50 programme admission gate
+and reports run-level charges without treating reservations as a monetary
+ceiling. This ledger can be connected to independently verified provider
+settlement receipts; it does not itself make inference calls or activate
+learning. Previous policy-v2 signed evidence remains unchanged.
+
 
 End-to-end acceptance remains issue #44.
