@@ -66,7 +66,8 @@ export function reconstructAuthorityRequest(bundle, state, kind, attemptId) {
       plan = { attemptId, historyDigest: attempt.historyDigest };
       requiredCalls = 1;
       learner = learnerRequest({ scope: config.scope, activeVersion: active,
-        baselineInstructions: config.baseInstructions, fitExamples: JSON.parse(state.feedback).body.examples });
+        baselineInstructions: config.baseInstructions, fitExamples: JSON.parse(state.feedback).body.examples,
+        retainedReferences: authorityReferences(bundle, state) });
       slots.push({ kind: 'proposal' });
     } else {
       requireThat(attempt && attempt.incumbentVersionId === active.id && attempt.version,
