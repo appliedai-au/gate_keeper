@@ -120,7 +120,7 @@ test('operation reservation and request identities are checked before any archiv
 });
 
 test('archive accepts exact call reservation above old programme cap without a spending gate', async () => {
-  assert.equal(POLICY.version, 3);
+  assert.equal(POLICY.version, 4);
   assert.equal(POLICY.programmeCeilingMicros, null);
   for (const micros of [0, 20_000_001, 60_000_000, 125_000_000]) {
     const { operation, request } = fixture();
