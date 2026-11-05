@@ -1061,3 +1061,19 @@ test('v3 initialization can open without a historical funding snapshot', async (
   assert.equal(result.budget.observedSpentMicros, 0);
   assert.equal(result.budget.observedReservedMicros, 0);
 });
+
+test('v3 actual call charging may exceed a zero monetary hold without blocking result', async () => {
+  const r = await rig({ withBaseline: false, withGate: true });
+  const plan = await r.controller.planBaseline();
+  const operation = await reserve(r, 'baseline', null, {
+    reservationMicros: 0, reservedMicros: 0,
+  });
+  await r.controller.recordBaseline(r.sign('evaluation', evaluationBody(r, plan, operation)));
+  await settle(r, operation, {
+    actualMicros: 65_000_000, spentMicros: 65_000_000, reservedMicros: 0,
+  });
+  const state = await r.controller.state();
+  assert.equal(state.budget.spentMicros, 65_000_000);
+  assert.equal(state.budget.reservedMicros, 0);
+  assert.equal(state.operations[0].settled, true);
+});
