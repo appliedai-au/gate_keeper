@@ -1,0 +1,68 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { inspectCatalog, projectLegacyBank, validatePrivateHost } from '../scripts/learning-v2/readonly-preflight.mjs';
+
+test('catalog refuses wrong SDK response shape instead of inventing empty catalogues', async () => {
+  const tf = (p, m) => ({ settings: { modelProviders: { list: async () => p } }, models: { list: async () => m } });
+  for (const response of [undefined, [], { response: { data: [] } }, { data: { data: [] } }]) {
+    await assert.rejects(inspectCatalog(tf(response, { data: [] })), /PROVIDERS_SHAPE_INVALID/);
+    await assert.rejects(inspectCatalog(tf({ data: [] }, response)), /MODELS_SHAPE_INVALID/);
+  }
+  const result = await inspectCatalog(tf({ data: [] }, { data: [] }));
+  assert.equal(result.providerCount, 0);
+  assert.equal(result.modelCount, 0);
+});
+
+test('catalog output contains selected metadata and no credential-bearing fields', async () => {
+  const secret = 'SYNTHETIC_PROVIDER_CREDENTIAL_DO_NOT_LOG';
+  const tf = { settings: { modelProviders: { list: async () => ({ data: [{ name: 'tfy-direct', manifest: { type: 'openai-compatible', auth: { api_key: secret }, base_url: 'https://example.invalid/?secret=' + secret } }] }) } },
+    models: { list: async () => ({ data: [{ name: 'tfy-direct/glm-5-3-flash', provider: { name: 'tfy-direct', secret }, token: secret }] }) } };
+  const result = await inspectCatalog(tf);
+  assert.equal(result.models[0].name, 'tfy-direct/glm-5-3-flash');
+  assert.equal(result.inferenceCalls, 0);
+  assert.equal(JSON.stringify(result).includes(secret), false);
+});
+
+test('preflight credentials are destination-bound to the existing private TrueForge endpoint', () => {
+  assert.equal(validatePrivateHost('http://trueforge.railway.internal:8080/'), 'http://trueforge.railway.internal:8080');
+  for (const url of ['http://other.railway.internal:8080', 'https://example.com', 'http://trueforge.railway.internal:8080?x=1', 'http://user:pass@trueforge.railway.internal:8080', 'http://trueforge.railway.internal:8080/other']) assert.throws(() => validatePrivateHost(url), /HOST_INVALID/);
+});
+
+test('legacy export preserves negative and unproven provenance while excluding private traces', () => {
+  const secret = 'SYNTHETIC_PRIVATE_TRACE_DO_NOT_LOG';
+  const bytes = Buffer.from(JSON.stringify({ version: 1, revision: 53, accepted: [], harmful: [{ id: 'prior', status: 'harmful-in-tested-context', rules: ['Prior rejected procedure'], source: 'a'.repeat(40), netChange: -1, fitFeedback: secret, rawResponse: secret }], unproven: [{ id: 'unknown', rules: ['Prior unproven procedure'], confirmation: { confirmed: false, repeats: 3, pairs: [{ private: secret }] } }], history: [{ kind: 'duplicate-not-retried', rules: ['Prior rejected procedure'], round: 10, token: secret }] }));
+  const result = projectLegacyBank(bytes);
+  assert.deepEqual(result.counts, { accepted: 0, harmful: 1, unproven: 1, history: 1 });
+  assert.equal(result.records[0].netChange, -1);
+  assert.equal(result.records[1].confirmation.confirmed, false);
+  assert.equal(result.records[2].kind, 'duplicate-not-retried');
+  assert.match(result.fileDigest, /^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(result).includes(secret), false);
+  assert.match(result.authority, /not v4 signed promotion/);
+  assert.throws(() => projectLegacyBank(Buffer.from('{"version":1}')), /GROUP_INVALID/);
+});
+
+test('malformed historical rejected proposals remain accounted without aborting valid bank recovery', () => {
+  const rejected = [null, 3, { when: 7 }, { scope: { languages: 'invalid' } }, { unknown: 'SYNTHETIC_PRIVATE_REJECTED_PAYLOAD' }];
+  const result = projectLegacyBank(Buffer.from(JSON.stringify({ version: 1, accepted: [], harmful: [{ id: 'retained', rules: ['Do not retry this rejected procedure'] }], unproven: [], history: [
+    { kind: 'unscored-proposal', round: 1, proposed: rejected },
+    { kind: 'unscored-proposal', round: 2, proposed: Array(101).fill(null) }
+  ] })));
+  assert.equal(result.records[0].id, 'retained');
+  assert.equal(result.records[1].proposed.length, 5);
+  assert.ok(result.records[1].proposed.every(x => x.unprojectable === true && /^[a-f0-9]{64}$/.test(x.evidenceDigest)));
+  assert.match(result.records[2].unprojectableProposal.evidenceDigest, /^[a-f0-9]{64}$/);
+  assert.deepEqual(result.counts, { accepted: 0, harmful: 1, unproven: 0, history: 2 });
+  assert.equal(JSON.stringify(result).includes('SYNTHETIC_PRIVATE_REJECTED_PAYLOAD'), false);
+});
+
+test('oversized rejected proposal text falls back to a bounded digest record, including UTF-8 bytes', () => {
+  for (const proposed of [Array.from({ length: 6 }, () => ({ when: 'x'.repeat(8192) })), [{ when: '✓'.repeat(8192), evidence: '✓'.repeat(8192), unless: '✓'.repeat(8192) }]]) {
+    const result = projectLegacyBank(Buffer.from(JSON.stringify({ version: 1, accepted: [], harmful: [{ id: 'retained', rules: ['Previously rejected rule'] }], unproven: [], history: [{ kind: 'unscored-proposal', round: 1, proposed }] })));
+    assert.equal(result.records[0].id, 'retained');
+    assert.equal(result.records[1].proposed, undefined);
+    assert.match(result.records[1].unprojectableProposal.evidenceDigest, /^[a-f0-9]{64}$/);
+    assert.ok(Buffer.byteLength(JSON.stringify(result.records[1])) < 48000);
+    assert.equal(result.counts.history, 1);
+  }
+});
