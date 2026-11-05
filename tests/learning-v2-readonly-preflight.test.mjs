@@ -55,3 +55,14 @@ test('malformed historical rejected proposals remain accounted without aborting 
   assert.deepEqual(result.counts, { accepted: 0, harmful: 1, unproven: 0, history: 2 });
   assert.equal(JSON.stringify(result).includes('SYNTHETIC_PRIVATE_REJECTED_PAYLOAD'), false);
 });
+
+test('oversized rejected proposal text falls back to a bounded digest record, including UTF-8 bytes', () => {
+  for (const proposed of [Array.from({ length: 6 }, () => ({ when: 'x'.repeat(8192) })), [{ when: '✓'.repeat(8192), evidence: '✓'.repeat(8192), unless: '✓'.repeat(8192) }]]) {
+    const result = projectLegacyBank(Buffer.from(JSON.stringify({ version: 1, accepted: [], harmful: [{ id: 'retained', rules: ['Previously rejected rule'] }], unproven: [], history: [{ kind: 'unscored-proposal', round: 1, proposed }] })));
+    assert.equal(result.records[0].id, 'retained');
+    assert.equal(result.records[1].proposed, undefined);
+    assert.match(result.records[1].unprojectableProposal.evidenceDigest, /^[a-f0-9]{64}$/);
+    assert.ok(Buffer.byteLength(JSON.stringify(result.records[1])) < 48000);
+    assert.equal(result.counts.history, 1);
+  }
+});

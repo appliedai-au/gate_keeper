@@ -111,7 +111,12 @@ export function projectLegacyBank(bytes) {
       if (!isObject(entry.confirmation) || typeof entry.confirmation.confirmed !== 'boolean') fail('PREFLIGHT_CONFIRMATION_INVALID');
       out.confirmation = { confirmed: entry.confirmation.confirmed, ...numericFields(entry.confirmation, ['repeats', 'netChange', 'fitChange', 'checkChange']) };
     }
-    if (JSON.stringify(out).length > 48000) fail('PREFLIGHT_ENTRY_TOO_LARGE');
+    if (Buffer.byteLength(JSON.stringify(out), 'utf8') > 48000) {
+      if (!(group === 'history' && entry.kind === 'unscored-proposal' && out.proposed)) fail('PREFLIGHT_ENTRY_TOO_LARGE');
+      delete out.proposed;
+      out.unprojectableProposal = { reason: 'historical rejected proposal too large', evidenceDigest: sha256(JSON.stringify(entry.proposed)) };
+      if (Buffer.byteLength(JSON.stringify(out), 'utf8') > 48000) fail('PREFLIGHT_ENTRY_TOO_LARGE');
+    }
     return out;
   }));
   return { schema: 'gk-legacy-bank-projection-v1', path: LEGACY_BANK_PATH, fileDigest: sha256(bytes), bytes: bytes.length,
