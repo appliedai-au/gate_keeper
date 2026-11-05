@@ -45,7 +45,7 @@ function stateIdentity(state) {
 }
 
 async function rig({ history = [], withBaseline = true, withGate = true, extraCases = [],
-  openingSpentMicros = 2_000_000, openingReservedMicros = 0,
+  openingSpentMicros = 0, openingReservedMicros = 0,
   openingCeilingMicros = POLICY.programmeCeilingMicros } = {}) {
   const privateKeys = {};
   const trust = {};
@@ -107,7 +107,7 @@ async function rig({ history = [], withBaseline = true, withGate = true, extraCa
     budgetId: result.config.budgetId,
     gatewayId: trust.budget.gatewayId,
     provider: POLICY.provider,
-    global: true,
+    global: false,
     ceilingMicros: openingCeilingMicros,
     spentMicros: openingSpentMicros,
     reservedMicros: openingReservedMicros,
@@ -156,10 +156,10 @@ async function operationLease(r, operation, request, changes = {}) {
     schema: 'gk-learning-v2-operation-lease', receiptId: r.next('lease'),
     ...stateIdentity(state), ...operation,
     budgetId: state.config.budgetId, gatewayId: r.trust.budget.gatewayId,
-    provider: POLICY.provider, model: state.config.model, global: true,
+    provider: POLICY.provider, model: state.config.model, global: false,
     ceilingMicros: POLICY.programmeCeilingMicros,
     managedGateDigest: state.gate?.digest || sha('no gate'),
-    namespaceExclusive: true, providerLimitEnforced: true,
+    namespaceExclusive: true, providerLimitEnforced: false,
     maxCalls: request.requiredCalls, reservationMicros: 10_000,
     spentMicros: state.budget.spentMicros, reservedMicros: 10_000,
     ...timeWindow(), ...changes,
@@ -179,7 +179,7 @@ async function baselineNotAdmitted(r, operation, changes = {}, role = 'budget') 
     schema: 'gk-learning-v2-operation-not-admitted', receiptId: r.next('baseline-not-admitted'),
     ...stateIdentity(state), operationId: operation.id, requestDigest: operation.requestDigest,
     budgetId: state.config.budgetId, gatewayId: r.trust.budget.gatewayId,
-    provider: POLICY.provider, global: true, ceilingMicros: POLICY.programmeCeilingMicros,
+    provider: POLICY.provider, global: false, ceilingMicros: POLICY.programmeCeilingMicros,
     status: 'not-admitted', reservationExists: false, actualCalls: 0, actualMicros: 0,
     ...changes,
   });
@@ -191,7 +191,7 @@ async function settle(r, operation, changes = {}) {
     schema: 'gk-learning-v2-operation-settlement', receiptId: r.next('settlement'),
     ...stateIdentity(state), operationId: operation.id, leaseId: operation.leaseId,
     budgetId: state.config.budgetId, gatewayId: r.trust.budget.gatewayId,
-    provider: POLICY.provider, global: true, ceilingMicros: POLICY.programmeCeilingMicros,
+    provider: POLICY.provider, global: false, ceilingMicros: POLICY.programmeCeilingMicros,
     status: 'settled', actualCalls: operation.maxCalls, actualMicros: operation.maxCalls,
     spentMicros: state.budget.spentMicros + operation.maxCalls, reservedMicros: 0,
     ...changes,
@@ -967,7 +967,7 @@ test('baseline non-admission survives restart and blocks request reservation rec
     schema: 'gk-learning-v2-operation-settlement', receiptId: r.next('forbidden-recovery-settlement'),
     ...stateIdentity(stopped), operationId: retry.id, leaseId: lease.body.receiptId,
     budgetId: stopped.config.budgetId, gatewayId: r.trust.budget.gatewayId,
-    provider: POLICY.provider, global: true, ceilingMicros: POLICY.programmeCeilingMicros,
+    provider: POLICY.provider, global: false, ceilingMicros: POLICY.programmeCeilingMicros,
     status: 'settled', actualCalls: 0, actualMicros: 0,
     spentMicros: stopped.budget.spentMicros, reservedMicros: stopped.budget.reservedMicros,
   });
@@ -1018,47 +1018,46 @@ test('baseline non-admission captures operation and original signing order befor
 });
 
 
-test('US$50 total ceiling includes signed pre-existing spend and unsettled reservations', async () => {
-  const r = await rig({ withBaseline: false, withGate: false,
-    openingSpentMicros: 47_000_000, openingReservedMicros: 3_000_000 });
+test('new v3 run has no programme spending gate and does not import historical charges', async () => {
+  const r = await rig({ withBaseline: false, withGate: false });
   const state = await r.controller.state();
-  assert.equal(POLICY.version, 2);
-  assert.equal(POLICY.programmeCeilingMicros, 50_000_000);
+  assert.equal(POLICY.version, 3);
+  assert.equal(POLICY.programmeCeilingMicros, null);
+  assert.equal(POLICY.usageMode, 'per-run-receipted');
   assert.deepEqual(state.budget, {
-    spentMicros: 47_000_000, reservedMicros: 3_000_000,
-    lastReceiptId: r.initialBudget.body.receiptId,
+    spentMicros: 0, reservedMicros: 0, lastReceiptId: r.initialBudget.body.receiptId,
   });
-  assert.equal(state.policy.programmeCeilingMicros, 50_000_000);
-  // The opening receipt is never translated into a new US$50 allowance.
-  assert.equal(state.budget.spentMicros + state.budget.reservedMicros, POLICY.programmeCeilingMicros);
 });
 
-test('a signed opening state cannot reset prior charges or import more than US$50', async () => {
-  for (const [spent, reserved] of [[47_000_000, 3_000_001],
-    [50_000_001, 0], [0, 50_000_001]]) {
+test('new v3 run rejects importing prior programme charges as a fresh run', async () => {
+  for (const [spent, reserved] of [[47_000_000, 3_000_000],
+    [1, 0], [0, 1]]) {
     await assert.rejects(rig({ withBaseline: false, withGate: false,
       openingSpentMicros: spent, openingReservedMicros: reserved }),
-    /programme budget exceeded|invalid integer/);
+    /cannot import historical programme spending/);
   }
-  // A v1 US$20 opening receipt is not a valid v2 opening authority.
   await assert.rejects(rig({ withBaseline: false, withGate: false,
-    openingSpentMicros: 2_000_000, openingCeilingMicros: 20_000_000 }),
-  /budget receipt ceilingMicros mismatch/);
+    openingCeilingMicros: 20_000_000 }), /budget receipt ceilingMicros mismatch/);
 });
 
-test('existing spend and outstanding holds leave no new capacity despite a US$50 policy', async () => {
-  const r = await rig({ withBaseline: false, withGate: true,
-    openingSpentMicros: 49_995_000, openingReservedMicros: 5_000 });
+test('provider-authenticated v3 reservation above former $50 gate is allowed', async () => {
+  const r = await rig({ withBaseline: false, withGate: true });
   await r.controller.planBaseline();
   const request = await r.controller.executionRequest('baseline');
   const operation = { id: r.next('operation-baseline'), kind: 'baseline',
     attemptId: null, namespace: request.namespace, requestDigest: digest(request) };
   const lease = await operationLease(r, operation, request, {
-    spentMicros: 49_995_000, reservedMicros: 10_000,
+    reservationMicros: 60_000_000, spentMicros: 0, reservedMicros: 60_000_000,
   });
-  await assert.rejects(r.controller.reserveOperation(operation, lease),
-    /programme budget exceeded|reservation|budget/);
-  assert.deepEqual((await r.controller.state()).budget,
-    { spentMicros: 49_995_000, reservedMicros: 5_000,
-      lastReceiptId: r.initialBudget.body.receiptId });
+  const reserved = await r.controller.reserveOperation(operation, lease);
+  assert.equal(reserved.reservationMicros, 60_000_000);
+  assert.equal((await r.controller.state()).budget.reservedMicros, 60_000_000);
+});
+
+test('v3 initialization can open without a historical funding snapshot', async () => {
+  const r = await rig({ withBaseline: false, withGate: false });
+  const fresh = new LearningController({ journal: new MemoryJournal(), trust: r.trust, clock: () => NOW });
+  const result = await fresh.initialize(r.config);
+  assert.equal(result.budget.observedSpentMicros, 0);
+  assert.equal(result.budget.observedReservedMicros, 0);
 });
