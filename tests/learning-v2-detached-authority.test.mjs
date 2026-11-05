@@ -309,12 +309,24 @@ for (const defect of ['skipRelay', 'changeSpec', 'extraTurn', 'hiddenModel']) {
   });
 }
 
-test('paid proposal durably pauses for protected semantic review and resumes same artifacts with zero new inference', async () => {
+test('protected review resumes paid artifacts without new inference and later proposals retain unresolved learning', async () => {
   const f = await fixture();
   await f.baseline();
   await assert.rejects(f.propose(), /MANAGED_OPERATION_UNRESOLVED/);
   const opId = 'operation-' + digest({ experimentId: 'detached-fixture', kind: 'proposal',
     attemptId: 'detached-fixture:attempt:1' });
+  const actualProposalInput = operationId => {
+    const matches = [...f.sessions.values()].filter(session => session.metadata.operationId === operationId);
+    assert.equal(matches.length, 1, 'one actual mock provider session per proposal');
+    const turn = f.turns.get(matches[0].id);
+    assert.equal(turn.input.length, 1);
+    assert.equal(turn.input[0].type, 'user.message');
+    return { instructions: matches[0].agent.spec.instructions, visible: JSON.parse(turn.input[0].content) };
+  };
+  const historicalMemory = f.bundle.history.map(({ outcome, procedure }) => ({ outcome, procedure }));
+  assert.deepEqual(actualProposalInput(opId).visible.retainedProcedures, historicalMemory);
+  assert.ok(historicalMemory.some(item => item.outcome === 'rejected'));
+  assert.ok(historicalMemory.some(item => item.outcome === 'unproven'));
   const before = f.controls.dispatches;
   const packet = await f.authority().reviewPacket(opId);
   assert.equal(packet.context.priorReferences.length, 53);
@@ -361,6 +373,27 @@ test('paid proposal durably pauses for protected semantic review and resumes sam
   assert.equal(reconstructed.request.learner.fitExamples.some(example =>
     checkCases.some(item => item.prompt === example.code)), false,
     'neither burned check input is supplied to the learner');
+  await f.reopen();
+  await f.dispatch('proposal', next);
+  assert.equal(f.controls.dispatches, before + 1, 'the second proposal makes exactly one new mock call');
+  const nextOperation = (await f.controller.state()).operations.find(item => item.kind === 'proposal' && item.attemptId === next);
+  const actual = actualProposalInput(nextOperation.id);
+  const { instructions, ...expectedVisible } = reconstructed.request.learner;
+  assert.equal(actual.instructions, instructions);
+  assert.deepEqual(actual.visible, expectedVisible, 'host and reopened authority deliver the exact reconstructed learner input');
+  assert.deepEqual(actual.visible.retainedProcedures, [...historicalMemory,
+    { outcome: 'unresolved', procedure: candidate() }], 'the first uncertain proposal survives into the second actual model input');
+  assert.deepEqual(Object.keys(actual.visible).sort(), ['baselineInstructions', 'confirmedProcedures', 'fitExamples',
+    'retainedProcedures', 'scope']);
+  assert.deepEqual(actual.visible.fitExamples, feedback.body.examples.map(({ code, feedback }) => ({ code, feedback })));
+  const serialized = canonical(actual.visible);
+  for (const item of corpus.cases) assert.equal(serialized.includes(item.caseId), false, 'no case identifiers reach the proposer');
+  for (const item of checkCases) assert.equal(serialized.includes(canonical(item.prompt)), false, 'no check input reaches the proposer');
+  assert.equal(serialized.includes(decision.comparisons[0].reason), false, 'no semantic-review explanation reaches the proposer');
+  assert.equal(serialized.includes(envelope.body.receiptId), false, 'no novelty receipt identifier reaches the proposer');
+  assert.equal(serialized.includes(feedback.body.baselineReceiptId), false, 'no baseline receipt identifier reaches the proposer');
+  assert.equal((await f.controller.state()).attempts[1].status, 'duplicate', 'a repeated mock proposal still fails the independent novelty gate');
+  assert.equal((await f.authority().initialize()).attempts[1].status, 'duplicate');
   const conflict = copy(decision); conflict.verdict = 'novel';
   await assert.rejects(f.authority().applyProtectedReview(conflict), /overwrite/);
 });
