@@ -386,7 +386,7 @@ function compose(prepared, createDirectories) {
 
 /** Create the two durable stores once, then reopen with directory creation off. */
 export async function initializeLearningHost(options, initial) {
-  objectFields(initial, ['budgetEnvelope'], ['history'], 'host initialization');
+  objectFields(initial, [], ['history', 'budgetEnvelope'], 'host initialization');
   const captured = original(initial), prepared = prepare(options);
   const created = compose(prepared, true);
   const controllerBefore = await created.controllerJournal.read();
