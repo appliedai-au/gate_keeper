@@ -85,7 +85,7 @@ export class LearningController {
   async state() { return (await this.#snapshot()).state; }
   async status() { return statusView(await this.state()); }
 
-  async initialize(input, { history = [], budgetEnvelope }) {
+  async initialize(input, { history = [], budgetEnvelope = null } = {}) {
     const config = configuration(input);
     const existing = await this.#journal.read();
     requireThat(existing.head === null && existing.events.length === 0, 'experiment already exists');
@@ -109,23 +109,29 @@ export class LearningController {
       activeVersionId: base.id, versions: [base], attempts: [], baseline: null,
       namespaces: [], receipts: [], observedCalls: [], operations: [], activationHistory: [],
       budget: { spentMicros: 0, reservedMicros: 0, lastReceiptId: null }, gate: null };
-    const budget = this.#attest('budget', budgetEnvelope, 'gk-learning-v2-budget-state', {
-      ...identity(state), budgetId: config.budgetId, gatewayId: this.#trust.budget.gatewayId,
-      provider: POLICY.provider, global: false, ceilingMicros: POLICY.programmeCeilingMicros,
-    }, { timely: true });
-    this.#budget(state, budget);
-    state.receipts.push(budget.receiptId);
+    // Version 3 opens an empty per-run ledger. An external opening balance
+    // is optional and NEVER imports legacy programme-wide spending.
+    if (budgetEnvelope !== null) {
+      const budget = this.#attest('budget', budgetEnvelope, 'gk-learning-v2-budget-state', {
+        ...identity(state), budgetId: config.budgetId, gatewayId: this.#trust.budget.gatewayId,
+        provider: POLICY.provider, global: false, ceilingMicros: POLICY.programmeCeilingMicros,
+      }, { timely: true });
+      requireThat(budget.spentMicros === 0 && budget.reservedMicros === 0,
+        'new run cannot import historical programme spending');
+      this.#budget(state, budget);
+      state.receipts.push(budget.receiptId);
+    }
     await this.#journal.append(null, { schema: 'gk-learning-v2-state', reason: 'initialized',
       recordedAt: new Date(this.#clock()).toISOString(), state });
     return statusView(state);
   }
 
   #budget(state, body) {
-    integer(body.spentMicros, 'global spentMicros', 0, Number.MAX_SAFE_INTEGER);
-    integer(body.reservedMicros, 'global reservedMicros', 0, Number.MAX_SAFE_INTEGER);
+    integer(body.spentMicros, 'run spentMicros', 0, Number.MAX_SAFE_INTEGER);
+    integer(body.reservedMicros, 'run reservedMicros', 0, Number.MAX_SAFE_INTEGER);
     requireThat(body.spentMicros >= state.budget.spentMicros, 'run charges went backwards');
     requireThat(Number.isSafeInteger(body.spentMicros + body.reservedMicros), 'run charges exceed safe precision');
-    requireThat(body.spentMicros + body.reservedMicros <= Number.MAX_SAFE_INTEGER, 'programme budget exceeded');
+    requireThat(Number.isSafeInteger(body.spentMicros + body.reservedMicros), 'run total precision exceeded');
     state.budget = { spentMicros: body.spentMicros, reservedMicros: body.reservedMicros, lastReceiptId: body.receiptId };
   }
 
