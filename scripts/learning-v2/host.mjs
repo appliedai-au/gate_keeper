@@ -209,7 +209,7 @@ function compose(prepared, createDirectories) {
     identifier(body.receiptId, 'gateway receiptId');
     const binding = { schema, experimentId: state.config.experimentId, configDigest: state.configDigest,
       sourceCommit: state.config.sourceCommit, budgetId: state.config.budgetId,
-      gatewayId: state.trustPins.gatewayId, provider: 'truefoundry', global: true,
+      gatewayId: state.trustPins.gatewayId, provider: 'truefoundry', global: false,
       ceilingMicros: state.policy.programmeCeilingMicros, ...expected };
     for (const [key, value] of Object.entries(binding)) {
       requireThat(canonical(body[key]) === canonical(value), `host gateway ${key} mismatch`);
@@ -307,7 +307,7 @@ function compose(prepared, createDirectories) {
         requireThat(admission, 'independent admission reconciliation receipt required');
         const checked = gatewayReceipt(admission, 'gk-learning-v2-operation-lease', state, {
           ...entry.operation, model: state.config.model, managedGateDigest: state.gate?.digest,
-          namespaceExclusive: true, providerLimitEnforced: true,
+          namespaceExclusive: true, providerLimitEnforced: false,
         });
         if (held) requireThat(checked.body.receiptId === held.leaseId && checked.body.maxCalls === held.maxCalls &&
           checked.body.reservationMicros === held.reservationMicros, 'recovery lease differs from recorded reservation');
@@ -354,7 +354,7 @@ function compose(prepared, createDirectories) {
           try {
             gatewayReceipt(parsedEnvelope(observation.serialized), 'gk-learning-v2-operation-lease', state, {
               ...entry.operation, model: state.config.model, managedGateDigest: state.gate?.digest,
-              namespaceExclusive: true, providerLimitEnforced: true,
+              namespaceExclusive: true, providerLimitEnforced: false,
             });
             authenticated = true;
           } catch { /* An unauthenticated observation never establishes a reservation. */ }
@@ -386,7 +386,7 @@ function compose(prepared, createDirectories) {
 
 /** Create the two durable stores once, then reopen with directory creation off. */
 export async function initializeLearningHost(options, initial) {
-  objectFields(initial, ['budgetEnvelope'], ['history'], 'host initialization');
+  objectFields(initial, [], ['history', 'budgetEnvelope'], 'host initialization');
   const captured = original(initial), prepared = prepare(options);
   const created = compose(prepared, true);
   const controllerBefore = await created.controllerJournal.read();

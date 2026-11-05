@@ -119,14 +119,14 @@ function RecordedStatus({ response }) {
 
     <section className="gk-learning-section" aria-labelledby="gk-learning-budget-title">
       <div className="gk-learning-section-heading">
-        <div><span className="gk-learning-kicker">EXTERNAL GATEWAY ACCOUNTING</span><h2 id="gk-learning-budget-title">Observed programme budget</h2></div>
+        <div><span className="gk-learning-kicker">PER-RUN USAGE RECORD</span><h2 id="gk-learning-budget-title">Recorded run balance</h2></div>
       </div>
       <dl className="gk-learning-budget">
         <div><dt>Observed spend</dt><dd>{formatUsd(status.budget.observedSpentMicros)}</dd></div>
         <div><dt>Observed reservation</dt><dd>{formatUsd(status.budget.observedReservedMicros)}</dd></div>
-        <div><dt>Programme ceiling</dt><dd>{formatUsd(status.budget.ceilingMicros)}</dd></div>
+        <div><dt>Spending gate</dt><dd>None — usage only</dd></div>
       </dl>
-      <p className="gk-learning-note">These are recorded totals from external gateway accounting, not a fresh billing check or permission to run a model. A missing response is never treated as zero usage.</p>
+      <p className="gk-learning-note">These are verified run charges and outstanding accounting observations, not an aggregate spending ceiling. Unreconciled calls are never treated as free.</p>
     </section>
 
     <section className="gk-learning-section" aria-labelledby="gk-learning-identity-title">

@@ -55,7 +55,7 @@ function operationInput(operation, request) {
   integer(request.requiredCalls, 'request required calls', 1, 1_000_000);
   integer(operation.maxCalls, 'operation maximum calls', 1, 1_000_000);
   requireThat(operation.maxCalls === request.requiredCalls, 'archive exact call count binding');
-  integer(operation.reservationMicros, 'operation reservation', 1, POLICY.programmeCeilingMicros);
+  integer(operation.reservationMicros, 'operation reservation', 0, Number.MAX_SAFE_INTEGER);
   requireThat(operation.settled === false && operation.consumed === false &&
     operation.observedFreshCalls === 0 && operation.evidenceComplete === false, 'archive operation is not fresh');
   requireThat(operation.requestDigest === digest(request), 'archive request digest mismatch');

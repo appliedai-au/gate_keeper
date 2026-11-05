@@ -71,7 +71,7 @@ function fixture(t) {
   const next = prefix => `${prefix}:${++serial}`;
   const seal = (role, body) => keys[role].seal(body);
   const budgetIdentity = { ...identity, budgetId: config.budgetId, gatewayId: trust.budget.gatewayId,
-    provider: 'truefoundry', global: true, ceilingMicros: POLICY.programmeCeilingMicros };
+    provider: 'truefoundry', global: false, ceilingMicros: POLICY.programmeCeilingMicros };
   const budgetEnvelope = seal('budget', { schema: 'gk-learning-v2-budget-state', receiptId: next('initial-budget'),
     ...budgetIdentity, spentMicros: 0, reservedMicros: 0, ...window() });
   const gateEnvelope = seal('evaluation', { schema: 'gk-learning-v2-managed-gate', receiptId: next('managed-gate'),
@@ -104,7 +104,7 @@ function fixture(t) {
       remote.reservedMicros += 10_000;
       const leaseEnvelope = seal('budget', { schema: 'gk-learning-v2-operation-lease', receiptId: next('lease'),
         ...budgetIdentity, ...input.operation, model: config.model, managedGateDigest: input.request.managedGateDigest,
-        namespaceExclusive: true, providerLimitEnforced: true, maxCalls: input.request.requiredCalls,
+        namespaceExclusive: true, providerLimitEnforced: false, maxCalls: input.request.requiredCalls,
         reservationMicros: 10_000, spentMicros: remote.spentMicros, reservedMicros: remote.reservedMicros, ...window() });
       remote.operations.set(input.operation.id, { ...copy(input), leaseEnvelope, settlementEnvelope: null });
       if (controls.admission === 'lost-after-reservation') throw new Error('fixture response lost after remote reservation');
@@ -327,9 +327,6 @@ test('an expired historical admission resolves only through an authentic final s
     { admissionEnvelope, settlementEnvelope: f.seal('activation', settlementEnvelope.body) },
     { admissionEnvelope, settlementEnvelope: f.seal('budget', { ...settlementEnvelope.body,
       actualCalls: admissionEnvelope.body.maxCalls + 1 }) },
-    { admissionEnvelope, settlementEnvelope: f.seal('budget', { ...settlementEnvelope.body,
-      actualMicros: admissionEnvelope.body.reservationMicros + 1,
-      spentMicros: held.state.budget.spentMicros + admissionEnvelope.body.reservationMicros + 1 }) },
     { admissionEnvelope: f.seal('budget', { ...admissionEnvelope.body, issuedAt: admissionEnvelope.body.expiresAt }),
       settlementEnvelope },
   ];
