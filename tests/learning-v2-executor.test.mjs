@@ -116,7 +116,8 @@ function fixture({ kind = 'baseline', extraCase = false, confirmed = false, priv
     requiredCalls = POLICY.confirmationPairs * forward.length * caseIds.length * 2;
   }
   const learner = kind === 'proposal' ? learnerRequest({ scope: config.scope, activeVersion: incumbent,
-    baselineInstructions: BASE, fitExamples: [{ code: 'FROZEN_FIT_CODE_CANARY', feedback: 'FROZEN_FIT_FEEDBACK_CANARY',
+    baselineInstructions: BASE, retainedReferences: priorReferences,
+    fitExamples: [{ code: 'FROZEN_FIT_CODE_CANARY', feedback: 'FROZEN_FIT_FEEDBACK_CANARY',
       expectedAnswer: 'WRAPPER_ORACLE_CANARY', rejectedRule: 'WRAPPER_NEGATIVE_CANARY' }] }) : null;
   const request = freeze(copy({ schema: 'gk-learning-v2-execution-request', experimentId: config.experimentId,
     configDigest, sourceCommit: SOURCE, kind, attemptId, namespace, provider: 'truefoundry', memory: 'off',
@@ -358,17 +359,23 @@ test('a malformed structured proposal is archived as invalid without a novelty r
     payload: { callId: saved.calls[0].call.callId, reason: 'invalid structured procedure' } }]);
 });
 
-test('proposal projection exposes frozen fit feedback and confirmed procedures while private history goes only to the host reviewer', async () => {
+test('actual proposal turn carries retained procedural learning without history wrappers or check truth', async () => {
   const f = fixture({ kind: 'proposal', confirmed: true, privateHistory: true });
   const result = await f.makeExecutor()(f.dispatch());
   assert.deepEqual(result.procedure, f.proposed); assert.equal(f.turns.length, 1); assert.equal(f.noveltyIssues.length, 1);
   const visible = JSON.parse(f.turns[0].message);
-  assert.deepEqual(Object.keys(visible).sort(), ['baselineInstructions', 'confirmedProcedures', 'fitExamples', 'scope']);
+  assert.deepEqual(Object.keys(visible).sort(), ['baselineInstructions', 'confirmedProcedures', 'fitExamples',
+    'retainedProcedures', 'scope']);
   assert.deepEqual(visible.fitExamples, [{ code: 'FROZEN_FIT_CODE_CANARY', feedback: 'FROZEN_FIT_FEEDBACK_CANARY' }]);
   assert.deepEqual(visible.confirmedProcedures, [rule('CONFIRMED_POSITIVE')]);
+  assert.deepEqual(visible.retainedProcedures, [
+    { outcome: 'rejected', procedure: rule('REJECTED_RULE_CANARY') },
+    { outcome: 'unproven', procedure: rule('UNPROVEN_RULE_CANARY') },
+    { outcome: 'unresolved', procedure: rule('ABANDONED_RULE_CANARY') },
+  ]);
   assert.equal(visible.baselineInstructions, BASE); assert.equal(f.turns[0].instructions, f.request.learner.instructions);
   assert.doesNotMatch(f.turns[0].instructions + f.turns[0].message,
-    /REJECTED_RULE_CANARY|UNPROVEN_RULE_CANARY|ABANDONED_RULE_CANARY|PRIVATE_FAILURE_REASON_CANARY|WRAPPER_ORACLE_CANARY|WRAPPER_NEGATIVE_CANARY|check-js|historyDigest/);
+    /PRIVATE_FAILURE_REASON_CANARY|WRAPPER_ORACLE_CANARY|WRAPPER_NEGATIVE_CANARY|check-js|historyDigest|historical-rejected|historical-unproven|earlier-attempt|fixture-history-source/);
   const reviewed = f.noveltyIssues[0]; assert.deepEqual(reviewed.priorReferences, f.priorReferences);
   assert.equal(reviewed.expected.historyDigest, digest(f.priorReferences));
   assert.deepEqual(reviewed.caseInputs, f.caseInputs);
