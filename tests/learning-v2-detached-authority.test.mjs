@@ -13,7 +13,7 @@ import { authorityCallId, initialAuthorityState, reconstructAuthorityRequest } f
 import { freezeProductionBundle } from '../scripts/learning-v2/production-bundle.mjs';
 import { authorityProviderBody } from '../scripts/learning-v2/authority-wire.mjs';
 import { createAuthorityRelay } from '../scripts/learning-v2/authority-relay.mjs';
-import { createAuthorityHttpServer, observeAuthorityServer } from '../scripts/learning-v2/authority-service.mjs';
+import { createAuthorityHttpServer, emitAuthorityStatus, observeAuthorityServer } from '../scripts/learning-v2/authority-service.mjs';
 import { renderReview } from '../scripts/learning-v2/legacy-renderer.mjs';
 import { TURN_CONFIG } from '../scripts/learning-v2/trueforge-turn.mjs';
 
@@ -22,6 +22,40 @@ import { TURN_CONFIG } from '../scripts/learning-v2/trueforge-turn.mjs';
 // make no model request and their receipts are never production pilot evidence.
 const NOW = Date.UTC(2026, 10, 5, 4);
 const sha = value => createHash('sha256').update(value).digest('hex');
+
+test('protected status framing preserves exact multi-part bytes with a digest and bounded summary', () => {
+  const status = { schema: 'gk-learning-authority-operator-status-v1',
+    binding: { experimentId: 'TEST-ONLY-log-framing' }, activeVersionId: 'BASE', activeCallId: null,
+    operations: Array.from({ length: 61 }, (_, index) => ({ operationId: 'operation-' + index,
+      fixture: 'TEST-ONLY multibyte framing \u00e9'.repeat(40), actualCalls: index, actualMicros: null })), reviews: [] };
+  const lines = [];
+  emitAuthorityStatus(status, line => lines.push(line));
+  const parse = (line, prefix) => {
+    assert.ok(line.startsWith(prefix + ' ')); return JSON.parse(line.slice(prefix.length + 1));
+  };
+  const summary = parse(lines[0], 'GK_AUTHORITY_OPERATION_STATUS');
+  const begin = parse(lines[1], 'GK_AUTHORITY_STATUS_BEGIN');
+  const end = parse(lines.at(-1), 'GK_AUTHORITY_STATUS_END');
+  assert.equal(summary.operations, 61);
+  assert.ok(lines[0].length < 512, 'summary does not duplicate the unbounded payload');
+  assert.ok(begin.parts > 1);
+  assert.equal(lines.length, begin.parts + 3);
+  const chunks = lines.slice(2, -1).map((line, index) => {
+    const part = parse(line, 'GK_AUTHORITY_STATUS_PART');
+    assert.equal(part.statusId, begin.statusId); assert.equal(part.index, index);
+    const chunk = Buffer.from(part.data, 'base64');
+    assert.ok(chunk.length > 0 && chunk.length <= 6000);
+    return chunk;
+  });
+  const bytes = Buffer.concat(chunks);
+  assert.equal(bytes.length, begin.bytes);
+  assert.equal(sha(bytes), begin.sha256);
+  assert.equal(begin.statusId, begin.sha256);
+  assert.equal(summary.statusId, begin.statusId);
+  assert.deepEqual(end, { statusId: begin.statusId, parts: begin.parts, sha256: begin.sha256 });
+  assert.deepEqual(JSON.parse(bytes.toString('utf8')), status);
+});
+
 const corpus = JSON.parse(readFileSync(new URL('../config/learning/concurrency-atomicity-corpus-v1.json', import.meta.url)));
 const candidate = () => procedure({ scope: 'concurrency-atomicity', languages: ['python'],
   applicability: 'A Python transaction reads a revision before updating the same record.',

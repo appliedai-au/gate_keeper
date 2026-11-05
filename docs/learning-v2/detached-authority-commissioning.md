@@ -117,6 +117,8 @@ No declaration in this document substitutes for that live observation.
    the stable relay prefix and the immutable frozen bundle. Its only public
    identity output is GK_AUTHORITY_PUBLIC_CONFIG with binding, both bank
    digests and four public fingerprints/gatewayId.
+   It opens no HTTP listener: leave Railway's HTTP health-check path unset for
+   this initialization deployment, then configure /healthz for serve mode.
 3. Copy those public pins/configDigest into the operator-supplied production
    bootstrap descriptor. The canonical projection digest for the recovered
    revision65 bank is
@@ -279,14 +281,41 @@ original archived procedure and newly retrieved independent novelty receipt,
 then settles the original lease. It never reruns the executor or paid proposal.
 Conflicting replacement decisions are rejected. Remove stale export variables
 once the original packet is retained to avoid unnecessary log repetition.
+After a protected decision is applied, clear GK_AUTHORITY_REVIEW_DECISION and
+GK_AUTHORITY_EXPORT_REVIEW while the driver is still paused, before resuming it.
+Use the Railway variable operation's skipDeploys option for this cleanup;
+clearing these control variables does not require another restart. Their
+absence on later starts prevents an old review command from refusing startup
+when a subsequent owned provider call is active.
 
 ## Safe accounting recovery and observability
 
-Set GK_AUTHORITY_EXPORT_STATUS=1 for GK_AUTHORITY_OPERATION_STATUS. This bounded
-operator summary contains operation/lease/request IDs, active call ID, SDK
-stage counts, definite upstream HTTP-response counts, ambiguous dispatch
-claims, independent verification/settlement state and pending review IDs.
-It contains no prompts, raw provider responses, headers, tokens or keys.
+Set GK_AUTHORITY_EXPORT_STATUS=1 for a protected operator export. The short
+GK_AUTHORITY_OPERATION_STATUS marker identifies the snapshot and reports only
+the active version/call IDs and operation/review counts. The complete result
+uses these markers so a long ten-attempt report is not truncated in one log line:
+
+- GK_AUTHORITY_STATUS_BEGIN: statusId, binding, bytes, parts and sha256.
+- GK_AUTHORITY_STATUS_PART: statusId, zero-based index and base64 data, with at
+  most 6000 decoded bytes in each part.
+- GK_AUTHORITY_STATUS_END: statusId, parts and sha256.
+
+Select one matching statusId, concatenate decoded parts in index order, and
+verify the exact byte count and SHA256 before reporting results. Do not treat
+a missing part or an unmatched end marker as a complete export.
+
+The projection contains baseline scores and receipt IDs, each actual attempt's
+candidate/status/novelty disposition and available screen/confirmation scores,
+the authority's final active version and its retained evaluation basis, and bank counts.
+It also retains operation/lease/request IDs, active call ID, SDK stage counts,
+definite upstream HTTP-response counts, ambiguous dispatch claims, independent
+verification/settlement state and pending review IDs. Final candidate scores
+describe the actual retained confirmation runs; they do not invent a new final
+full-corpus evaluation. It contains no oracle labels, prompts, procedure prose,
+raw provider responses, signatures, headers, tokens or keys. This projection
+is available only through the protected operator export, not a public RPC.
+It does not attest that the production host consumed an activation receipt;
+compare its active version with the durable host status for final acceptance.
 
 The relay claims one exact owned HTTP body before its single upstream POST.
 It checks the complete documented system wrapper, one user message, model and

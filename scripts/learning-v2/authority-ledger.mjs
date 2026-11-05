@@ -42,14 +42,21 @@ function apply(state, change) {
 }
 
 export class AuthorityLedger {
-  #journal; #binding; #initial; #clock; #tail = Promise.resolve();
+  #journal; #binding; #initial; #clock; #tail = Promise.resolve(); #cache = null;
   constructor({ journal, binding, initial, clock = () => Date.now() }) {
     requireThat(journal && typeof journal.read === 'function' && typeof journal.append === 'function',
       'authority journal unavailable');
     this.#journal = journal; this.#binding = copy(binding); this.#initial = copy(initial); this.#clock = clock;
   }
   async #read() {
+    // Never cache around this read. FileJournal must still verify ownership,
+    // immutable record hashes, sequence, checkpoint and the whole durable chain.
     const snapshot = await this.#journal.read();
+    this.#snapshotShape(snapshot);
+    if (this.#cache && snapshot.head === this.#cache.head) {
+      requireThat(snapshot.events.length === this.#cache.eventCount, 'authority cached head length changed');
+      return { head: snapshot.head, eventCount: snapshot.events.length, state: copy(this.#cache.state) };
+    }
     let state = null;
     for (const [index, event] of snapshot.events.entries()) {
       requireThat(event.schema === 'gk-detached-authority-event-v1' &&
@@ -65,17 +72,47 @@ export class AuthorityLedger {
       }
       requireThat(event.stateDigest === digest(state), 'authority journal state digest');
     }
-    return { head: snapshot.head, state };
+    this.#cache = { head: snapshot.head, eventCount: snapshot.events.length, state: copy(state) };
+    return { head: snapshot.head, eventCount: snapshot.events.length, state };
+  }
+  #snapshotShape(snapshot) {
+    record(snapshot, ['head', 'events'], 'authority journal snapshot');
+    requireThat(Array.isArray(snapshot.events) && (snapshot.events.length === 0 ? snapshot.head === null :
+      typeof snapshot.head === 'string' && /^[a-f0-9]{64}$/u.test(snapshot.head)), 'authority journal snapshot identity');
+  }
+  async #appendVerified(before, event, state) {
+    try {
+      // The change callback may retain its own `next` reference. Capture the
+      // exact proposed bytes before append can yield to any external work.
+      const committedState = copy(state), committedEvent = canonical(event);
+      requireThat(digest(committedState) === event.stateDigest, 'authority proposed state digest');
+      const sequence = before.eventCount + 1;
+      // This is the existing FileJournal/MemoryJournal record format. Bind the
+      // returned durable head to our verified previous head and exact event;
+      // neither a guessed head nor an unacknowledged write can publish cache.
+      const expectedHead = digest({ schema: 'gk-learning-v2-journal-record-v1',
+        sequence, previousHead: before.head, event });
+      const published = await this.#journal.append(before.head, event);
+      this.#snapshotShape(published);
+      requireThat(published.events.length === sequence && published.head === expectedHead &&
+        canonical(published.events.at(-1)) === committedEvent, 'authority append acknowledgement mismatch');
+      this.#cache = { head: published.head, eventCount: sequence, state: committedState };
+    } catch (error) {
+      // The write may have committed before its acknowledgement failed. A
+      // subsequent real journal read, not a proposed state, resolves that case.
+      this.#cache = null;
+      throw error;
+    }
   }
   async initialize() {
     return this.#exclusive(async () => {
-      const { head, state } = await this.#read();
+      const before = await this.#read(), { head, state } = before;
       if (state) return copy(state);
       requireThat(head === null, 'authority journal has no state');
       const initial = copy(this.#initial);
-      await this.#journal.append(null, { schema: 'gk-detached-authority-event-v1',
+      await this.#appendVerified(before, { schema: 'gk-detached-authority-event-v1',
         binding: this.#binding, kind: 'initialized', recordedAt: new Date(this.#clock()).toISOString(),
-        previousDigest: null, stateDigest: digest(initial), state: initial });
+        previousDigest: null, stateDigest: digest(initial), state: initial }, initial);
       return initial;
     });
   }
@@ -91,14 +128,14 @@ export class AuthorityLedger {
   }
   async change(kind, action) {
     return this.#exclusive(async () => {
-      const { head, state } = await this.#read();
+      const before = await this.#read(), { state } = before;
       requireThat(state, 'authority not initialized');
       const next = copy(state);
       const value = await action(next);
       const patch = changes(state, next);
-      if (patch.length) await this.#journal.append(head, { schema: 'gk-detached-authority-event-v1',
+      if (patch.length) await this.#appendVerified(before, { schema: 'gk-detached-authority-event-v1',
         binding: this.#binding, kind, recordedAt: new Date(this.#clock()).toISOString(),
-        previousDigest: digest(state), stateDigest: digest(next), changes: patch });
+        previousDigest: digest(state), stateDigest: digest(next), changes: patch }, next);
       return value;
     });
   }

@@ -150,6 +150,21 @@ export async function observeAuthorityServer({ baseUrl, token, expectedVersion, 
   } finally { clearTimeout(timer); }
 }
 
+/** Protected operator export only; numbered byte chunks survive bounded logs. */
+export function emitAuthorityStatus(status, emit = console.log) {
+  const bytes = Buffer.from(JSON.stringify(status));
+  const sha256 = createHash('sha256').update(bytes).digest('hex'), statusId = sha256;
+  const parts = Math.ceil(bytes.length / 6000);
+  emit('GK_AUTHORITY_OPERATION_STATUS ' + JSON.stringify({ statusId,
+    activeVersionId: status.activeVersionId, activeCallId: status.activeCallId,
+    operations: status.operations.length, reviews: status.reviews.length }));
+  emit('GK_AUTHORITY_STATUS_BEGIN ' + JSON.stringify({ statusId, binding: status.binding,
+    bytes: bytes.length, parts, sha256 }));
+  for (let index = 0; index < parts; index++) emit('GK_AUTHORITY_STATUS_PART ' + JSON.stringify({
+    statusId, index, data: bytes.subarray(index * 6000, (index + 1) * 6000).toString('base64') }));
+  emit('GK_AUTHORITY_STATUS_END ' + JSON.stringify({ statusId, parts, sha256 }));
+}
+
 export async function startAuthorityService({ env = process.env, repositoryRoot = '/app', emit = console.log } = {}) {
   requireThat(['initialize', 'serve'].includes(env.GK_AUTHORITY_MODE), 'explicit authority mode required');
   const config = authorityConfiguration(JSON.parse(env.GK_AUTHORITY_CONFIG || 'null'));
@@ -215,7 +230,7 @@ export async function startAuthorityService({ env = process.env, repositoryRoot 
     emit('GK_AUTHORITY_REVIEW_END ' + JSON.stringify({ reviewId: packet.reviewId, parts, sha256 }));
   }
   if (env.GK_AUTHORITY_EXPORT_STATUS === '1') {
-    emit('GK_AUTHORITY_OPERATION_STATUS ' + JSON.stringify(await authority.operatorStatus()));
+    emitAuthorityStatus(await authority.operatorStatus(), emit);
   }
   const relay = createAuthorityRelay({ authority, prefix: custody.relayPrefix,
     providerToken: env.GK_TFY_PAT, upstreamModelId: config.upstreamModelId });

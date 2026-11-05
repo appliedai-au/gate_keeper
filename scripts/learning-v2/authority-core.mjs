@@ -16,6 +16,7 @@ import { authorityCallId, authorityIdentity, authorityReferences, initialAuthori
   reconstructAuthorityRequest, scoreFrozenFindings } from './authority-plan.mjs';
 import { assertInlineSession, inspectProviderCall, providerJson } from './authority-provider.mjs';
 import { authorityProviderBody } from './authority-wire.mjs';
+import { authorityAcceptanceView } from './authority-acceptance-view.mjs';
 
 const ROLES = ['evaluation', 'novelty', 'budget', 'activation'];
 const sdkOptions = Object.freeze({ maxRetries: 0, timeoutInSeconds: 60 });
@@ -824,6 +825,7 @@ export async function createDetachedAuthority({ bundle: suppliedBundle, signers,
       const state = await ledger.read();
       const active = state.activeCallId === null ? null : callById(state, state.activeCallId).call;
       return { schema: 'gk-learning-authority-operator-status-v1', binding: bundle.binding,
+        acceptance: authorityAcceptanceView(bundle, state),
         activeVersionId: state.activeVersionId, activeCallId: state.activeCallId,
         activeCall: active ? { callId: active.callId, stage: active.stage,
           sessionId: active.sessionId, turnId: active.turnId, relayStatus: active.relay?.status || 'unclaimed' } : null,
