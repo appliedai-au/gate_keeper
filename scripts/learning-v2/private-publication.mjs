@@ -9,7 +9,8 @@ import { canonical, requireThat } from './contracts.mjs';
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const FILES = new Set(['production-config.json', 'status-config.json',
-  'implementation-qualification.json', 'baseline-continuation-authorization.json']);
+  'implementation-qualification.json', 'baseline-continuation-authorization.json',
+  'proposal-observation-qualification.json', 'proposal-observation-preparation.json', 'proposal-observation-authorization.json']);
 
 function context(path, { directory, uid = 1000, fs = nodeFs } = {}) {
   requireThat(typeof directory === 'string' && resolve(directory) === directory &&
@@ -32,17 +33,21 @@ function unlinkOwned(path, fs) {
 
 export function readPrivatePublishedJson(path, options) {
   const ctx = context(path, options), { fs, uid, directory, prefix } = ctx;
+  const strictReadOnly = options?.strictReadOnly ?? false;
+  requireThat(typeof strictReadOnly === 'boolean', 'private publication read mode');
   const fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   try {
     const before = fs.fstatSync(fd);
     requireThat(before.isFile() && before.uid === uid && (before.mode & 0o777) === 0o600 &&
       before.nlink >= 1 && before.nlink <= 2 && before.size > 0 && before.size <= MAX_BYTES,
     'private publication file integrity');
+    requireThat(!strictReadOnly || before.nlink === 1, 'read-only publication has unresolved staging links');
     const bytes = fs.readFileSync(fd, 'utf8'), value = JSON.parse(bytes);
     canonical(value);
     const after = fs.fstatSync(fd);
     requireThat(before.dev === after.dev && before.ino === after.ino && before.size === after.size &&
       before.mtimeMs === after.mtimeMs, 'private publication changed during read');
+    requireThat(!strictReadOnly || after.nlink === 1, 'read-only publication acquired another link');
     if (after.nlink > 1) {
       const candidates = fs.readdirSync(directory).filter(name => name.startsWith(prefix));
       requireThat(candidates.length <= 256, 'private publication staging inventory');

@@ -6,6 +6,8 @@ import { initializeLearningHost, openLearningHost } from './host.mjs';
 import { verifyProductionBundle } from './production-bundle.mjs';
 import { verifyPreparedContinuation } from './implementation-proof.mjs';
 import { validateOriginalBaselinePacket } from './baseline-continuation.mjs';
+import { PROPOSAL_OBSERVATION_STATUS, verifyProposalObservationStatus, verifyProposalObservationPreparation } from './proposal-observation-proof.mjs';
+import { validateOriginalProposalPacket } from './proposal-observation.mjs';
 
 const OPEN = new Set(['reserved', 'ready', 'screenPlanned', 'provisional', 'confirmationPlanned']);
 const MAX_TRANSITIONS = 3 + POLICY.attempts * 5; // Include the final read after ten activations.
@@ -36,6 +38,14 @@ export async function openProductionPilot({ directory, repositoryRoot, bundle: s
 export function createProductionDriver({ host, remote, bundle: supplied, implementation = null }) {
   const bundle = verifyProductionBundle(supplied);
   let busy = false;
+  const observationImplementation = implementation?.status.schema === PROPOSAL_OBSERVATION_STATUS;
+  async function ordinaryDAction() {
+    if (!observationImplementation) return;
+    verifyProposalObservationStatus(implementation.status, { binding: bundle.binding, trust: bundle.trust,
+      implementationCommit: implementation.sourceCommit, requireAuthorization: true, requireRemainder: true });
+    requireThat(typeof host.requireProposalObservationComplete === 'function', 'D host linkage verifier absent');
+    await host.requireProposalObservationComplete();
+  }
   async function inspect() {
     const snapshot = await host.inspect();
     requireThat(snapshot.state.configDigest === bundle.binding.configDigest &&
@@ -46,13 +56,18 @@ export function createProductionDriver({ host, remote, bundle: supplied, impleme
     ...(implementation ? { implementation: { frozenExperimentCommit: bundle.binding.sourceCommit,
       actualPlatformCommit: implementation.sourceCommit,
       qualificationReceiptId: implementation.status.qualificationEnvelope.body.receiptId,
-      continuationReceiptId: implementation.status.authorizationEnvelope?.body.receiptId ?? null } } : {}) }; }
+      continuationReceiptId: (observationImplementation ? implementation.status.historicalImplementationStatus : implementation.status)
+        .authorizationEnvelope?.body.receiptId ?? null,
+      ...(observationImplementation ? {
+        historicalImplementationCommit: implementation.status.historicalImplementationStatus.qualificationEnvelope.body.implementationCommit,
+        proposalObservationReceiptId: implementation.status.authorizationEnvelope?.body.receiptId ?? null } : {}) } } : {}) }; }
   async function exclusive(work) {
     requireThat(!busy, 'another production driver action is in progress'); busy = true;
     try { return await work(); } finally { busy = false; }
   }
 
   async function step() {
+    await ordinaryDAction();
     const { state, dispatch } = await inspect();
     if (dispatch.pending || state.operations.some(item => !item.settled)) return outcome('held', {
       reason: 'existing-operation-requires-explicit-reconciliation', operationId: dispatch.pending?.operation.id ??
@@ -111,6 +126,7 @@ export function createProductionDriver({ host, remote, bundle: supplied, impleme
     async prepareBaselineContinuation() {
       return exclusive(async () => {
         requireThat(implementation, 'separately qualified implementation required for BASE prepare');
+        requireThat(!observationImplementation, 'D cannot prepare historical B BASE');
         const checkpoint = await host.prepareBaselineContinuation();
         const checked = validateOriginalBaselinePacket(checkpoint, { runtime: bundle.runtime,
           caseInputs: bundle.caseInputs, originalBase: bundle.config.baseInstructions });
@@ -122,8 +138,34 @@ export function createProductionDriver({ host, remote, bundle: supplied, impleme
     },
     async continueBaseline() {
       return exclusive(async () => {
+        requireThat(!observationImplementation, 'D cannot replay historical B BASE');
         await host.continueBaseline();
         return outcome('advanced', { action: 'original-base-fourteen-calls-consumed-and-settled' });
+      });
+    },
+    async prepareProposalObservation() {
+      return exclusive(async () => {
+        requireThat(observationImplementation, 'actual D source qualification required for original fourth prepare');
+        verifyProposalObservationStatus(implementation.status, { binding: bundle.binding, trust: bundle.trust,
+          implementationCommit: implementation.sourceCommit });
+        const checkpoint = await host.prepareProposalObservation();
+        const checked = validateOriginalProposalPacket(checkpoint, { binding: bundle.binding, runtime: bundle.runtime });
+        const preparedProof = verifyProposalObservationPreparation(await remote.prepareProposalObservation(checkpoint), {
+          binding: bundle.binding, trust: bundle.trust, implementationCommit: implementation.sourceCommit,
+          historicalImplementationStatus: implementation.status.historicalImplementationStatus,
+          qualificationEnvelope: implementation.status.qualificationEnvelope, retained: checked.retained });
+        return outcome('prepared', { action: 'original-fourth-observed-without-new-calls', preparedProof });
+      });
+    },
+    async consumeProposalObservation() {
+      return exclusive(async () => {
+        requireThat(observationImplementation, 'actual D required for original fourth consumption');
+        verifyProposalObservationStatus(implementation.status, { binding: bundle.binding, trust: bundle.trust,
+          implementationCommit: implementation.sourceCommit, requireAuthorization: true });
+        // Host method has no remote/SDK callback. This command deliberately
+        // returns at four invalid outcomes; a separate run invocation is needed.
+        const result = await host.consumeProposalObservation();
+        return outcome('recovered', { ...result, action: 'original-fourth-invalid-consumed-and-original-settlement-recorded' });
       });
     },
     async step() { return exclusive(step); },
@@ -138,6 +180,7 @@ export function createProductionDriver({ host, remote, bundle: supplied, impleme
     },
     async resumeProposalReview({ operationId }) {
       return exclusive(async () => {
+        await ordinaryDAction();
         await inspect();
         let noveltyEnvelope;
         try { noveltyEnvelope = await remote.noveltyDecision({ operationId }); }
@@ -151,6 +194,7 @@ export function createProductionDriver({ host, remote, bundle: supplied, impleme
     },
     async reconcileUsage({ operationId }) {
       return exclusive(async () => {
+        await ordinaryDAction();
         await inspect();
         const response = await remote.reconcileUsage({ operationId });
         if (response?.status === 'unknown') return outcome('usage-unknown', { operationId });
@@ -160,6 +204,7 @@ export function createProductionDriver({ host, remote, bundle: supplied, impleme
     },
     async reconcileOperation({ operationId }) {
       return exclusive(async () => {
+        await ordinaryDAction();
         const saved = await inspect();
         requireThat(saved.dispatch.pending?.operation.id === operationId,
           'explicit reconciliation requires the original pending operation');

@@ -149,6 +149,21 @@ function apply(state, event, identity) {
     entry.baselineContinuation = copy(event.link);
     return state;
   }
+  if (event.type === 'proposal-observation-linked') {
+    record(event, ['schema', 'type', 'operationId', 'link'], 'original fourth observation linkage record');
+    record(event.link, ['initialHead', 'qualificationDigest', 'preparationDigest', 'authorizationDigest',
+      'originalArchiveHead', 'implementationCommit'], 'original fourth observation linkage');
+    for (const key of ['initialHead', 'qualificationDigest', 'preparationDigest', 'authorizationDigest', 'originalArchiveHead'])
+      hash(event.link[key], 'original fourth observation ' + key);
+    hash(event.link.implementationCommit, 'original fourth actual D implementation', 40);
+    const entry = pendingEntry(state, event.operationId);
+    requireThat(state.entries.length === 5 && entry.operation.kind === 'proposal' &&
+      entry.operation.attemptId === state.experimentId + ':attempt:4' && entry.request.requiredCalls === 1 &&
+      entry.admission !== null && entry.settlement === null && entry.notAdmitted === null && !entry.proposalObservation,
+    'only the original fourth admitted proposal can receive one immutable later-observation link');
+    entry.proposalObservation = copy(event.link);
+    return state;
+  }
   if (event.type === 'completed') {
     const guarded = Object.hasOwn(event, 'observationDigest');
     record(event, ['schema', 'type', 'operationId', 'resolution', ...(guarded ? ['observationDigest'] : [])],
@@ -255,6 +270,13 @@ export class DispatchLedger {
   async linkBaselineContinuation(operationId, link, originalHead) {
     hash(originalHead, 'authorized original dispatch head');
     return this.#append({ schema: SCHEMA, type: 'baseline-continuation-linked', operationId, link }, originalHead);
+  }
+
+  /** This link never grants another provider call. The host verifies the exact
+   * original failure, separately signed observation and already issued receipt. */
+  async linkProposalObservation(operationId, link, originalHead) {
+    hash(originalHead, 'authorized original fourth dispatch head');
+    return this.#append({ schema: SCHEMA, type: 'proposal-observation-linked', operationId, link }, originalHead);
   }
 
   /** The host authenticates this resolution; this transition grants no authority.

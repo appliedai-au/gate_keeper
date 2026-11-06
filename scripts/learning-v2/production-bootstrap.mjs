@@ -4,25 +4,40 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hash, identifier, requireThat } from './contracts.mjs';
 import { installProductionConfig, readProductionConfig, readOriginalProductionConfig, installProductionImplementation,
-  verifyProductionImplementationForCommand, PRODUCTION_REPOSITORY_ROOT } from './production-config.mjs';
+  installProductionProposalObservation, parseProductionProposalObservationDescriptor,
+  verifyProductionImplementationForCommand, verifyProductionProposalObservationSource,
+  PRODUCTION_COMMANDS, PRODUCTION_REPOSITORY_ROOT } from './production-config.mjs';
 import { bindBootstrapConfig, fetchProductionConfig, validateBootstrapDescriptor } from './production-bootstrap-config.mjs';
 import { createDetachedAuthorityClient } from './authority-client.mjs';
+import { PROPOSAL_OBSERVATION_STATUS } from './proposal-observation-proof.mjs';
 
 export function productionChildSpec(env) {
   const command = env.GK_PRODUCTION_COMMAND;
   if (command === undefined || command === '') return null;
-  requireThat(['init', 'run', 'resume-review', 'reconcile-usage', 'reconcile-operation', 'status',
-    'prepare-baseline', 'continue-baseline'].includes(command), 'production bootstrap command');
+  requireThat(PRODUCTION_COMMANDS.includes(command), 'production bootstrap command');
   const sourceCommit = hash(env.RAILWAY_GIT_COMMIT_SHA, 'Railway image source commit', 40);
+  const proof = env.GK_PRODUCTION_PROPOSAL_OBSERVATION_PROOF;
+  const proposalObservationDescriptor = parseProductionProposalObservationDescriptor(proof);
+  if (proposalObservationDescriptor) {
+    requireThat(proposalObservationDescriptor.sourceProof?.sourceCommit === sourceCommit,
+      'D source descriptor differs from actual Railway image');
+    requireThat(!['init', 'prepare-baseline', 'continue-baseline'].includes(command),
+      'D source descriptor cannot authorize initialization or BASE repetition');
+    requireThat(!env.GK_PRODUCTION_CONFIG_B64 && !env.GK_PRODUCTION_BOOTSTRAP_B64,
+      'D must reopen existing configuration without commissioning seeds');
+  }
+  requireThat(!['prepare-proposal-observation', 'consume-proposal-observation'].includes(command) ||
+    proposalObservationDescriptor, 'proposal observation command requires actual D source descriptor');
   const operationId = env.GK_PRODUCTION_OPERATION_ID;
   requireThat(['resume-review', 'reconcile-usage', 'reconcile-operation'].includes(command) ? typeof operationId === 'string' :
     operationId === undefined || operationId === '', 'production bootstrap operation argument');
   if (operationId) identifier(operationId, 'production bootstrap operationId');
-  return { command, sourceCommit,
+  return { command, sourceCommit, proposalObservationDescriptor,
     args: [fileURLToPath(new URL('./launch-production-pilot.mjs', import.meta.url)), command,
       ...(operationId ? [operationId] : [])],
     options: { cwd: PRODUCTION_REPOSITORY_ROOT, shell: false, stdio: ['ignore', 'inherit', 'inherit'],
-      env: { PATH: '/usr/local/bin:/usr/bin:/bin', NODE_ENV: 'production', GK_PRODUCTION_SOURCE_COMMIT: sourceCommit } } };
+      env: { PATH: '/usr/local/bin:/usr/bin:/bin', NODE_ENV: 'production', GK_PRODUCTION_SOURCE_COMMIT: sourceCommit,
+        ...(proposalObservationDescriptor ? { GK_PRODUCTION_PROPOSAL_OBSERVATION_PROOF: proof } : {}) } } };
 }
 
 /** The parent remains alive until child stdio and process handles close. */
@@ -92,7 +107,19 @@ export async function startProductionPilot({ env = process.env, spawnChild = spa
       trust: original.bundle.trust, fetcher });
     const status = verifyProductionImplementationForCommand({ bundle: original.bundle,
       status: await remote.implementationStatus(), sourceCommit: spec.sourceCommit, command: spec.command });
-    installProductionImplementation(status, spec.sourceCommit);
+    if (status.schema === PROPOSAL_OBSERVATION_STATUS) {
+      requireThat(!env.GK_PRODUCTION_CONFIG_B64 && !env.GK_PRODUCTION_BOOTSTRAP_B64,
+        'D must retain existing configuration without commissioning seeds');
+      await verifyProductionProposalObservationSource({ bundle: original.bundle, sourceCommit: spec.sourceCommit,
+        status, descriptor: spec.proposalObservationDescriptor, fetcher });
+      requireThat(!abortSignal?.aborted, 'production startup stopped before D proof publication');
+      installProductionProposalObservation(status, spec.sourceCommit);
+    } else {
+      requireThat(spec.proposalObservationDescriptor === null, 'D descriptor cannot substitute for actual B proof');
+      installProductionImplementation(status, spec.sourceCommit);
+    }
+  } else {
+    requireThat(spec.proposalObservationDescriptor === null, 'frozen A cannot adopt a D source descriptor');
   }
   const configured = readProductionConfig(spec.sourceCommit);
   verifyProductionImplementationForCommand({ bundle: configured.bundle, sourceCommit: spec.sourceCommit,

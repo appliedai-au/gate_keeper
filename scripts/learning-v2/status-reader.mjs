@@ -14,6 +14,8 @@ import { DispatchLedger } from './dispatch-ledger.mjs';
 import { FileJournal } from './journal.mjs';
 import { OperationArchive } from './operation-archive.mjs';
 import { readBaselineContinuation } from './baseline-continuation.mjs';
+import { readProposalObservation } from './proposal-observation.mjs';
+import { PROPOSAL_OBSERVATION_STATUS } from './proposal-observation-proof.mjs';
 import { statusView } from './prompts.mjs';
 import { projectLearningStatus, validateLearningStatusBinding } from '../../integrations/base44/shared/learning-status-contract.js';
 
@@ -44,8 +46,10 @@ export function createReadOnlyLearningStatusReader({ directory, repositoryRoot, 
       'read-only authority public key does not match pinned fingerprint');
   }
   const pinnedTrust = copy(trust);
+  const controllerJournal = new FileJournal({ directory: join(directory, 'controller'), repositoryRoot, create: false, readOnly: true });
+  const dispatchJournal = new FileJournal({ directory: join(directory, 'dispatch'), repositoryRoot, create: false, readOnly: true });
   const controller = new LearningController({
-    journal: new FileJournal({ directory: join(directory, 'controller'), repositoryRoot, create: false, readOnly: true }),
+    journal: controllerJournal,
     trust: pinnedTrust,
   });
   const originalJournalFor = id => new FileJournal({
@@ -66,10 +70,32 @@ export function createReadOnlyLearningStatusReader({ directory, repositoryRoot, 
         trustPins: state.trustPins, history: state.history }) === configDigest,
       'read-only frozen configuration digest mismatch');
     const ledger = new DispatchLedger({
-      journal: new FileJournal({ directory: join(directory, 'dispatch'), repositoryRoot, create: false, readOnly: true }),
+      journal: dispatchJournal,
       experimentId: fixed.experimentId, configDigest: state.configDigest,
     });
     const dispatch = await ledger.read();
+    const fourthId = 'operation-' + digest({ experimentId: fixed.experimentId, kind: 'proposal',
+      attemptId: fixed.experimentId + ':attempt:4' });
+    const observationJournal = new FileJournal({ directory: join(directory, 'proposal-observations',
+      digest({ operationId: fourthId })), repositoryRoot, create: false, readOnly: true });
+    let observationSnapshot = null, observation = null;
+    try { observationSnapshot = await observationJournal.read(); }
+    catch (error) { if (error.code !== 'JOURNAL_DIRECTORY_MISSING') throw error; }
+    if (observationSnapshot?.events.length) {
+      const opened = observationSnapshot.events[0];
+      const status = { schema: PROPOSAL_OBSERVATION_STATUS,
+        historicalImplementationStatus: JSON.parse(opened.historicalImplementationSerialized),
+        qualificationEnvelope: JSON.parse(opened.qualificationSerialized), preparationEnvelope: JSON.parse(opened.preparationSerialized),
+        authorizationEnvelope: JSON.parse(opened.authorizationSerialized) };
+      observation = await readProposalObservation({ controllerJournal, dispatchJournal,
+        originalJournal: originalJournalFor(fourthId), observationJournal, binding: { ...fixed, configDigest },
+        trust: pinnedTrust, runtime: opened.packet.runtime,
+        implementationCommit: status.qualificationEnvelope.body.implementationCommit, status });
+      requireThat(digest(observation.state) === digest(state) && digest(observation.dispatch) === digest(dispatch),
+        'read-only status changed during mandatory D observation validation');
+    }
+    requireThat(!dispatch.entries.some(entry => entry.proposalObservation) || observation,
+      'mandatory D observation custody is missing');
     if (state.baselineNonAdmission) {
       const marker = state.baselineNonAdmission;
       record(marker, ['operationId', 'requestDigest', 'receiptId', 'receiptDigest'],
@@ -112,6 +138,10 @@ export function createReadOnlyLearningStatusReader({ directory, repositoryRoot, 
         'recorded execution archive is missing or differs');
         requireThat(!archived.calls.some(call => call.stages.at(-1)?.stage === 'failure') || !operation.evidenceComplete,
           'failed original archive cannot conceal missing continuation evidence');
+        if (operation.kind === 'proposal' && archived.calls.some(call => call.stages.at(-1)?.stage === 'failure') &&
+          state.attempts.find(item => item.id === operation.attemptId)?.status === 'invalid') requireThat(
+          observation?.retained.operationId === operation.id && observation.complete,
+        'failed original proposal cannot claim a genuine invalid outcome without complete later-observation custody');
       }
     }
     for (const entry of dispatch.entries.filter(item => item.resolution)) {
