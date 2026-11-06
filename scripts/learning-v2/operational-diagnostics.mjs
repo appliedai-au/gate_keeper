@@ -18,7 +18,7 @@ const COMMANDS = new Set(['init', 'run', 'resume-review', 'reconcile-usage', 're
   'status', 'prepare-baseline', 'continue-baseline', 'prepare-proposal-observation', 'consume-proposal-observation']);
 
 export function createOperationalDiagnostic({ component, emit = line => console.log(line) } = {}) {
-  // Do not execute or stringify unknown values, even while reporting bad input.
+  // Do not stringify unknown values, even while reporting bad input.
   if (!COMPONENTS.has(component) || typeof emit !== 'function') return () => {};
   let diagnosticId, started;
   try { diagnosticId = randomUUID(); started = performance.now(); }
@@ -30,16 +30,18 @@ export function createOperationalDiagnostic({ component, emit = line => console.
       const event = { schema: 'gk-operational-diagnostic-v1', component, diagnosticId,
         sequence: ++sequence, stage, outcome, at: new Date().toISOString(),
         elapsedMs: Math.max(0, Math.min(86400000, Math.floor(performance.now() - started))) };
-      // Only fixed enums and bounded numbers are copied. All other fields are
-      // ignored, including error/message/stack/cause, headers and private IDs.
+      // Only fixed enums and bounded numbers are copied. Read each once, so a
+      // changing getter cannot substitute secret text after validation. Ignore
+      // error/message/stack/cause, headers, payloads and private identifiers.
       if (fields && typeof fields === 'object') {
-        if (METHODS.has(fields.method)) event.method = fields.method;
-        if (COMMANDS.has(fields.command)) event.command = fields.command;
-        if (REASONS.has(fields.reason)) event.reason = fields.reason;
-        if (Number.isInteger(fields.httpStatus) && fields.httpStatus >= 100 && fields.httpStatus <= 599)
-          event.httpStatus = fields.httpStatus;
-        if (Number.isSafeInteger(fields.responseBytes) && fields.responseBytes >= 0)
-          event.responseBytes = Math.min(fields.responseBytes, 16 * 1024 * 1024);
+        const { method, command, reason, httpStatus, responseBytes } = fields;
+        if (METHODS.has(method)) event.method = method;
+        if (COMMANDS.has(command)) event.command = command;
+        if (REASONS.has(reason)) event.reason = reason;
+        if (Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599)
+          event.httpStatus = httpStatus;
+        if (Number.isSafeInteger(responseBytes) && responseBytes >= 0)
+          event.responseBytes = Math.min(responseBytes, 16 * 1024 * 1024);
       }
       const pending = emit('GK_OPERATION_DIAGNOSTIC ' + JSON.stringify(event));
       // Tests may inject an asynchronous sink; absorb its failure as well.
