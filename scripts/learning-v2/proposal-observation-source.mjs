@@ -1,24 +1,20 @@
-/**
- * Independently retrieve public exact-source and review evidence. The test
- * execution trust boundary is explicit: a pinned authenticated owner publishes
- * the actual Railway qualification receipt, including its raw-log digest.
- * This service has no broad Railway credential and makes no claim to have
- * rerun those tests itself.
- */
+/** Independently retrieve exact-source/review evidence. Railway execution is
+ * attested by the pinned owner, never claimed to be rerun by this verifier. */
 import { createHash } from 'node:crypto';
 import { canonical, copy, digest, hash, integer, record, requireThat, text } from './contracts.mjs';
+import { hasCompleteReviewDashboard } from './review-dashboard.mjs';
 
 const REPOSITORY = 'appliedai-au/gate_keeper';
 const ROOT = 'https://api.github.com/repos/' + REPOSITORY;
 const BOT_ID = 159877585;
 const BOT_LOGIN = 'gitar-bot[bot]';
 const PREFIX = 'GK_PROPOSAL_OBSERVATION_QUALIFICATION\n';
+const V1 = 'gk-learning-proposal-observation-gate-proof-v1';
+const V2 = 'gk-learning-proposal-observation-gate-proof-v2';
 const sha = value => createHash('sha256').update(value).digest('hex');
 const equal = (a, b, why) => requireThat(canonical(a) === canonical(b), why);
 
 async function github(fetcher, path) {
-  // GitHub's comparison separator is not a parent-directory segment. Admit
-  // only this exact, already hash-bound route; retain refusal for every other '..'.
   const pinnedComparison = /^\/compare\/[a-f0-9]{40}\.\.\.[a-f0-9]{40}\?per_page=100$/u.test(path);
   requireThat(path.startsWith('/') && (!path.includes('..') || pinnedComparison), 'source evidence path');
   const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 30_000);
@@ -61,17 +57,39 @@ function checkSummary(value, label) {
 }
 
 export function createProposalObservationGateVerifier({ descriptor: supplied, fetcher = fetch }) {
-  record(supplied, ['schema', 'repository', 'sourceCommit', 'qualification'], 'protected source proof');
   const descriptor = copy(supplied);
-  requireThat(descriptor.schema === 'gk-learning-proposal-observation-gate-proof-v1' &&
-    descriptor.repository === REPOSITORY, 'protected source proof repository');
+  hash(descriptor.sourceCommit, 'actual current source commit', 40);
+  return createGateLeg(descriptor, fetcher, descriptor.sourceCommit, false);
+}
+
+/** Private composition only: a successor may name ONE fully qualified v1
+ * predecessor. Both legs observe the real current main; no transport result is
+ * rewritten, no arbitrary ancestor is accepted, and recursion is prohibited. */
+function createGateLeg(supplied, fetcher, currentMain, historicalLeg) {
+  const descriptor = copy(supplied), successor = descriptor.schema === V2;
+  record(descriptor, successor ? ['schema', 'repository', 'sourceCommit', 'qualification', 'previous'] :
+    ['schema', 'repository', 'sourceCommit', 'qualification'], 'protected source proof');
+  requireThat((descriptor.schema === V1 || successor && !historicalLeg) &&
+    descriptor.repository === REPOSITORY, 'protected source proof repository or predecessor version');
   hash(descriptor.sourceCommit, 'protected source commit', 40);
-  record(descriptor.qualification, ['commentId', 'bodySha256', 'authorId', 'authorLogin'],
-    'qualification artifact pin');
+  record(descriptor.qualification, ['commentId', 'bodySha256', 'authorId', 'authorLogin'], 'qualification artifact pin');
   integer(descriptor.qualification.commentId, 'qualification comment', 1);
   integer(descriptor.qualification.authorId, 'qualification author', 1);
   text(descriptor.qualification.authorLogin, 'qualification author login', 100);
   hash(descriptor.qualification.bodySha256, 'qualification body hash');
+  let previousVerifier = null;
+  if (successor) {
+    const previous = descriptor.previous;
+    record(previous, ['schema', 'sourceProof', 'gatePolicy'], 'qualified predecessor descriptor');
+    requireThat(previous.schema === 'gk-learning-proposal-observation-source-proof-v1' &&
+      previous.sourceProof?.schema === V1, 'successor requires exactly one v1 predecessor');
+    record(previous.gatePolicy, ['targetId', 'presetDigest', 'outputProfileDigest', 'effectiveTreeDigest'], 'predecessor gate policy');
+    requireThat(previous.sourceProof.sourceCommit !== descriptor.sourceCommit &&
+      previous.sourceProof.qualification?.authorId === descriptor.qualification.authorId &&
+      previous.sourceProof.qualification.authorLogin === descriptor.qualification.authorLogin,
+    'predecessor source or owner differs');
+    previousVerifier = createGateLeg(previous.sourceProof, fetcher, currentMain, true);
+  }
 
   return async bundle => {
     requireThat(bundle.binding.sourceCommit === descriptor.sourceCommit, 'source proof differs from frozen source');
@@ -92,8 +110,7 @@ export function createProposalObservationGateVerifier({ descriptor: supplied, fe
     requireThat(proof.gatePolicy.effectiveTreeDigest === digest({ repository: REPOSITORY, gitTree: proof.treeSha }),
       'qualification effective Git tree digest');
     requireThat(comment.issue_url === ROOT + '/issues/' + proof.pullRequest, 'qualification comment belongs to another PR');
-    record(proof.deployment, ['projectId', 'environmentId', 'serviceId', 'deploymentId', 'finishedAt', 'status'],
-      'qualification deployment');
+    record(proof.deployment, ['projectId', 'environmentId', 'serviceId', 'deploymentId', 'finishedAt', 'status'], 'qualification deployment');
     for (const key of ['projectId', 'environmentId', 'serviceId', 'deploymentId']) {
       requireThat(/^[a-f0-9-]{36}$/u.test(proof.deployment[key]), 'qualification Railway identity');
     }
@@ -128,18 +145,17 @@ export function createProposalObservationGateVerifier({ descriptor: supplied, fe
     'qualification does not describe the merged repository PR');
     requireThat(qualified.sha === proof.qualifiedCommit && source.sha === descriptor.sourceCommit &&
       base.sha === proof.baseCommit && qualified.tree?.sha === proof.treeSha &&
-      source.tree?.sha === proof.treeSha && main.commit?.sha === descriptor.sourceCommit,
+      source.tree?.sha === proof.treeSha && main.commit?.sha === currentMain,
     'qualified source tree or current main changed');
     requireThat(source.parents?.length === 2 && source.parents[0].sha === proof.baseCommit &&
       source.parents[1].sha === proof.qualifiedCommit,
     'merged source lacks exact qualified and current-base parents');
     const review = proof.review;
-    record(review, ['mode', 'requestedHead', 'request', 'acknowledgement', 'approval',
-      'resolvedComments', 'nativeReviews'], 'qualification independent review');
-    requireThat(['formal-review', 'dashboard'].includes(review.mode) &&
-      review.requestedHead === proof.qualifiedCommit && Array.isArray(review.resolvedComments) &&
-      review.resolvedComments.length <= 100 && Array.isArray(review.nativeReviews) &&
-      review.nativeReviews.length <= 100, 'independent review context');
+    record(review, ['mode', 'requestedHead', 'request', 'acknowledgement', 'approval', 'resolvedComments', 'nativeReviews'],
+      'qualification independent review');
+    requireThat(['formal-review', 'dashboard'].includes(review.mode) && review.requestedHead === proof.qualifiedCommit &&
+      Array.isArray(review.resolvedComments) && review.resolvedComments.length <= 100 &&
+      Array.isArray(review.nativeReviews) && review.nativeReviews.length <= 100, 'independent review context');
     const artifacts = [];
     const loadComment = async (pin, kind, author) => {
       record(pin, ['id', 'bodySha256'], 'independent review artifact pin');
@@ -163,26 +179,19 @@ export function createProposalObservationGateVerifier({ descriptor: supplied, fe
       acknowledgement = await loadComment(review.acknowledgement, 'issue', { id: BOT_ID, login: BOT_LOGIN });
       requireThat(Date.parse(acknowledgement.created_at) >= Date.parse(request.created_at), 'review acknowledgement precedes request');
     }
-    const approval = await loadComment(review.approval, review.mode === 'formal-review' ? 'review' : 'issue',
-      { id: BOT_ID, login: BOT_LOGIN });
-    if (review.mode === 'formal-review') requireThat(approval.state === 'APPROVED' &&
-      approval.commit_id === proof.qualifiedCommit && Number.isFinite(Date.parse(approval.submitted_at)) &&
+    const approval = await loadComment(review.approval, review.mode === 'formal-review' ? 'review' : 'issue', { id: BOT_ID, login: BOT_LOGIN });
+    if (review.mode === 'formal-review') requireThat(approval.state === 'APPROVED' && approval.commit_id === proof.qualifiedCommit &&
+      Number.isFinite(Date.parse(approval.submitted_at)) &&
       Date.parse(approval.submitted_at) >= Date.parse(acknowledgement?.created_at || request.created_at),
     'formal review is not a fresh approval of the requested exact head');
     else {
       requireThat(acknowledgement && acknowledgement.body.includes(proof.qualifiedCommit) &&
         /(?:queued|current.head|reviewing|review.*(?:started|requested))/iu.test(acknowledgement.body),
       'dashboard review lacks exact-head bot acknowledgement');
-      const count = approval.body.match(/<kbd>(\d+) closed \/ (\d+) findings<\/kbd>/u);
-      requireThat(approval.body.includes('✅ Approved') &&
-        (/No open findings remain|No issues found\.|0 findings|0 open/iu.test(approval.body) || count && count[1] === count[2]),
-      'Gitar dashboard has no complete approval evidence');
+      requireThat(hasCompleteReviewDashboard(approval.body), 'Gitar dashboard has no complete approval evidence');
       requireThat(Date.parse(approval.updated_at || approval.created_at) >= Date.parse(acknowledgement.created_at),
         'dashboard approval predates exact-head bot acknowledgement');
     }
-    // GitHub keeps an inline finding's old commit_id after its fix. Preserve
-    // that fact, authenticate the bot's fixed-by artifact, and independently
-    // prove the actual fix is contained in the freshly approved final head.
     for (const pin of review.resolvedComments) {
       record(pin, ['id', 'bodySha256', 'commitId', 'fixCommit'], 'historical fixed finding pin');
       hash(pin.commitId, 'original finding commit', 40); hash(pin.fixCommit, 'actual fix commit', 40);
@@ -200,18 +209,14 @@ export function createProposalObservationGateVerifier({ descriptor: supplied, fe
         artifacts.push(comparison);
       }
     }
-    // Independently enumerate the current complete native-review inventory.
-    // The owner cannot omit a later blocking review by omitting its pin.
     const nativeInventory = await nativeReviewInventory(fetcher, proof.pullRequest);
     const botInventory = nativeInventory.filter(item => item.user?.id === BOT_ID || item.user?.login === BOT_LOGIN);
-    requireThat(botInventory.every(item => item.user.id === BOT_ID && item.user.login === BOT_LOGIN),
-      'native review bot identity drift');
+    requireThat(botInventory.every(item => item.user.id === BOT_ID && item.user.login === BOT_LOGIN), 'native review bot identity drift');
     equal(botInventory.map(item => ({ id: item.id, commitId: item.commit_id, state: item.state })).sort((a, b) => a.id - b.id),
       [...review.nativeReviews].sort((a, b) => a.id - b.id), 'native review inventory is incomplete or changed');
     requireThat(!botInventory.some(item => item.commit_id === proof.qualifiedCommit && item.state === 'CHANGES_REQUESTED'),
       'qualified head retains an unpinned or undismissed changes-requested review');
     artifacts.push(...nativeInventory);
-    // COMMENTED remains COMMENTED even when approval uses a dashboard.
     for (const pin of review.nativeReviews) {
       record(pin, ['id', 'commitId', 'state'], 'native review pin');
       const native = await github(fetcher, '/pulls/' + proof.pullRequest + '/reviews/' + pin.id);
@@ -221,10 +226,29 @@ export function createProposalObservationGateVerifier({ descriptor: supplied, fe
         'qualified head retains an undismissed changes-requested review');
       artifacts.push(native);
     }
+    let predecessorEvidence = null;
+    if (successor) {
+      const previous = descriptor.previous;
+      requireThat(proof.baseCommit === previous.sourceProof.sourceCommit, 'successor first parent differs from qualified predecessor');
+      for (const key of ['targetId', 'presetDigest', 'outputProfileDigest']) requireThat(
+        previous.gatePolicy[key] === proof.gatePolicy[key], 'predecessor weakens the full qualification recipe');
+      const prior = await previousVerifier({ binding: { sourceCommit: previous.sourceProof.sourceCommit },
+        config: { gatePolicy: previous.gatePolicy } });
+      predecessorEvidence = prior.evidence;
+      requireThat(predecessorEvidence.source.sha === base.sha && predecessorEvidence.source.tree.sha === base.tree.sha &&
+        predecessorEvidence.qualification.pullRequest !== proof.pullRequest &&
+        predecessorEvidence.qualification.deployment.deploymentId !== proof.deployment.deploymentId &&
+        Date.parse(predecessorEvidence.ownerComment.created_at) <= Date.parse(comment.created_at),
+      'successor predecessor identity or qualification chronology differs');
+      // Recheck actual main after the entire predecessor leg, not a fabricated
+      // old main response. No predecessor transport is cached or rewritten.
+      requireThat((await github(fetcher, '/branches/main')).commit?.sha === currentMain, 'current main changed during successor proof');
+    }
     return { runId: proof.deployment.deploymentId, rawLogsDigest: proof.rawLogsDigest,
-      evidence: { schema: 'gk-learning-proposal-observation-source-evidence-v1', descriptor, qualification: proof,
-        ownerComment: comment, pullRequest: pr, qualified, source, base,
+      evidence: { schema: successor ? 'gk-learning-proposal-observation-source-evidence-v2' : 'gk-learning-proposal-observation-source-evidence-v1',
+        descriptor, qualification: proof, ownerComment: comment, pullRequest: pr, qualified, source, base,
         observedMain: main.commit.sha, reviewArtifacts: artifacts,
+        ...(predecessorEvidence ? { predecessor: predecessorEvidence } : {}),
         trustBoundary: 'Authenticated owner attests actual Railway execution; authority independently retrieves exact source, owner receipt and Gitar artifacts.' } };
   };
 }
