@@ -114,7 +114,8 @@ test('dead gateway cannot start recovery and command-free startup stays command-
   assert.equal(dead.calls.length, 1); assert.equal(dead.events.at(-1).outcome, 'held');
   const disabled = await runEntrypoint({ command: '' });
   assert.equal(disabled.calls.length, 0); assert.equal(disabled.gatewayCalls.length, 1);
-  assert.ok(disabled.events.some(row => row.stage === 'preflight-status' && row.outcome === 'disabled'));
+  const event = disabled.events.find(row => row.stage === 'preflight-status' && row.outcome === 'disabled');
+  assert.ok(event); assert.equal(Object.hasOwn(event, 'reason'), false);
 });
 test('status remains status-only and unknown command text never enters diagnostics', async () => {
   const status = await runEntrypoint({ command: 'status' }); assert.equal(status.calls.length, 1);
@@ -133,6 +134,7 @@ for (const command of ['run', 'resume-review', 'reconcile-usage', 'reconcile-ope
   assert.deepEqual(f.events.map(row => [row.stage, row.outcome]), [['startup','started'],
     ['preflight-status','disabled'], ['gateway-start','started'], ['gateway-start','finished'],
     ['requested-command','started'], ['requested-command','finished']]);
+  assert.equal(f.events.find(row => row.stage === 'preflight-status').reason, 'observation-direct');
 });
 test('duplicate A/B flow exhausts the explicit quota model; observation does not remove either command verifier', async () => {
   const legacy = await runEntrypoint({ sourceBudget: 60 });
@@ -175,8 +177,19 @@ test('status/init and absent/blank observation hints retain the commissioning pr
     assert.equal(f.calls.length, 1); assert.equal(f.calls[0].isPreflight, true);
     assert.equal(f.calls[0].command, command);
   }
-  for (const observationProof of [undefined, '', '  ']) {
+  for (const observationProof of [undefined, '', '  ', '\t\n']) {
     const f = await runEntrypoint({ observationProof });
     assert.deepEqual(f.calls.map(row => row.command), ['status', 'prepare-proposal-observation']);
+    assert.equal(f.events.some(row => row.reason === 'observation-direct'), false);
+  }
+});
+test('whitespace-only proof is never accepted as direct observation by the actual child specification', async () => {
+  for (const observationProof of ['  ', '\t\n']) {
+    const f = await runEntrypoint({ observationProof, validateSpec: true, sourceBudget: 60 });
+    assert.equal(f.calls.length, 1); assert.equal(f.calls[0].command, 'status');
+    assert.equal(f.calls[0].isPreflight, true); assert.equal(f.sourceRequests, 0);
+    assert.equal(f.events.some(row => row.stage === 'requested-command'), false);
+    assert.equal(f.events.some(row => row.reason === 'observation-direct'), false);
+    assert.ok(f.events.some(row => row.stage === 'preflight-status' && row.outcome === 'failed'));
   }
 });
