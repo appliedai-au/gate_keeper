@@ -1,10 +1,19 @@
 # Gate Keeper: operational closeout phase plan
 
 **Prepared:** 6 November 2026, Australia/Melbourne  
+**Updated:** 6 November 2026, 16:45 AEDT / 05:45 UTC; runtime snapshot remains 16:29:41.206 AEDT / 05:29:41.206 UTC  
 **Owner:** Owen Tyas  
 **Repository:** `appliedai-au/gate_keeper`  
 **Primary delivery record:** [issue #44](https://github.com/appliedai-au/gate_keeper/issues/44)  
-**Working status:** P0 and P1 complete. PR #58 is merged as actual implementation B `45ed2b6ef74f53a0940329066d0fe126ad87a7fa`, after independent/Gitar review, 670/670 full tests, 9/9 canary, typecheck, five scorer checks and observed disposable-service cleanup. The authority is serving B and has returned its signed implementation qualification; continuation authorization remains absent, so model dispatch is held. The host is deploying B with `prepare-baseline` to inspect the original archive without dispatch. Frozen definition A, the original first paid BASE result, keys, bank and journals remain preserved; proposal attempts are still 0/10. The qualified Base44 diagnostic adapter is being installed to investigate the existing owner-function 503. PR #59 recovery changes are independently accepted and Gitar approved; the separately qualified completed-history/product composition is being implemented before P6 deployment.
+**Working status:** P0 and P1 are complete; qualified implementation B remains current main. The original BASE completed at 16:11:27.884 AEDT / 05:11:27.884 UTC with fourteen verified calls, no repeat of the first paid call and actual prices unknown. An unexplained subsequent host deployment created at 16:13:34.084 AEDT / 05:13:34.084 UTC ran three genuine invalid proposals and left the fourth attempt held. The latest public status records **4/10 attempted, three invalid, one pending**; seventeen calls are settled with unknown prices, while eighteen actual dispatches include the fourth unsettled proposal. The fourth provider turn is terminal, but original-result consumption and settlement remain unresolved. Its deployment is not attributable from the visible task history; there is no evidence establishing another actor. The next-start command is `status`, and further runtime mutation is held pending original-evidence recovery.
+
+Read-only host custody capture is complete with unchanged before/after head-file hashes; independent chain and provider-binding checks remain in progress. The held archive contains an unresolved failure without a final result/artifact, so capture has not itself repaired the operation. The Base44 redirect compatibility delta remains accepted but uninstalled. The thirty-six-path C overlay is now independently source accepted and has been composed into a published draft PR #59 head; the exact combined source still requires independent review, fresh Gitar and complete qualification. C is not merged into main or deployed. A possible bounded D recovery remains a design decision and would require an explicit amendment to C's current B-only history provenance.
+
+### Current review and custody result — 16:45 AEDT / 05:45 UTC
+
+The exact published PR #59 composition at `0f127944d20a47907e4e0a21a6d4d56352c988d7`, tree `3dbafd33f2435e2d4456bfbb16b13cdf63f4c7d9`, has now passed independent complete-tree review. Fresh Gitar request [6677920827](https://github.com/appliedai-au/gate_keeper/pull/59#issuecomment-6677920827) names that exact head. Gitar acknowledged it and requested one additional repair: a skewed browser clock must not reject a history response already verified for freshness by the server. The bounded UI repair is in progress; server freshness enforcement remains mandatory. Full combined remote qualification remains pending.
+
+Independent examination of the captured controller, dispatch and held-operation journals verified every canonical record, predecessor hash, sequential filename and head checkpoint. The original admission signature, request, call, session, turn and input match the separately retrieved terminal provider result. The host still has no final result or disposition artifact and remains unconsumed/unsettled. Its retained failure is at `turn-read` after three running observations; it retains no original exception cause, so the precise transport/restart cause is not established. This verified evidence supports designing a qualified original-result recovery, without overwriting the terminal failure or repeating inference. No recovery, fourth-call settlement or completed pilot is claimed by this checkpoint.
 
 ## 1. Intended outcome and scope
 
@@ -74,26 +83,27 @@ The existing closeout lead owns reconciliation, operational changes and the evid
 | --- | --- | --- | --- |
 | P0 | Current-state reconciliation and complete evidence inventory | Complete; fresh `main`/deployment reads reconciled | Existing access |
 | P1 | Verified disposable cleanup and authentic source-qualification receipt | Complete; immutable PR #56 receipt accepted by actual source-gate RPC | P0 |
-| P2 | Updated Base44 bridge, scoped bindings and real access acceptance | Owner signed in; three-file bridge and four bindings installed; qualified diagnostic adapter installation in progress | Observe safe runtime events, resolve evidenced 503, then finish app-session acceptance |
-| P3 | Serving authority, registered provider, initialized host and genuine BASE execution | B repair qualified and merged; authority B qualification observed; host nondispatching prepare in progress | Actual retained-state proof, digest-only owner authorization, then original BASE remainder |
-| P4 | Exactly ten genuine proposal attempts with retained outcomes and qualified promotions, if any | 0/10 | P3 and protected status/control observability |
-| P5 | Restart, accounting, privacy, final evidence and #44 disposition | Pending | P2, P4 |
-| P6 | Authenticated live-review submission, real results and private run history | PR #59 recovery head e346b34 independently accepted and Gitar approved; hosted adapter accepted; completed-history composition in progress | Final combined C review and full real-PostgreSQL/Caddy qualification, original pilot closure, then exact-C commissioning |
+| P2 | Updated Base44 bridge, scoped bindings and real access acceptance | Owner and all four bindings verified; actual diagnostic fetch fails on workerd's unsupported `redirect: error`; accepted compatibility delta not installed | Exact-source qualification, permitted installation/readback and actual app-session acceptance after the runtime hold |
+| P3 | Serving authority, registered provider, initialized host and genuine BASE execution | Complete: B qualified/merged, signed prepare and owner authorization verified, original BASE complete with fourteen calls and unknown prices | Preserve original A/B proof and BASE evidence |
+| P4 | Exactly ten genuine proposal attempts with retained outcomes and qualified promotions, if any | Held at 4/10 attempted: three genuine invalid outcomes, fourth pending; original host custody capture complete with unchanged heads | Independently verify captured chains/provider binding, recover the original fourth result without re-dispatch or placeholder classification, and reconcile deployment provenance |
+| P5 | Restart, accounting, privacy, final evidence and #44 disposition | Pending; next-start command is `status`; runtime mutation held | P2, full P4 settlement/closure and evidence recovery |
+| P6 | Authenticated live-review submission, real results and private run history | Thirty-six-path overlay source accepted; combined draft PR #59 head `0f127944…` published and all 479 file blobs/modes verified; no main merge or deployment | Fresh exact combined-source independent review, Gitar and full real-PostgreSQL/Caddy qualification; original pilot closure and any required D provenance amendment before C commissioning |
 
 P2's final app-session checks can now use the initialized host. The seven successful scoped HTTP checks establish transport authorization, not Base44 owner/non-owner session behavior. If browser access is unavailable, advance independent backend work; full #44 closure still requires actual app acceptance.
 
 ### Current next actions
 
-1. Observe the actual B `prepare-baseline` result and independently verify the preserved original archive, first paid result and authority proof of no second intent. Publish only the exact digest-bound owner continuation authorization after this evidence exists. Continue one original result replay with zero repeat SDK calls plus the thirteen remaining slots, and verify fourteen-call settlement before running any proposal.
-2. Finish the Base44 runtime diagnosis using the reviewed, qualified redacted adapter. Owner authentication and owner/body checks pass; a fresh direct upstream GET is 200 and satisfies the contract, while the actual function returns 503. Do not infer an exact cause from latency or a silent catch. After correcting the evidenced failure, verify actual anonymous, non-owner and owner app sessions and publish the accepted app revision.
-3. After a separately reviewed recovery/source-transition decision and genuine BASE qualification, continue through original operations and independent review pauses. No proposal attempt has yet been accepted; do not turn the completed BASE call into attempt 1 or fabricate a complete baseline.
-4. Keep P6 in [draft PR #59](https://github.com/appliedai-au/gate_keeper/pull/59) on its separate release path. Its e346b34 recovery head has Gitar approval with both findings closed. Compose it with actual B, the accepted hosted adapter and reviewed completed-history profile, then qualify the exact C tree with mandatory real PostgreSQL/Caddy gates. Keep main B until the ten genuine attempts and all protected decisions are durably closed. Only then merge C, use its read-only archive export, pin the actual closure capsule and enable the separately verified serving profile.
+1. Preserve current main B, the original journals and the next-start `status` command. Independently verify the captured controller/dispatch/held-operation hash chains and bind the original provider evidence to that held operation. The captured archive has session/turn/failure records, but no final result/artifact; the provider turn's terminal state does not establish host settlement. No new deployment, restart, driver command, proposal, provider retry or placeholder outcome is part of the present recovery step.
+2. Reconcile the unexplained host deployment's provenance from retained deployment/configuration and task records. Record what is known without attributing it to another actor or assigning a cause to the overlapping authority restart. The current host recovery path cannot consume an original invalid result that has not already been consumed. Read-only custody capture is complete, but recovery design and source remain pending. If a bounded D repair is needed after evidence verification, take that exact proposal through independent review, Gitar and qualification; amend the completed-history provenance explicitly rather than describing B-to-D execution as B-only history. Do not call the charged result a failed placeholder or manufacture closure.
+3. Complete independent review of the exact published combined draft C head before fresh Gitar and full qualification. Its accepted hosted compatibility adapter requires the backend's explicit `error` policy, makes one `manual` fetch, rejects all 300–399/already-redirected responses and retains no-store, timeouts and owner boundaries. After exact-source qualification and clearance of the runtime hold, install only the permitted, hash-pinned editor variants; then verify actual anonymous, non-owner and owner app sessions before publication.
+4. Continue the original pilot only after the held operation is truthfully reconciled and the protected evidence supports continuation. The three settled invalid outcomes remain genuine attempts; the fourth must retain its original evidence and disposition. Reach ten genuine, settled attempts without replacement attempts or repeated paid calls.
+5. Keep P6 in [draft PR #59](https://github.com/appliedai-au/gate_keeper/pull/59) on its separate release path. Earlier e346b34 Gitar approval does not cover the new combined head `0f127944d20a47907e4e0a21a6d4d56352c988d7`. Its published tree and all 479 file blobs/modes have been verified, but source integration still needs fresh independent review, Gitar and mandatory real PostgreSQL/Caddy qualification. Keep main B until the ten attempts and all protected decisions are durably closed, or an explicit qualified recovery transition is approved. Do not merge/deploy C before its actual execution provenance and closure are supported; then export the existing signed evidence read-only, pin the closure capsule and enable the verified serving profile.
 
 ## P0 — Reconcile before dispatch
 
-**Status:** Complete. Preserve the reconciled evidence and repeat only affected readbacks before subsequent operations; `main` remains frozen.
+**Status:** Initial reconciliation is complete. Preserve that evidence; the unexplained subsequent deployment now requires a focused read-only provenance and pending-operation reconciliation. Current `main` remains qualified B.
 
-**Action.** Read current GitHub `main`, #44, PR #56 and its exact-head Gitar records. Read current Railway deployment/configuration state for the existing host, Proxy and authority, including any in-flight or staged changes. Inspect protected operation status before starting, restarting or replacing a process. Reconcile work already dispatched by another active owner; do not start a duplicate run.
+**Action.** Read current GitHub `main`, #44 and the distinct PR #56/A and PR #58/B qualification records. Read current Railway deployment/configuration state for the existing host, Proxy and authority, including any in-flight or staged changes. Inspect protected operation status before starting, restarting or replacing a process. Reconcile already-dispatched work without assuming its actor; do not start a duplicate run.
 
 Confirm these existing resource scopes from live readback:
 
@@ -128,7 +138,7 @@ Retain the actual absence readback and do not recreate this service. No addition
 
 **Receipt handling.** [PR #56 comment 6675649613](https://github.com/appliedai-au/gate_keeper/pull/56#issuecomment-6675649613) is the immutable `GK_AUTHORITY_QUALIFICATION` receipt, using the schema in the [commissioning document](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/docs/learning-v2/detached-authority-commissioning.md). The authoritative receipt belongs on PR #56, not issue #44; #44 can link it. Never edit the pinned comment. Keep its source, qualification, cleanup and Gitar identities distinct from subsequent runtime results. Preserve native review states accurately; `COMMENTED` is not `APPROVED`.
 
-The actual source-gate RPC has now accepted the pinned receipt and returned its authentic signed gate evidence. Maintain the exact receipt body, real comment/author bindings, ordered merge parents `[a546ad56321b2080f7b0a6dfbebe00667259173b, 7b99341226a06388276fd540b98d6db4891dec4b]` and tested/merged tree equality. Keep `main` at `a35c83c…` while this proof is required. This accepted source gate does not establish live model execution.
+The original source-gate RPC accepted the pinned receipt and returned its authentic signed gate evidence. Maintain the exact receipt body, real comment/author bindings, ordered merge parents `[a546ad56321b2080f7b0a6dfbebe00667259173b, 7b99341226a06388276fd540b98d6db4891dec4b]` and tested/merged tree equality as historical A proof. The initial A-only main binding has since transitioned through the qualified B implementation/continuation proof; current main must remain B while the original pilot is open. The original source gate alone did not establish live model execution.
 
 **Exit evidence.** Cleanup is observed, the complete qualification receipt is authentic and retrievable, and all proof fields bind the existing qualified source. Synthetic receipts, placeholder IDs, unverified cleanup or an old review of a different head do not qualify.
 
@@ -136,13 +146,15 @@ The actual source-gate RPC has now accepted the pinned receipt and returned its 
 
 ## P2 — Connect the existing Base44 Learning view
 
-**Status:** Owner authentication is available and verified as `6ae577c8f34f21f5eebe75da`, role `admin`. The qualified three-file update and the four scoped server bindings are installed. The actual function passes owner/body checks but returns `503 learning_status_unavailable` for an empty object, and the UI truthfully displays no figures. Fresh direct upstream status is 200 and contract-valid; the precise later-secret/fetch/runtime boundary is unresolved. No completed owner-success or non-owner app-session acceptance is claimed.
+**Status:** The configured owner is authenticated with role `admin`; owner/body checks pass and all four scoped bindings are installed. The actual qualified diagnostic invocation at 15:57:36.668 AEDT / 04:57:36.668 UTC returned 503 after four nonempty-secret observations, `FETCH_BEGIN` and `FETCH_ERROR` classified `unsupported-option`. Read-only inspection identified workerd in the installed Base44 runtime. Its documented unsupported `redirect: error` option is present in the existing bridge; `cache: no-store` remains supported. The separately accepted hosted-only compatibility delta is not installed. The UI truthfully displays no figures, and owner-success/non-owner app-session acceptance remain outstanding.
 
-**Installed checkpoint.** The starting app revision was `626e72166f0e0356855e67550c3158e3b445a145`. The builder reported exactly three tracked file changes and a clean remote Vite build. Installed backend SHA-256 is `de9e1fd110a1fa1cd7f874bef82e981eedc7241897f1a6f84a6167c8ba7d846d`; both contract copies are identical at `ec17f8eff89a8054b171e1c3818b03c7083539749be1101e7dc4464610338125`. Their logic matches frozen qualified source A, with only the existing import/provenance adaptation. The existing default-export SDK 0.8.54 / `secrets.get` wrapper remains unchanged. Backend deployment ID `68085da97714459499006b9f74af4028` was observed; it is not a published frontend revision. Nothing has been published in this implementation pass.
+**Accepted compatibility source.** Manifest SHA-256 `029b91ecea93a21a7bf5fc9aa13576eafb0fd6f632c7ff3ba63c618f6d50a611`; patch SHA-256 `e805bfa44a83b79c69728eec33f3caa2bb9861900b8f412afd9e73c6bb2f8cb6` (59,667 bytes). Independent review verified all twenty supplied identities, seventeen accepted baselines, twelve changed paths, nine import mappings and eighteen exact hosted variants. Only the three hosted adapters translate the explicit error policy to manual and reject every 3xx/already-redirected response before headers/body use; portable backends are byte-identical. The installation manifest permits only its exact import rewrites and optional removal of one terminal LF byte. No follow, retry, arbitrary whitespace normalization or editor-policy bypass is allowed. Source acceptance is separate from combined qualification and actual hosted success.
 
-**Preparation.** Open the existing owner app and inspect its actual function runtime, current source, published revision and settings. Retain a source/settings checkpoint. Compare the installed Learning bridge with the qualified `integrations/base44/` snapshot. Apply the remaining bridge files and their dependencies in the app's real editor convention, recording the exact delta; the previous handoff expects a three-file bridge update, which must be checked against the app rather than assumed. Do not deploy both backend variants or bulk-sync the sparse integration tree.
+**Historical installed checkpoint.** The starting app revision was `626e72166f0e0356855e67550c3158e3b445a145`. The builder reported exactly three tracked file changes and a clean remote Vite build. Backend SHA-256 at that checkpoint was `de9e1fd110a1fa1cd7f874bef82e981eedc7241897f1a6f84a6167c8ba7d846d`; both contract copies were identical at `ec17f8eff89a8054b171e1c3818b03c7083539749be1101e7dc4464610338125`. Their logic matched frozen qualified source A, with the documented import/provenance adaptation. Backend deployment ID `68085da97714459499006b9f74af4028` was observed; it is not a published frontend revision. The later installed diagnostic adapter uses the established SDK 0.8.54/default-export/`secrets.get` convention. Its observed import-adapted bytes are pinned by the compatibility manifest, including the permitted one-LF omission. No frontend publication or compatibility installation is claimed.
 
-Configure exactly these four server-side bindings through the protected app settings:
+**Next integration step, after the hold and source gates.** Retain the current app/source/settings checkpoint. Apply only the reviewed hosted compatibility files and exact import adaptations appropriate to the active Learning profile, using permitted editor writes and complete byte/hash readback. The existing four bindings remain installed. The later completed-history function requires the separate C profile, closure and additional provenance pins; do not switch it on for the partial pilot. Do not deploy both backend variants or bulk-sync the sparse integration tree.
+
+Preserve these four existing server-side bindings through the protected app settings:
 
 - `GATEKEEPER_LEARNING_OWNER_ID`: the server-verified owner matching the frozen authority binding.
 - `GATEKEEPER_LEARNING_EXPERIMENT_ID`: `gk-v4-concurrency-20261105`.
@@ -151,7 +163,7 @@ Configure exactly these four server-side bindings through the protected app sett
 
 The fixed upstream is `https://proxy-production-9553.up.railway.app/gatekeeper/learning-v3/status`. The browser must not select arbitrary owner, experiment, source or upstream URL. It receives neither upstream tokens nor general Proxy credentials. Preserve ordinary TrueForge Basic Auth, existing app entities, unrelated functions and auth routes.
 
-**Live acceptance.** After the app's remote build succeeds and P3 has initialized a real host journal, publish the existing app and retain actual results:
+**Live acceptance.** After the current runtime hold clears, the exact compatibility source passes its gates and the permitted installed files match their manifest, verify the existing app against the retained real host journal and publish the accepted revision. Retain actual results:
 
 | Actor or request | Required observation |
 | --- | --- |
@@ -169,7 +181,7 @@ Use real authenticated app sessions for owner and non-owner acceptance. A unit f
 
 ## P3 — Serve the authority, initialize the host and prove real BASE execution
 
-**Status:** Serving, bootstrap, source-gate verification, initialization and scoped HTTP access are accepted. BASE is held after one real completed turn because the authority's turn-list page size exceeds the backend maximum. This establishes genuine inference, not a qualified baseline. Retain the pending operation and prepare the narrow source repair on a separate branch; no generic recovery or frozen-bundle mutation is included in that repair.
+**Status:** Complete for the original BASE. B is merged and qualified with 670/670 full tests, 9/9 canary, typecheck and five scorer checks. Signed prepare evidence was verified, followed by the exact owner continuation authorization in [PR #58 comment 6677415111](https://github.com/appliedai-au/gate_keeper/pull/58#issuecomment-6677415111). BASE completed at 16:11:27.884 AEDT / 05:11:27.884 UTC with fourteen verified calls and unknown actual prices. The first paid call was not repeated. The earlier pagination hold is retained in the historical table; it is no longer the current P3 action. The separate fourth-proposal hold belongs to P4.
 
 **Authority.** Preserve the existing custody, identities, relay prefix, bank projection and frozen bundle. Maintain `Dockerfile.authority`, explicit start command `node /app/scripts/learning-v2/authority-service.mjs`, and `GK_AUTHORITY_MODE=serve` with the verified source proof. Do not execute the old legacy boot or reinitialize custody.
 
@@ -177,9 +189,9 @@ The one-shot provider-registration flag has been cleared using the supported no-
 
 **Host.** Initialization has completed against the verified small bootstrap descriptor and frozen public pins. Keep the production driver limited to its scoped bearer credential and separate read token. Retain `GK_V2_HOST_BOOTSTRAP=enabled`, `GK_V3_HTTP_ROUTER=enabled` and `GK_V3_READONLY_STATUS=enabled`. Preserve the installed `GK_PRODUCTION_BOOTSTRAP_B64` configuration without also setting its full alternative. Preserve UID 1000, private directory mode 0700 and private file mode 0600.
 
-The experiment now exists: reopen it with `status` when observation is needed; do not initialize again or replace its journal. The accepted initialization showed all counts zero, baseline not planned and no pending operation. Subsequent command/configuration changes must use the same frozen source and current configuration, rather than a historical deployment's stale command snapshot. Observe terminal deployment status and actual driver evidence after each change.
+The experiment exists; do not initialize again or replace its journal. The all-zero initialization is a historical checkpoint. Current next-start configuration is `status`, with no further runtime mutation pending original-evidence recovery. Any later authorized command/configuration change must retain frozen definition A, actual implementation B and the current configuration rather than reuse a historical deployment's command snapshot. Observe terminal deployment status and actual driver evidence after each change.
 
-**BASE and first real execution.** The qualified launcher exposes `init`, `run`, `resume-review`, `reconcile-usage`, `reconcile-operation` and `status`; it has no baseline-only CLI command. The existing `run` action records the source gate, executes frozen BASE and may immediately reserve/propose the first attempt before pausing for independent review. That bounded action has been invoked through the deploying pinned run; do not start another. Accept its genuine BASE execution as smoke evidence only once verified, and count any first proposal toward the same ten-attempt pilot. Do not invent an extra smoke command, add an untracked model call or restart to create a fresh first attempt.
+**Completed BASE and continuation boundary.** B's separately qualified `prepare-baseline` and `continue-baseline` path preserved the original paid result and completed the remaining slots under the signed authorization. The explicit continuation exited successfully; it did not justify a subsequent untracked `run` deployment. Retain fourteen-call BASE settlement as completed evidence. The later unexplained deployment and four proposal dispatches are separately recorded in the incident ledger. Do not repeat BASE, add a smoke call or start a new attempt to conceal the current gap.
 
 Verify actual owned SDK session/turn and outbound call observations, complete two-pass coverage, independent evaluation/settlement evidence and the frozen model/runtime identity. Distinguish submitted intent, an HTTP response, complete model output and settled evidence. A backend health response or an initialized journal alone proves none of those execution results.
 
@@ -188,6 +200,10 @@ Verify actual owned SDK session/turn and outbound call observations, complete tw
 **Recovery.** On ambiguous execution, stop new dispatch and inspect protected state. Reconcile the original operation using actual terminal provider artifacts. Never retry an unresolved session/turn intent, change source/configuration/keys midway, or claim zero usage because a response was lost.
 
 ## P4 — Complete exactly ten genuine learning attempts
+
+**Status:** Held. At 16:29:41.206 AEDT / 05:29:41.206 UTC the public projection records four attempted, three invalid and one pending. Three proposals have genuine settled invalid outcomes. The fourth provider turn reached done/stop at 16:15:53.901 AEDT / 05:15:53.901 UTC, but host consumption and settlement remain unresolved. The seventeen settled calls comprise fourteen BASE plus three proposals, all with unknown prices; the fourth proposal makes eighteen actual dispatches. These are distinct execution/accounting facts, not a ten-attempt completion claim.
+
+The subsequent host deployment's creation is unexplained by the visible task history. An authority restart for status export overlapped the fourth proposal; that timing does not establish causation or another actor. Preserve the evidence and resolve the original operation before applying the continuation procedure below.
 
 Continue the same controller, fault family, frozen BASE, model, corpus, scorer, bank and experiment. The corpus contains five fit and two already-burned development check cases, with 16 focused defects. Tranche 7 remains sealed and unused. These results are development evidence, not holdout or generalization evidence.
 
@@ -207,11 +223,13 @@ Ten reserved IDs are insufficient for closeout. Completion requires **ten settle
 
 **Exit evidence.** Exactly ten genuine attempts are accounted for, every operation is settled or explicitly identified as preventing completion, the retained bag carries forward, rejected rules are not silently retried, host and authority agree on the active version, and each activation has qualifying evidence. An all-negative pilot completes with BASE active and zero new accepted rules. Do not call that an improvement.
 
-**Recovery.** Use the existing `reconcile-operation` path only for independently established failed execution or already-consumed evidence needing settlement. A pending semantic review cannot be erased as a failed call. Preserve lost successful output for original-evidence continuation. If a confirmed version must be rolled back, use a valid rollback authorization for an eligible prior version and retain the history; do not edit the journal.
+**Recovery.** Use the existing `reconcile-operation` path only for independently established failed execution or already-consumed evidence needing settlement. It cannot consume the original invalid proposal if that result has not already been consumed. Authenticated read-only custody capture is now complete: the held archive contains session, turn and failure records with code `TRUEFORGE_CALL_UNRESOLVED`, but no final result/artifact. Independent chain and provider-binding verification are still in progress. Preserve the original evidence while the bounded recovery design is assessed. A terminal charged call must not be replaced with a failed placeholder, and a pending semantic review cannot be erased as a failed call. Any necessary D repair must retain B proof and establish explicit recovery linkage; the current C reader's sole historical-execution-B contract cannot silently represent B-to-D execution. No D source change, host recovery or additional model call is claimed. If a confirmed version must be rolled back, use a valid rollback authorization for an eligible prior version and retain the history; do not edit the journal.
 
 ## P5 — Verify persistence, accounting, privacy and final closeout
 
-Set `GK_PRODUCTION_COMMAND=status` after completion and remove operation-specific command variables. Check no provider call is active before controlled restarts. Capture protected host/authority projections, restart/reopen the existing services against the same source and volumes, and verify unchanged experiment/configuration identities, bank history, active version, ten-attempt disposition and operation/receipt identities. The restart must not create an additional proposal, provider call or activation.
+**Status:** Pending. The configured next-start command is already `status`; this does not prove that the held fourth proposal is consumed or settled. Further restarts and runtime mutations remain on hold until original-evidence recovery and closure eligibility are established.
+
+Keep `GK_PRODUCTION_COMMAND=status` after completion and remove operation-specific command variables when authorized recovery and closure permit. Check no provider call is active before controlled restarts. Capture protected host/authority projections, restart/reopen the existing services against the same source and volumes, and verify unchanged experiment/configuration identities, bank history, active version, ten-attempt disposition and operation/receipt identities. The restart must not create an additional proposal, provider call or activation.
 
 Reconstruct the complete protected acceptance export using one matching status ID, every indexed part, exact bytes and SHA-256. Compare authority results with durable host state: an authority-issued activation is not proof the host consumed it. Confirm the owner app renders that same state after restart.
 
@@ -235,9 +253,15 @@ Reconcile stale roadmap and handoff statements only as a documented update. Pres
 
 ## P6 — Implement the authenticated live-review product workflow
 
-**Implementation checkpoint.** [Draft PR #59](https://github.com/appliedai-au/gate_keeper/pull/59) contains the independently accepted source at `22cf97d3f4a3608f193e1e2f92b2c2e2a5dcc0e6`, tree `ec04370850878f725d9dbaeb87c0a4d5301aa7c4`, based on frozen A. All 21 published changed-file Git blobs match the reviewed packet. Patch SHA-256 is `757f61d53afc705362307d87817397e963f8b5ef2e89a131cecb66eae73b7bba` (118,346 bytes); manifest SHA-256 is `86ebae651b8b4db81a8a12ba9e993a63274b506711e339b7e4edcbbe0879572d`. Gitar acknowledged the exact head in comment `6676476840`; the final verdict and remote qualification are pending at this checkpoint. No candidate code was executed locally.
+**Current implementation checkpoint.** The thirty-six-path completed-history/product overlay is independently source accepted: manifest SHA-256 `2ed328acf02d7bec99b9ee6e520e656c39a025517e9530ec19c51a12f6bce2a4` (18,250 bytes); patch SHA-256 `e12cdb153586117b54bb1fd28aa7dd97a48ca0d69e5d226bce7988517ddb76a6` (344,168 bytes). Its freeze at 16:30:37 AEDT / 05:30:37 UTC remains the original source checkpoint.
 
-The implementation adds authenticated owner-only submission and private results/history, committed PostgreSQL dispatch intents, conservative holds for uncertain writes, exact session/input/result verification and separate scoped transport. It is disabled by default. `Dockerfile.reviews-qualify` includes all inherited gates plus actual runtime-version evidence, Caddy tests and mandatory isolated PostgreSQL concurrency/uncertainty tests; the ordinary qualification recipe alone is insufficient. The approved ordinary review model, distinct review capability, schema migration, hosted installation and genuine owner review remain commissioning work.
+The combined source is now published in draft PR #59 as head `0f127944d20a47907e4e0a21a6d4d56352c988d7`, tree `3dbafd33f2435e2d4456bfbb16b13cdf63f4c7d9`, with ordered parents `[e346b34dac0751643645574dd1ad615b41d7487d, 45ed2b6ef74f53a0940329066d0fe126ad87a7fa]`. B's twenty-two-path delta and P6's twenty-three-path delta are disjoint; the full published tree's 479 file blobs and modes have been verified. Fresh independent review of this exact combined tree precedes a new Gitar cycle and complete qualification. Earlier e346b34 approval and overlay acceptance do not qualify the combined head. **C is a draft candidate, not merged main or an actual deployed serving source.** No combined qualification or hosted acceptance has occurred.
+
+**Initial source checkpoint, retained as history.** [Draft PR #59](https://github.com/appliedai-au/gate_keeper/pull/59) first published the independently accepted source at `22cf97d3f4a3608f193e1e2f92b2c2e2a5dcc0e6`, tree `ec04370850878f725d9dbaeb87c0a4d5301aa7c4`, based on frozen A. All 21 published changed-file Git blobs matched the reviewed packet. Patch SHA-256 was `757f61d53afc705362307d87817397e963f8b5ef2e89a131cecb66eae73b7bba` (118,346 bytes); manifest SHA-256 was `86ebae651b8b4db81a8a12ba9e993a63274b506711e339b7e4edcbbe0879572d`. Gitar acknowledged that exact head in comment `6676476840`; its final verdict and remote qualification were pending at that historical checkpoint. No candidate code was executed locally.
+
+The implementation adds authenticated owner-only submission and private results/history, committed PostgreSQL dispatch intents, conservative holds for uncertain writes, exact session/input/result verification and separate scoped transport. It is disabled by default. The first release is restricted to the configured authenticated administrator owner. `Dockerfile.reviews-qualify` includes all inherited gates plus actual runtime-version evidence, Caddy tests and mandatory isolated PostgreSQL concurrency/uncertainty tests; the ordinary qualification recipe alone is insufficient. The approved ordinary review model, distinct review capability, schema migration, hosted installation and genuine owner review remain commissioning work.
+
+The completed-history composition preserves frozen A and historical execution B under a future actual serving C, using original signed evidence and a separately pinned closed-history capsule. It has no Learning driver startup path and cannot turn the current partial/unsettled pilot into a completed archive. The hosted redirect compatibility packet is included in the published draft, but source acceptance is not runtime acceptance. Current main stays B while recovery design is pending. If a later qualified D repair becomes necessary, explicitly evolve the current strict B-only provenance/schema to retain B proofs and the mandatory recovery linkage; do not relabel D as B or activate the present reader against unsupported history.
 
 **Starting boundary.** The current public review interaction is a sample demonstration. There is no qualified submission backend function to connect merely by enabling a flag. This phase requires new application source, its own reviewed and qualified release, and actual user-facing acceptance. Keep sample content labeled and keep any nonfunctional live-submit action disabled with an accurate explanation until this phase passes.
 
@@ -265,9 +289,9 @@ Remote deployment `c3039e16-a26b-4390-abe8-c87572d5af13` succeeded at `2026-11-0
 
 The immutable [qualification receipt](https://github.com/appliedai-au/gate_keeper/pull/58#issuecomment-6677263803) has exact body SHA-256 `4c9a82e307aee8b4129b89daadbf0637dfe7e4f3f014c13b70e83b14aa1fdce0`. Gitar’s exact-head request/acknowledgement/final dashboard are `6676942614` / `6676949170` / `6676885297`; the dashboard approved with 1/1 finding closed. Its earlier native review remains honestly recorded as COMMENTED.
 
-Actual B authority deployment `fb06a41a-a780-4a1e-9965-2b8f86c36a06` succeeded at `2026-11-06T04:56:37.863Z`. The authenticated implementation-status RPC returned the signed B qualification and a null continuation authorization. This establishes qualification-only serving, not BASE completion. The production host has been instructed to deploy B with `prepare-baseline`; its resulting retained-state proof must still be inspected before authorization or dispatch.
+At the historical B serving checkpoint, authority deployment `fb06a41a-a780-4a1e-9965-2b8f86c36a06` succeeded at `2026-11-06T04:56:37.863Z`; implementation status returned signed B qualification and null continuation authorization. That checkpoint established qualification-only serving. Subsequently, signed prepare evidence was verified and the owner authorization was published in [PR #58 comment 6677415111](https://github.com/appliedai-au/gate_keeper/pull/58#issuecomment-6677415111). The original BASE then completed at `2026-11-06T05:11:27.884Z` / 16:11:27.884 AEDT with fourteen verified calls, no repeated first call and unknown actual prices. Preserve both checkpoints without treating the earlier null authorization as current state.
 
-P6’s updated head is `e346b34dac0751643645574dd1ad615b41d7487d`, tree `62cdd8c13a21cfb549d262bcff27000e7631f9ff`. The seven-file recovery delta was independently accepted; all supplied published blobs match. Gitar dashboard `6677000221`, updated `2026-11-06T04:36:35Z`, approved with both findings closed after exact-head acknowledgement `6677010522`. The separate four-file hosted Review adapter is source accepted (patch SHA-256 `337b5e6f7529707f846e5d5c15431d4eb65cc2b8a7e581f160cbfb70f376c223`), but neither it nor the completed-history composition has yet passed the combined C qualification or live acceptance.
+**Earlier P6 review checkpoint.** Head `e346b34dac0751643645574dd1ad615b41d7487d`, tree `62cdd8c13a21cfb549d262bcff27000e7631f9ff`, contained the independently accepted seven-file recovery delta; all supplied published blobs matched. Gitar dashboard `6677000221`, updated `2026-11-06T04:36:35Z`, approved with both findings closed after exact-head acknowledgement `6677010522`. The separate four-file hosted Review adapter was source accepted at patch SHA-256 `337b5e6f7529707f846e5d5c15431d4eb65cc2b8a7e581f160cbfb70f376c223`. These accepted inputs are retained in the newer combined draft head described above; the combined C qualification and live acceptance remain outstanding.
 
 ## 4. Failure and source-repair rule
 
@@ -275,7 +299,7 @@ Fix routine configuration and integration defects within the already-authorized 
 
 ## 5. Execution ledger
 
-Use one entry per observed phase exit or blocking event; update this table from actual receipts rather than inferred progress.
+The original table below is retained as historical provenance. Its 0/10, BASE-held and pending-source-review entries describe the earlier checkpoints; they are superseded for current action by the phase status and dated incident ledger that follows. Update the incident ledger from actual receipts rather than inferred progress.
 
 | Phase | Observation time (AEDT, with UTC in receipt) | Exact source/deployment/operation | Evidence | Disposition |
 | --- | --- | --- | --- | --- |
@@ -292,17 +316,67 @@ Use one entry per observed phase exit or blocking event; update this table from 
 | P6 source | 6 November 2026, 14:57:30 AEDT (`2026-11-06T03:57:30Z`) | Draft PR #59, head `22cf97d…`, tree `ec04370…` | Independent final source acceptance; all 21 published changed blobs verified; exact-head Gitar acknowledgement | Source implemented; final review/qualification/commissioning pending; public review remains demo |
 | Plan publication | 6 November 2026 | Draft PR #57; `work/gatekeeper-closeout-phase-plan-20261106` | Isolated documentation branch; `main` unchanged | Published as draft; preserve frozen source |
 
+### Current incident and continuation ledger — 6 November 2026
+
+All local times below are Melbourne AEDT (UTC+11). Deployment and provider identifiers remain in protected evidence; this ledger publishes no private IDs or raw model/oracle material.
+
+| UTC | AEDT | Observed event | Current implication |
+| --- | --- | --- | --- |
+| 04:57:36.668 | 15:57:36.668 | Actual owner diagnostic invocation: all four secret-presence checks passed; fetch began and reported bounded `unsupported-option`; HTTP 503 | Workerd redirect incompatibility subsequently verified; accepted hosted-only fix is not installed |
+| 05:11:27.884 | 16:11:27.884 | Authorized original BASE continuation completed successfully with fourteen verified calls and no repeat of the first paid call | P3 BASE complete; actual prices unknown; original evidence retained |
+| 05:13:34.084 | 16:13:34.084 | A subsequent B host deployment was created after the explicit continuation exited successfully; creation is not attributable from the visible task history | Unexplained deployment; no evidence establishes another actor; preserve provenance for read-only reconciliation |
+| 05:15:53.901 | 16:15:53.901 | Fourth proposal provider turn reached done/stop after three genuine invalid proposal outcomes; authority restart for status export overlapped this proposal | Provider terminality does not prove host consumption or settlement; overlap alone establishes no cause |
+| 05:29:41.206 | 16:29:41.206 | Latest public projection: four attempted, three invalid, one pending; seventeen settled calls with unknown prices; eighteen actual dispatches including the fourth unsettled proposal | Next-start command `status`; no further runtime mutation pending recovery of the original fourth result; no failed-placeholder substitution |
+| 05:30:37 | 16:30:37 | Thirty-six-path completed-history/product overlay frozen at manifest `2ed328acf02d7bec99b9ee6e520e656c39a025517e9530ec19c51a12f6bce2a4` | Independent review ongoing; no complete C qualification, deployment or closure claim |
+
+The existing host recovery cannot consume an original invalid result that has not already been consumed. At the status checkpoint, the raw host archive was unavailable through the then-used interface. The dated updates below progress from capture access to completed custody capture; they do not establish consumed original evidence or settlement. Preserve the implementation gap for original-evidence recovery or a separately reviewed bounded repair. No additional proposal, repeat provider call, fabricated failed record or replacement attempt can resolve it truthfully.
+
+### Investigation update — 16:37:31 AEDT / 05:37:31 UTC
+
+The lead has located the authenticated Railway dashboard Console for the current
+host deployment, including a read-only file browser and download capability.
+Capture of the original controller, dispatch and held-operation archives is in
+progress through native read-only file tools, preserving every journal head. No
+capture result, validated recovery change, consumed fourth result or new settlement
+is claimed yet. This updates the available investigation capability only: the
+05:29:41.206 UTC public-status snapshot and the hold on further runtime mutation
+remain unchanged.
+
+### Custody and draft-source checkpoint — recorded 16:42:15 AEDT / 05:42:15 UTC
+
+Read-only host custody capture is complete: **2,230,426 bytes**, SHA-256
+`ef7f6fe44e9557b867fc94c5535633192bd2dece52bfd38eda75a1dbd32e3b20`.
+It contains twenty controller records, twenty dispatch records and five held-operation
+archive records, together with all head files. Before/after head-file hashes are
+identical. The held archive records session, turn and failure, with
+`TRUEFORGE_CALL_UNRESOLVED`; it contains no final result/artifact. Independent review
+is checking the hash chains and original provider binding. No host mutation,
+recovery action, added model call or new settled outcome followed from capture.
+The 05:29:41.206 UTC status counts remain the latest recorded public snapshot.
+
+Separately, the C overlay is independently source accepted and the exact combined
+draft source is published at PR #59 head `0f127944d20a47907e4e0a21a6d4d56352c988d7`.
+All 479 file blobs/modes were verified; fresh combined independent review, Gitar and
+full qualification remain pending. Main is still B. A possible bounded D recovery
+and any corresponding C provenance amendment remain design work, not an implemented
+or qualified recovery path. Private archive paths, operation/provider identifiers
+and raw content are retained only in protected custody evidence.
+
 ## 6. Primary references
 
 - [Current #44 execution record](https://github.com/appliedai-au/gate_keeper/issues/44#issuecomment-6664862988).
 - [Immutable source-qualification receipt on PR #56](https://github.com/appliedai-au/gate_keeper/pull/56#issuecomment-6675649613).
 - [Isolated phase-plan draft PR #57](https://github.com/appliedai-au/gate_keeper/pull/57).
 - [BASE pagination and bounded continuation repair PR #58](https://github.com/appliedai-au/gate_keeper/pull/58).
+- [Owner continuation authorization on PR #58](https://github.com/appliedai-au/gate_keeper/pull/58#issuecomment-6677415111).
+- [Current B source](https://github.com/appliedai-au/gate_keeper/tree/45ed2b6ef74f53a0940329066d0fe126ad87a7fa), distinct from frozen experiment A and the future actual serving C.
 - [Separate private live-review implementation PR #59](https://github.com/appliedai-au/gate_keeper/pull/59).
+- [Combined draft source head 0f127944](https://github.com/appliedai-au/gate_keeper/commit/0f127944d20a47907e4e0a21a6d4d56352c988d7), published on PR #59 and not merged into main.
 - [Retained-history recovery](https://github.com/appliedai-au/gate_keeper/issues/44#issuecomment-6649714244).
 - [Production pilot composition at the frozen source](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/docs/learning-v2/production-pilot-v4.md).
 - [Detached-authority commissioning and recovery](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/docs/learning-v2/detached-authority-commissioning.md).
 - [Owner-bound public status transport](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/docs/learning-v2/public-status-transport.md).
-- [Actual driver](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/scripts/learning-v2/production-driver.mjs) and [supported launcher commands](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/scripts/learning-v2/launch-production-pilot.mjs).
+- [Frozen A driver](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/scripts/learning-v2/production-driver.mjs) and [original A launcher](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/scripts/learning-v2/launch-production-pilot.mjs), retained as historical source; current B is linked separately above.
+- [Official workerd/Workers Request redirect restrictions](https://developers.cloudflare.com/workers/runtime-apis/request/) and [Fetch cache support](https://developers.cloudflare.com/workers/runtime-apis/fetch/).
 - [Optional draft PR #42](https://github.com/appliedai-au/gate_keeper/pull/42).
 
