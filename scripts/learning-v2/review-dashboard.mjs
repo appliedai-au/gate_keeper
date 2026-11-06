@@ -22,19 +22,23 @@ export function hasCompleteReviewDashboard(body) {
   const visible = section.replace(/<[^>]*>/gu, ' ').trim();
   const canonicalCount = value => /^(?:0|[1-9][0-9]*)$/u.test(value) &&
     Number.isSafeInteger(Number(value)) && Number(value) <= 1000000;
-  const counts = [...visible.matchAll(/\b([0-9]+) closed\s*\/\s*([0-9]+) findings\b/gu)];
-  const openCounts = [...visible.matchAll(/\b([0-9]+) open\b/giu)];
-  const findingCounts = [...visible.matchAll(/\b([0-9]+) findings\b/giu)];
-  // An explicit open count is authoritative even when stale prose says clean.
+  const countPattern = /\b([0-9]+)[ \t]+closed\s*\/\s*([0-9]+)[ \t]+(?:findings?|issues?)\b/giu;
+  const counts = [...visible.matchAll(countPattern)];
+  const openCounts = [...visible.matchAll(/\b([0-9]+)[ \t]+open\b/giu)];
+  // Explicit nonzero open counts cannot be cancelled by any clean prose.
   if (openCounts.some(item => !canonicalCount(item[1]) || item[1] !== '0')) return false;
   if (counts.length > 1 || /\bclosed\s*\//iu.test(visible) && counts.length !== 1) return false;
+  // Only the one all-closed summary can justify a nonzero total. Outside it,
+  // singular/plural findings and issues (including open forms) must be zero.
+  // In particular, '12 closed / 12 findings' plus '0 open findings' is valid.
+  const outsideSummary = visible.replace(countPattern, '');
+  const otherCounts = [...outsideSummary.matchAll(/\b([0-9]+)[ \t]+(?:open[ \t]+)?(?:findings?|issues?)\b/giu)];
+  if (otherCounts.some(item => !canonicalCount(item[1]) || item[1] !== '0')) return false;
   if (counts.length === 1) {
     const [, closed, total] = counts[0];
-    return canonicalCount(closed) && canonicalCount(total) && closed === total &&
-      findingCounts.every(item => canonicalCount(item[1]) && item[1] === total);
+    return canonicalCount(closed) && canonicalCount(total) && closed === total;
   }
-  if (findingCounts.some(item => !canonicalCount(item[1]) || item[1] !== '0')) return false;
-  // Count-free summaries must be complete statements. In particular, neither
-  // '10 findings' nor 'not 0 findings' is a zero-finding observation.
-  return /(?:^|[.!?]\s+|\n)\s*(?:No open findings remain[.!]?|No issues found\.|0 findings[.!]?|0 open(?: findings| issues)?[.!]?)\s*(?=$|\n)/imu.test(visible);
+  // Count-free summaries must be complete statements, never negated or quoted
+  // examples. A numeric suffix inside 10/100 is not a zero observation.
+  return /(?:^|[.!?]\s+|\n)\s*(?:No open findings remain[.!]?|No issues found\.|0 (?:findings?|issues?)[.!]?|0 open(?: findings?| issues?)?[.!]?)\s*(?=$|\n)/imu.test(visible);
 }
