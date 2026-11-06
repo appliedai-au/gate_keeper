@@ -42,7 +42,7 @@ try {
     } catch {
       diagnostic(stage, 'failed', { reason: 'startup-incomplete' }); reportHeld();
     }
-  } else diagnostic('preflight-status', 'disabled');
+  } else diagnostic('preflight-status', 'disabled', directObservation ? { reason: 'observation-direct' } : {});
   if (!stopped.signal.aborted) {
     stage = 'gateway-start'; diagnostic(stage, 'started');
     const gatewayEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GK_PRODUCTION_')));
