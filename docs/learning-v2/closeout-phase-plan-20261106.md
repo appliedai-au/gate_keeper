@@ -4,7 +4,7 @@
 **Owner:** Owen Tyas  
 **Repository:** `appliedai-au/gate_keeper`  
 **Primary delivery record:** [issue #44](https://github.com/appliedai-au/gate_keeper/issues/44)  
-**Working status:** P0 and P1 complete; bootstrap/source gate, host initialization and scoped HTTP access are verified. BASE is held after its first real completed model turn: the authority verifier requests 100 turns from an endpoint limited to 25 and receives HTTP 400 before the second call. A narrow pagination repair is being prepared separately; the frozen bundle and pending operation remain unchanged. Base44 app-session acceptance and separate P6 product acceptance remain pending.
+**Working status:** P0 and P1 complete; bootstrap/source gate, host initialization and scoped HTTP access are verified. BASE remains held after its first real completed model turn. Draft PR #58 contains the accepted pagination correction and is being extended with a separately qualified, bounded continuation that preserves that first call and the original failed host record. The existing Base44 owner session is available; the qualified three-file bridge update and all four scoped bindings are installed, but the actual owner function still returns unavailable. Redacted runtime diagnostics are being prepared for qualification. P6 source is implemented and independently reviewed in draft PR #59; remote qualification and live product acceptance remain pending. The frozen experiment and journals remain unchanged, with 0/10 proposal attempts.
 
 ## 1. Intended outcome and scope
 
@@ -70,24 +70,24 @@ Keep the existing production host, authority service, volumes, app and controlle
 
 The existing closeout lead owns reconciliation, operational changes and the evidence ledger. An independent reviewer checks any new source repair and final acceptance. The semantic reviewer identified in the frozen authority configuration owns actual novelty/applicability decisions; the proposing model does not approve its own rule.
 
-| Phase | Deliverable | Initial status | Depends on |
+| Phase | Deliverable | Current status | Depends on |
 | --- | --- | --- | --- |
 | P0 | Current-state reconciliation and complete evidence inventory | Complete; fresh `main`/deployment reads reconciled | Existing access |
 | P1 | Verified disposable cleanup and authentic source-qualification receipt | Complete; immutable PR #56 receipt accepted by actual source-gate RPC | P0 |
-| P2 | Updated Base44 bridge, scoped bindings and real access acceptance | Base44 authentication interrupted; actual app-session acceptance pending | Initialized host is now available; resume app authentication |
+| P2 | Updated Base44 bridge, scoped bindings and real access acceptance | Owner signed in; qualified three-file update and four bindings installed; owner function returns 503 | Qualify redacted runtime diagnostic adapter, resolve actual failure, then finish app-session acceptance |
 | P3 | Serving authority, registered provider, initialized host and genuine BASE execution | Bootstrap/gate/init verified; HTTP transport 7/7; BASE held on turn-pagination HTTP 400 after one completed call | Narrow source repair, independent review and remote qualification; preserve pending operation |
 | P4 | Exactly ten genuine proposal attempts with retained outcomes and qualified promotions, if any | 0/10 | P3 and protected status/control observability |
 | P5 | Restart, accounting, privacy, final evidence and #44 disposition | Pending | P2, P4 |
-| P6 | Authenticated live-review submission, real results and private run history | Separate source work; no qualified/deployed live submission acceptance | Preserve P0–P5's frozen runtime; qualify P6's own source and release |
+| P6 | Authenticated live-review submission, real results and private run history | 21-file source implementation independently accepted and published in draft PR #59; Gitar requested | Integrate accepted repair source, repeat final review, pass full real-PostgreSQL remote gate, then commission after pilot |
 
 P2's final app-session checks can now use the initialized host. The seven successful scoped HTTP checks establish transport authorization, not Base44 owner/non-owner session behavior. If browser access is unavailable, advance independent backend work; full #44 closure still requires actual app acceptance.
 
 ### Current next actions
 
-1. Preserve the held BASE operation and its actual first-call evidence. Prepare only the bounded source repair: turns page size 25, events page size 100, full pagination/cursor checks and root-turn exclusivity retained. Qualify it independently before any operational recovery; do not retry BASE or mutate the frozen bundle.
-2. Resume the interrupted Base44 authentication flow, complete the bridge/bindings, and verify actual anonymous, non-owner and owner app sessions. Do not substitute the passed transport matrix for those app checks.
+1. Preserve the held BASE operation and its actual first-call evidence. Finish independent review, Gitar and full isolated qualification of PR #58: turns page size 25, events page size 100, full ownership/pagination validation, explicit actual implementation B qualification alongside frozen definition A, and nondispatching preparation of the actual retained archive. Only the separately authorized continuation may reuse the verified first result with zero SDK mutations and dispatch the remaining thirteen logical slots; original evidence and failed records remain intact.
+2. Finish the Base44 runtime diagnosis using the reviewed, qualified redacted adapter. Owner authentication and owner/body checks pass; a fresh direct upstream GET is 200 and satisfies the contract, while the actual function returns 503. Do not infer an exact cause from latency or a silent catch. After correcting the evidenced failure, verify actual anonymous, non-owner and owner app sessions and publish the accepted app revision.
 3. After a separately reviewed recovery/source-transition decision and genuine BASE qualification, continue through original operations and independent review pauses. No proposal attempt has yet been accepted; do not turn the completed BASE call into attempt 1 or fabricate a complete baseline.
-4. Keep P6 source implementation on its separate branch/release path. It must not change the frozen pilot's `main`, source, bundle or authority bindings.
+4. Keep P6 in [draft PR #59](https://github.com/appliedai-au/gate_keeper/pull/59) on its separate release path. Its source checkpoint does not authorize deploying it into the frozen pilot. Integrate the accepted repair source and repeat the final exact-source gates before post-pilot commissioning.
 
 ## P0 — Reconcile before dispatch
 
@@ -136,7 +136,9 @@ The actual source-gate RPC has now accepted the pinned receipt and returned its 
 
 ## P2 — Connect the existing Base44 Learning view
 
-**Status:** Authentication interrupted; no actual Base44 owner/non-owner app-session acceptance claimed. The host transport matrix passed independently and is not a substitute for this phase.
+**Status:** Owner authentication is available and verified as `6ae577c8f34f21f5eebe75da`, role `admin`. The qualified three-file update and the four scoped server bindings are installed. The actual function passes owner/body checks but returns `503 learning_status_unavailable` for an empty object, and the UI truthfully displays no figures. Fresh direct upstream status is 200 and contract-valid; the precise later-secret/fetch/runtime boundary is unresolved. No completed owner-success or non-owner app-session acceptance is claimed.
+
+**Installed checkpoint.** The starting app revision was `626e72166f0e0356855e67550c3158e3b445a145`. The builder reported exactly three tracked file changes and a clean remote Vite build. Installed backend SHA-256 is `de9e1fd110a1fa1cd7f874bef82e981eedc7241897f1a6f84a6167c8ba7d846d`; both contract copies are identical at `ec17f8eff89a8054b171e1c3818b03c7083539749be1101e7dc4464610338125`. Their logic matches frozen qualified source A, with only the existing import/provenance adaptation. The existing default-export SDK 0.8.54 / `secrets.get` wrapper remains unchanged. Backend deployment ID `68085da97714459499006b9f74af4028` was observed; it is not a published frontend revision. Nothing has been published in this implementation pass.
 
 **Preparation.** Open the existing owner app and inspect its actual function runtime, current source, published revision and settings. Retain a source/settings checkpoint. Compare the installed Learning bridge with the qualified `integrations/base44/` snapshot. Apply the remaining bridge files and their dependencies in the app's real editor convention, recording the exact delta; the previous handoff expects a three-file bridge update, which must be checked against the app rather than assumed. Do not deploy both backend variants or bulk-sync the sparse integration tree.
 
@@ -233,6 +235,10 @@ Reconcile stale roadmap and handoff statements only as a documented update. Pres
 
 ## P6 — Implement the authenticated live-review product workflow
 
+**Implementation checkpoint.** [Draft PR #59](https://github.com/appliedai-au/gate_keeper/pull/59) contains the independently accepted source at `22cf97d3f4a3608f193e1e2f92b2c2e2a5dcc0e6`, tree `ec04370850878f725d9dbaeb87c0a4d5301aa7c4`, based on frozen A. All 21 published changed-file Git blobs match the reviewed packet. Patch SHA-256 is `757f61d53afc705362307d87817397e963f8b5ef2e89a131cecb66eae73b7bba` (118,346 bytes); manifest SHA-256 is `86ebae651b8b4db81a8a12ba9e993a63274b506711e339b7e4edcbbe0879572d`. Gitar acknowledged the exact head in comment `6676476840`; the final verdict and remote qualification are pending at this checkpoint. No candidate code was executed locally.
+
+The implementation adds authenticated owner-only submission and private results/history, committed PostgreSQL dispatch intents, conservative holds for uncertain writes, exact session/input/result verification and separate scoped transport. It is disabled by default. `Dockerfile.reviews-qualify` includes all inherited gates plus actual runtime-version evidence, Caddy tests and mandatory isolated PostgreSQL concurrency/uncertainty tests; the ordinary qualification recipe alone is insufficient. The approved ordinary review model, distinct review capability, schema migration, hosted installation and genuine owner review remain commissioning work.
+
 **Starting boundary.** The current public review interaction is a sample demonstration. There is no qualified submission backend function to connect merely by enabling a flag. This phase requires new application source, its own reviewed and qualified release, and actual user-facing acceptance. Keep sample content labeled and keep any nonfunctional live-submit action disabled with an accurate explanation until this phase passes.
 
 **Specification.** Preserve the existing app and implement an authenticated, read-only review path:
@@ -264,14 +270,14 @@ Use one entry per observed phase exit or blocking event; update this table from 
 | P0 | 6 November 2026, before the P1 cleanup | `main` remains `a35c83c…`; existing deployments reconciled | Fresh lead GitHub/Railway readbacks | Complete |
 | P1 cleanup | 6 November 2026, 13:55:55 AEDT (`2026-11-06T02:55:55Z`) | Service `730fa701-cc2e-4246-9c86-c55586e3dde1` absent | Actual `services: []`, `staged: null`; new 242,625-byte capture with SHA-256 `bd2cb592…` retained | Cleanup complete |
 | P1 receipt and gate | Receipt: 6 November 2026, 13:58:59 AEDT; gate subsequently verified | PR #56 comment `6675649613`; signed gate receipt in section 2 | Exact body digest `63bab68f…`; actual RPC evidence retained as `authority-source-gate.json` | Complete |
-| P2 | Current app authentication interrupted | Existing Base44 app/published revision | Actual app-session matrix not yet obtained | Pending; HTTP transport success is separate |
+| P2 source/config | 6 November 2026, current lead app session | Existing app; starting revision `626e721…`; exact three-file update; four scoped bindings | Owner/admin verified; backend deployment `68085da…`; owner-body check 400, empty-object invocation 503; direct upstream 200/valid | Installed; runtime diagnosis and actual success/non-owner acceptance pending; unpublished |
 | P3 authority/bootstrap | 6 November 2026; serve SUCCESS at 13:59:39.535 AEDT | Existing authority deployment and fixed HTTPS domain | Bootstrap 200 with retained body digest; anonymous 401, health 200; source gate accepted | Bootstrap/authentication accepted; no model-execution claim |
 | P3 host initialization | 6 November 2026, 14:24:52.943 AEDT (`2026-11-06T03:24:52.943Z`) | Deployment `db6bf291-ed3c-426a-9e79-1f8e1996dbcc`, frozen experiment | SUCCESS, `initialized`, driver exit 0; all counts 0, BASE selected, no pending operation | Initialization complete |
 | P3 HTTP access | 6 November 2026, 14:25:38 AEDT (`2026-11-06T03:25:38Z`) | Initialized host/proxy scoped status route | `host-status-access-20261106.json`: 7/7 expected responses | Transport accepted; no Base44-session acceptance |
 | P3 run / BASE | First real turn completed 6 November 2026, 14:27:31.390 AEDT (`2026-11-06T03:27:31.390Z`) | Deployment `3eb27c23-9e17-40d4-905d-d3d5a6ab198d`; original BASE operation retained | One completed turn; verifier `listTurns(limit: 100)` receives HTTP 400 before second call; 3,194 tokens, US$0.0004338 SDK estimate only | Held; narrow pagination repair in preparation, no baseline pass/retry |
 | P4 | Current accepted observation: 0/10 | Same experiment | No proposal outcome or qualified BASE yet | Pending; BASE call is not a learning attempt |
 | P5 | Pending | Same retained journal and source | Restart, usage, privacy and independent acceptance | Pending |
-| P6 | Separate source work | Separate qualified product release required | Real authenticated submission, private results/history and end-to-end acceptance pending | Public review flow remains demo |
+| P6 source | 6 November 2026, 14:57:30 AEDT (`2026-11-06T03:57:30Z`) | Draft PR #59, head `22cf97d…`, tree `ec04370…` | Independent final source acceptance; all 21 published changed blobs verified; exact-head Gitar acknowledgement | Source implemented; final review/qualification/commissioning pending; public review remains demo |
 | Plan publication | 6 November 2026 | Draft PR #57; `work/gatekeeper-closeout-phase-plan-20261106` | Isolated documentation branch; `main` unchanged | Published as draft; preserve frozen source |
 
 ## 6. Primary references
@@ -279,6 +285,8 @@ Use one entry per observed phase exit or blocking event; update this table from 
 - [Current #44 execution record](https://github.com/appliedai-au/gate_keeper/issues/44#issuecomment-6664862988).
 - [Immutable source-qualification receipt on PR #56](https://github.com/appliedai-au/gate_keeper/pull/56#issuecomment-6675649613).
 - [Isolated phase-plan draft PR #57](https://github.com/appliedai-au/gate_keeper/pull/57).
+- [BASE pagination and bounded continuation repair PR #58](https://github.com/appliedai-au/gate_keeper/pull/58).
+- [Separate private live-review implementation PR #59](https://github.com/appliedai-au/gate_keeper/pull/59).
 - [Retained-history recovery](https://github.com/appliedai-au/gate_keeper/issues/44#issuecomment-6649714244).
 - [Production pilot composition at the frozen source](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/docs/learning-v2/production-pilot-v4.md).
 - [Detached-authority commissioning and recovery](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/docs/learning-v2/detached-authority-commissioning.md).
