@@ -1,5 +1,92 @@
 # Gate Keeper: operational closeout phase plan
 
+## Live implementation checkpoint — 2026-11-06T20:47:45Z
+
+**Completed-history capture and owner activation now pass on actual C. Final serving, provider commissioning and hosted app acceptance are still pending.**
+
+| Work item | Actual result |
+| --- | --- |
+| Qualified source | PR #59 merged as C `f344f5f10207de33b75923da7edd5b367d4d5f83`, exactly the qualified d1 tree. The preceding qualification checkpoint below retains the complete gates and cleanup. |
+| C deployments | Host `395bfeab-7823-4206-b37e-830dea8e005d` and authority `d968a2a8-1368-426c-94c0-bbe9e5972047` are successful guarded idle deployments. Idle is not application readiness. |
+| Runtime and custody | Actual host reports Node 24.19.0, TrueForge server 0.182.0, SDK 0.180.0, STANDALONE=false and no externally managed store. Original host volume remains UID/GID 1000 and mode 0700; authority custody remains root-owned. |
+| Review database | The exact qualified explicit schema migration exited 0 before serving. No provider registration or inference was performed by the migration. |
+| Authority export | Native export exited 0. Independent data audit accepted all 19 framed records/17 chunks, canonical Base64, exact ordered-array equivalence and exact canonical capsule bytes. |
+| Host capture | Native capture exited 0 with `prepared:false`, archived at `2026-11-06T20:29:39.078Z`. It records ten genuine attempts, the original fourth-attempt recovery with zero additional calls, and an unavailable learning driver. |
+| Owner activation | [Concrete activation comment 6694903543](https://github.com/appliedai-au/gate_keeper/pull/59#issuecomment-6694903543) was published by the original owner at `20:34:57Z`, after capture. Exact body and pin readback passed independent review. Native activate exited 0. |
+| Persisted archive | Exact three-file set verified. Capsule: 134,404 B / `f079f5d38372cbd21d1bf046bcb38361502ed688407aa90b0065dbb2b09fd486`. Closure: 46,660 B / `f62a7995299ed994afcf8bc4022572877217c4d81f4ec4886aef1e2a1240f5ae`. Activation: 584 B / `c906c516aa5b2302532045e79c6fd66c4ca51d108c586257bfa2bade58c17569`. Files retain UID/GID 1000, 0600, one link and stable-read checks. |
+| Persistent serving configuration | The reviewed explicit-shell V2 command is prepared and read back exactly: 3,579 B / `4c61ea644fbe579a25e5996027d6ebead942738475ad0acbba094e1cc13d0e55`. Healthcheck is /healthz with 180 seconds and the requested On Failure policy with five retries. The current process remains idle until the next deployment. |
+| Source-read allowance | At `20:43:08.960Z`, the host had 13 public GitHub core reads remaining; serving startup needs 22. Reset is `20:51:24Z` (7 November 07:51:24 AEDT). No token, source-verification bypass, extra IP or deployment is used to evade that allowance. |
+| Ordinary provider | The reviewed setup input was transferred privately and restricted to root/0600. No create call or model call has occurred. Idle /tmp inputs are temporary and must be reuploaded after the final serving deployment. Credentials remain outside the learning archive and hosted client. |
+| Hosted app | The exact 17-file assembly and guards remain prepared. No hosted installation or publication has been performed. The editor has repeated browser-control timeouts; its new guard request cannot yet be read back. The last verified clean draft is `6cc4981a94d54ee559ced7edb34466e0cfe5f111`, verified at `19:26:26Z`; this historical observation does not substitute for the immediate prewrite guards. |
+
+### Remaining implementation sequence
+
+1. Read the refreshed source allowance, deploy the configured actual-C serving profile, and accept health, process and preserved-history behavior.
+2. Reupload and verify the scoped provider operator/input on that serving deployment. Perform its bounded metadata checks and at most one provider creation when the registry permits it.
+3. Recover native editor control, immediately recheck all 17 source guards, install/read back the exact hosted assembly and server-only bindings, then publish.
+4. Complete actual owner, anonymous and genuine authenticated non-owner checks; a genuine ordinary review with persisted findings/history; freshness, latency, restart/idempotency and privacy acceptance.
+5. Close issue #44 only after those live acceptance requirements pass. Preserve the original pilot: 24 actual learning model calls, ten invalid attempts, zero promoted proposals, original BASE unchanged and all actual prices still unknown.
+
+The native evidence and independent acceptances are retained with the release evidence. These outcomes advance P5/P6 backend closeout; they do not establish a live hosted product result or learning improvement.
+
+
+## Latest qualification and merge checkpoint — 7 November 2026 AEDT
+
+**Prepared:** 7 November 2026, 07:11:50 AEDT / 6 November 2026, 20:11:50 UTC. **Evidence cutoff:** the verified merge at `2026-11-06T19:55:53Z`. This additive checkpoint advances the 05:50:54 AEDT checkpoint. All earlier text remains dated history; its BUILDING, pending-cleanup and no-C statements no longer describe the source-release position recorded here.
+
+**PR #59 is qualified and merged as actual C. Production C deployment, protected capture and owner activation, completed-history serving, and live app acceptance are not established by this checkpoint.** The original ten-attempt pilot and its final E custody/persistence acceptance remain complete. [Issue #44](https://github.com/appliedai-au/gate_keeper/issues/44) remains open for the remaining app and closeout evidence. See the [published qualification receipt](https://github.com/appliedai-au/gate_keeper/pull/59#issuecomment-6694090469) and [actual merge C](https://github.com/appliedai-au/gate_keeper/commit/f344f5f10207de33b75923da7edd5b367d4d5f83).
+
+### Qualified source and actual C
+
+| Identity | Verified value |
+| --- | --- |
+| Qualified PR #59 head | `d1ba34fa96cfb2bb98b31f3c016772bd46fe3199` |
+| Qualified and merged result tree | `6a9334d8ac1176447753479e90040c5e0f98bc55` |
+| Actual merged C | `f344f5f10207de33b75923da7edd5b367d4d5f83` |
+| C first parent: E | `30e429680f9da8ef8f5307f5fde4ef6bcfa2e70c` |
+| C second parent: qualified head | `d1ba34fa96cfb2bb98b31f3c016772bd46fe3199` |
+| Qualification comment | `6694090469`, published `2026-11-06T19:55:02Z` |
+| Exact published qualification-body SHA-256 | `fb7d99459e691c7bb2057fe6d954a1eb76bd786d78352c73718868eeca99061c` |
+| Merge time | `2026-11-06T19:55:53Z` / 7 November 06:55:53 AEDT |
+
+The [exact-head Gitar dashboard](https://github.com/appliedai-au/gate_keeper/pull/59#issuecomment-6692485286) recorded Approved, five closed of five and no open findings. This remains dashboard-mode source review; functional qualification is established separately by the complete remote run. Historical native `COMMENTED` reviews are preserved with their original meaning.
+
+The complete qualifier for exact d1 source, deployment `230dd9e9-8d00-4601-88ff-b73c21cf1f6e`, finished **SUCCESS at `2026-11-06T19:36:57.270Z`**. Its accepted receipt records **1,171/1,171 source tests, 15/15 real PostgreSQL tests and 9/9 privacy-canary tests**, with zero failures, skips, cancellations or TODOs in those suites; typecheck, five scorer self-tests and Caddy checks also passed. The recorded runtime versions are Node 24.19.0, TrueForge server 0.182.0 and PostgreSQL 15. The complete qualification log archive is 72,962 bytes, SHA-256 `935e9e3d6f5b8c9503826ae7d440489b994d9be67323677bef359e467720afe1`. These facts qualify the d1 tree now preserved exactly in C; they do not substitute for live production acceptance. [Qualification receipt](https://github.com/appliedai-au/gate_keeper/pull/59#issuecomment-6694090469).
+
+**Qualifier cleanup is complete as deployment removal.** Native Remove Deployment removed the completed qualifier at `2026-11-06T19:47:03.255Z`; the `19:47:12Z` observation established no active qualifier deployment or workload. The empty service configuration `5ebe81b4-81e9-47eb-991b-e6ab8d6c5e68` was retained, source-pinned with restart policy `NEVER`, and without credential bindings, mounts, domains/proxies, tracing, cron or staged changes. The service was not deleted. The pre-existing unattached volume recorded by the cleanup inventory was retained. Complete success/failure evidence remains preserved. [Published qualification and cleanup receipt](https://github.com/appliedai-au/gate_keeper/pull/59#issuecomment-6694090469).
+
+### Original experiment remains complete and unchanged
+
+The [completed-pilot result](https://github.com/appliedai-au/gate_keeper/issues/44#issuecomment-6689009727) remains **10 genuine attempts, all 10 invalid; 0 scored, 0 confirmed and 0 activated proposals**. Original BASE remains active. The accepted accounting remains **24 actual model calls across 11 settled operations**: fourteen BASE calls and ten proposal calls, with no pending dispatch or active authority call. The original fourth-proposal failure and its later observation using the existing settlement are preserved; recovery added no model call. Actual prices remain unknown, and zero known charges is not a zero total cost.
+
+The [final E custody and persistence acceptance](https://github.com/appliedai-au/gate_keeper/issues/44#issuecomment-6689770096) remains accepted. C adds the completed-history and ordinary-review release path; its source qualification does not change the experiment's all-invalid result or authorize replaying BASE or any proposal attempt.
+
+### Current phase matrix
+
+| Phase | Current status | Remaining exit evidence |
+| --- | --- | --- |
+| P0 — State and evidence reconciliation | Complete through the verified C source merge and qualification inventory | Add actual deployment and role observations as they occur; keep source identity separate from runtime identity. |
+| P1 — Qualification receipts and disposable cleanup | Complete for original A/B, recovery D/E, and the final PR #59 source qualification and observed qualifier cleanup | Preserve authentic receipts, full logs and the accurate retained-service inventory. |
+| P2 — Owner view and access acceptance | Incomplete; hosted source assembly and adapters have been prepared and reviewed | Exact installation/readback and server bindings; actual owner, anonymous and authenticated non-owner sessions; published revision; desktop/mobile, loading, unavailable and error-state acceptance. |
+| P3 — Genuine original BASE | Complete: fourteen original BASE calls settled | Preserve the accepted evidence and explicitly unknown pricing; no BASE replay. |
+| P4 — Ten genuine proposal attempts | Complete on E: ten invalid, no scored/confirmed/activated proposal; original BASE unchanged | Preserve the original result, twenty-four calls and eleven settlements; no further pilot proposal invocation. |
+| P5 — Persistence, accounting, privacy and #44 closeout | Partial overall; final original-pilot custody, host/authority agreement and same-E persistence are accepted | Complete actual-C protected closure, activation, serving/persistence and app privacy/access acceptance; finish scoped closeout. Unknown actual prices alone do not block closeout. |
+| P6 — Authenticated ordinary reviews and completed private history | Qualified exact source merged as actual C | Actual-C image/runtime checks, protected transfer/capture, concrete owner activation, serving, ordinary-provider commissioning and review schema/bindings, exact hosted release, genuine owner review/results/history, recovery and latency acceptance. |
+
+### Next actions — actual C and app acceptance
+
+1. **Establish actual-C runtime identity.** Use C `f344f5f10207de33b75923da7edd5b367d4d5f83`, with the qualified tree and ordered parents above. The host recipe is `Dockerfile.v3-integrated`, explicitly selecting TrueForge server **0.182.0** while retaining the reviewed installed SDK **0.180.0**; observe actual installed versions. A guarded idle process is only preparation and has no application listener or serving acceptance.
+2. **Complete protected closure in order.** Use the exact C source descriptor pinned to qualification comment `6694090469`. Export the authority capsule to the private create-once output, convert the framed records to the exact ordered transfer array through the protected data path, verify custody and the decoded canonical capsule digest, and run host capture. After review of the concrete capture, obtain the exact original-owner activation comment and pin, then activate. The activation pin is a distinct artifact from the source-qualification comment. Preserve original A/B/D/E records, signed envelopes and failed/recovered archive linkage.
+3. **Prepare review storage and start serving.** Prepare the reviewed ordinary-review database schema and actual-C owner/model/capability bindings before the final serving start where feasible. Review readiness is checked once at startup; missing schema or invalid bindings produce a fixed unavailable handler, so fixing them after startup requires a fresh serving start. Serve only after the create-once capsule, closure and activation records pass the qualified startup checks. Capture and activation do not start the ordinary TrueForge listener.
+4. **Commission the separate ordinary provider.** After the serving profile opens the loopback TrueForge listener, use the independently reviewed provider-registration operator, rechecking the registry before its single create. No upsert or automatic retry is implied. Confirm bounded provider/model metadata and a later genuine review result. Keep the ordinary model route separate from the frozen learning-authority provider; registration itself performs no inference and establishes no billing or product-success claim.
+5. **Install and accept the actual app.** Install the reviewed hosted assembly and bindings, read back exact bytes, and verify actual owner, anonymous and authenticated non-owner sessions. Accept the completed-history view, normal Review flow, retained findings and private history, same-identity idempotency and refresh/restart recovery. Measure delivery latency and accept desktop/mobile loading, unavailable and error states, with fresh check time distinct from immutable archive time. Publish and identify the accepted revision.
+6. **Finish independent closeout.** Reconcile actual provider usage, explicitly unknown prices, privacy and persistence evidence, then update #44 when its mandatory app and closeout criteria are met. Report P6 product acceptance separately from the original all-invalid pilot result. Existing owner authorization covers the scoped implementation and acceptance work; this checkpoint adds no permission hold.
+
+The documentation branch remains separate from production. Preparation-only PR #60 and diagnostics PR #63 remain separate records, not release dependencies. Gate Keeper remains the scope; Spekky remains waived. Preserve every earlier checkpoint, failed qualifier, source packet and authentic receipt as dated history.
+
+## Earlier checkpoint — 7 November 2026, 05:50:54 AEDT (retained verbatim)
+
+
 ## Latest verified checkpoint — 7 November 2026 AEDT
 
 **Prepared:** 7 November 2026, 05:50:54 AEDT / 6 November 2026, 18:50:54 UTC. This additive checkpoint advances the published 02:54:17 AEDT plan. The complete earlier text is retained below; its older current-status labels, queued qualifiers and unfinished original-pilot custody statements describe their recorded times.
