@@ -67,13 +67,15 @@ export function hasCompleteReviewDashboard(body) {
   // Strip only complete, whitespace-delimited quotes, not word apostrophes.
   const visible = section.replace(/<[^>]*>/gu, ' ')
     .replace(/(^|[\s(])(['"])[^'"\n]*\2(?=$|[\s.,;:)])/gmu, '$1').trim();
-  const countPattern = /\b([0-9]+)[ \t]+closed\s*\/\s*([0-9]+)[ \t]+(?:findings?|issues?)\b/giu;
+  // Capture the entire numeric-looking token before canonical validation.
+  // Otherwise the trailing zero of '1.0 findings' recreates the original bug.
+  const countPattern = /(?<![\w.])([+-]?[0-9][^\s<>]*)[ \t]+closed\s*\/\s*([+-]?[0-9][^\s<>]*)[ \t]+(?:findings?|issues?)\b/giu;
   const counts = [...visible.matchAll(countPattern)];
-  const openCounts = [...visible.matchAll(/\b([0-9]+)[ \t]+open\b/giu)];
+  const openCounts = [...visible.matchAll(/(?<![\w.])([+-]?[0-9][^\s<>]*)[ \t]+open\b/giu)];
   if (openCounts.some(item => !canonicalCount(item[1]) || item[1] !== '0')) return false;
   if (counts.length > 1 || /\bclosed\s*\//iu.test(visible) && counts.length !== 1) return false;
   const outsideSummary = visible.replace(countPattern, '');
-  const otherCounts = [...outsideSummary.matchAll(/\b([0-9]+)[ \t]+(?:open[ \t]+)?(?:findings?|issues?)\b/giu)];
+  const otherCounts = [...outsideSummary.matchAll(/(?<![\w.])([+-]?[0-9][^\s<>]*)[ \t]+(?:open[ \t]+)?(?:findings?|issues?)\b/giu)];
   if (otherCounts.some(item => !canonicalCount(item[1]) || item[1] !== '0')) return false;
   if (counts.length === 1) {
     const [, closed, total] = counts[0];
