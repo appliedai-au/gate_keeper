@@ -13,6 +13,7 @@ import { openAuthorityCustody } from './authority-custody.mjs';
 import { createAuthorityRelay } from './authority-relay.mjs';
 import { createSourceGateVerifier } from './authority-source-proof.mjs';
 import { createImplementationSourceVerifier, verifyOwnerContinuationAuthorization } from './implementation-proof.mjs';
+import { createProposalObservationSourceVerifier, verifyProposalObservationOwner } from './proposal-observation-proof.mjs';
 
 const CUSTODY = '/data/gk-v4-authority';
 export const AUTHORITY_GATE_POLICY = Object.freeze({
@@ -64,6 +65,7 @@ export function createAuthorityHttpServer({ authority, token, binding }) {
     operationReconciliation: { keys: ['operationId'], invoke: args => authority.operationReconciliation(args) },
     implementationStatus: { keys: [], invoke: () => authority.implementationStatus() },
     prepareBaselineContinuation: { keys: ['checkpoint'], invoke: args => authority.prepareBaselineContinuation(args) },
+    prepareProposalObservation: { keys: ['checkpoint'], invoke: args => authority.prepareProposalObservation(args) },
     'sessions.create': { keys: ['input'], invoke: args => authority.sdk.create(args.input) },
     'sessions.createTurn': { keys: ['sessionId', 'input'],
       invoke: args => authority.sdk.createTurn(args.sessionId, args.input) },
@@ -173,8 +175,16 @@ export async function startAuthorityService({ env = process.env, repositoryRoot 
   const config = authorityConfiguration(JSON.parse(env.GK_AUTHORITY_CONFIG || 'null'));
   const implementationCommit = hash(env.RAILWAY_GIT_COMMIT_SHA, 'actual authority image source', 40);
   const differentImplementation = implementationCommit !== config.sourceCommit;
-  requireThat(!differentImplementation || env.GK_AUTHORITY_MODE === 'serve' && env.GK_AUTHORITY_IMPLEMENTATION_PROOF,
+  const observationProof = env.GK_AUTHORITY_PROPOSAL_OBSERVATION_PROOF;
+  requireThat(!(observationProof && env.GK_AUTHORITY_IMPLEMENTATION_PROOF), 'choose one actual implementation source proof');
+  requireThat(!differentImplementation || env.GK_AUTHORITY_MODE === 'serve' &&
+    (env.GK_AUTHORITY_IMPLEMENTATION_PROOF || observationProof),
     'different authority image requires explicit separate implementation qualification');
+  if (observationProof) {
+    requireThat(differentImplementation && typeof observationProof === 'string' && Buffer.byteLength(observationProof, 'utf8') <= 32768 &&
+      !env.GK_AUTHORITY_BASE_CONTINUATION_AUTHORIZATION && !env.GK_AUTHORITY_RECONCILIATION,
+    'D is a separate bounded observation context, not a BASE replacement or generic reconciliation');
+  }
   text(env.TRUEFORGE_TOKEN, 'existing authorized TrueForge credential', 4096);
   const baseUrl = validatePrivateHost(env.TRUEFORGE_BASE_URL);
   const verifyRuntime = () => observeAuthorityServer({ baseUrl, token: env.TRUEFORGE_TOKEN,
@@ -207,15 +217,26 @@ export async function startAuthorityService({ env = process.env, repositoryRoot 
   const provider = new TrueForge({ baseUrl, token: env.TRUEFORGE_TOKEN,
     timeoutInSeconds: 60, maxRetries: 0 });
   const authority = await createDetachedAuthority({ bundle, signers: custody.signers,
-    journal: new FileJournal({ directory: custody.ledgerDirectory, repositoryRoot }),
+    journal: new FileJournal({ directory: custody.ledgerDirectory, repositoryRoot, create: !observationProof }),
     artifactStore: custody.artifactStore, provider, upstreamModelId: config.upstreamModelId,
     reviewerId: config.reviewerId, verifyRuntime,
     implementationCommit,
-    verifyImplementationSource: differentImplementation ? createImplementationSourceVerifier({
+    verifyImplementationSource: differentImplementation && !observationProof ? createImplementationSourceVerifier({
       descriptor: JSON.parse(env.GK_AUTHORITY_IMPLEMENTATION_PROOF) }) : null,
-    verifyContinuationOwner: differentImplementation ? verifyOwnerContinuationAuthorization : null,
+    verifyContinuationOwner: differentImplementation && !observationProof ? verifyOwnerContinuationAuthorization : null,
+    proposalObservation: observationProof ? {
+      verifySource: createProposalObservationSourceVerifier({ descriptor: JSON.parse(observationProof) }),
+      verifyOwner: verifyProposalObservationOwner,
+      readOnlyJournal: new FileJournal({ directory: custody.ledgerDirectory, repositoryRoot, create: false, readOnly: true }),
+      journalFactory: () => new FileJournal({ directory: resolve(CUSTODY, 'proposal-observation'), repositoryRoot }),
+    } : null,
     verifySourceGate: createSourceGateVerifier({ descriptor: JSON.parse(env.GK_AUTHORITY_SOURCE_PROOF || 'null') }) });
   const snapshot = await authority.initialize();
+  if (env.GK_AUTHORITY_PROPOSAL_OBSERVATION_AUTHORIZATION) {
+    requireThat(observationProof, 'D owner authorization requires independently qualified actual D');
+    await authority.authorizeProposalObservation(JSON.parse(env.GK_AUTHORITY_PROPOSAL_OBSERVATION_AUTHORIZATION));
+    emit('GK_AUTHORITY_PROPOSAL_OBSERVATION_AUTHORIZED');
+  }
   if (env.GK_AUTHORITY_BASE_CONTINUATION_AUTHORIZATION) {
     requireThat(differentImplementation, 'BASE continuation authorization requires separately qualified actual image');
     await authority.authorizeBaselineContinuation(JSON.parse(env.GK_AUTHORITY_BASE_CONTINUATION_AUTHORIZATION));
