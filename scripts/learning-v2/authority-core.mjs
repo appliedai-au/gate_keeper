@@ -19,6 +19,8 @@ import { authorityProviderBody } from './authority-wire.mjs';
 import { authorityAcceptanceView } from './authority-acceptance-view.mjs';
 import { CONTINUATION_PURPOSE } from './implementation-proof.mjs';
 import { validateOriginalBaselinePacket } from './baseline-continuation.mjs';
+import { verifyImplementationStatus } from './implementation-proof.mjs';
+import { createProposalObservationAuthority } from './proposal-observation-authority.mjs';
 
 const ROLES = ['evaluation', 'novelty', 'budget', 'activation'];
 const sdkOptions = Object.freeze({ maxRetries: 0, timeoutInSeconds: 60 });
@@ -63,6 +65,7 @@ function passEvidence(result, pass, originReceiptId = null) {
 export async function createDetachedAuthority({ bundle: suppliedBundle, signers, journal,
   artifactStore, provider, verifySourceGate, verifyRuntime, upstreamModelId, reviewerId,
   implementationCommit = null, verifyImplementationSource = null, verifyContinuationOwner = null,
+  proposalObservation = null,
   clock = () => Date.now() }) {
   const bundle = verifyProductionBundle(suppliedBundle);
   requireThat(ROLES.every(role => typeof signers?.[role] === 'function'), 'protected signers absent');
@@ -75,7 +78,8 @@ export async function createDetachedAuthority({ bundle: suppliedBundle, signers,
   const initial = initialAuthorityState(bundle);
   initial.activeCallId = null;
   const ledger = new AuthorityLedger({ journal, binding: bundle.binding, initial, clock });
-  await ledger.initialize();
+  if (proposalObservation === null) await ledger.initialize();
+  else await ledger.read(); // D can reopen only; never initialize another experiment.
   const identity = authorityIdentity(bundle);
   const actualImplementation = implementationCommit ?? bundle.config.sourceCommit;
   requireThat(/^[a-f0-9]{40}$/u.test(actualImplementation), 'actual authority implementation source');
@@ -88,7 +92,27 @@ export async function createDetachedAuthority({ bundle: suppliedBundle, signers,
     return JSON.parse(serialized(envelope));
   };
   const opening = await ledger.read();
-  if (actualImplementation === bundle.config.sourceCommit) {
+  let observationAuthority = null;
+  if (proposalObservation !== null) {
+    record(proposalObservation, ['verifySource', 'verifyOwner', 'journalFactory', 'readOnlyJournal'], 'D authority context');
+    requireThat(typeof proposalObservation.verifySource === 'function' && opening.implementation?.authorization &&
+      opening.gate && opening.sourceEvidenceDigest, 'D requires original B authority history and separate source proof');
+    const historicalStatus = verifyImplementationStatus({ qualificationEnvelope: JSON.parse(opening.implementation.qualification),
+      authorizationEnvelope: JSON.parse(opening.implementation.authorization) }, { binding: bundle.binding, trust: bundle.trust,
+      implementationCommit: JSON.parse(opening.implementation.qualification).body.implementationCommit, requireAuthorization: true });
+    requireThat(actualImplementation !== bundle.binding.sourceCommit &&
+      actualImplementation !== historicalStatus.qualificationEnvelope.body.implementationCommit,
+    'D actual implementation must be distinct from retained A and B');
+    const sourceEvidence = await proposalObservation.verifySource({ bundle: copy(bundle),
+      originalEvidence: await artifactStore.get(opening.sourceEvidenceDigest), implementationCommit: actualImplementation,
+      historicalImplementationStatus: historicalStatus });
+    requireThat(sourceEvidence.implementationCommit === actualImplementation, 'D source verifier returned a different image');
+    const originalLedger = new AuthorityLedger({ journal: proposalObservation.readOnlyJournal, binding: bundle.binding, initial: null, clock });
+    observationAuthority = await createProposalObservationAuthority({ bundle, originalLedger,
+      originalJournal: proposalObservation.readOnlyJournal, artifactStore, provider, sign, sourceEvidence,
+      actualImplementation, historicalStatus, journalFactory: proposalObservation.journalFactory,
+      verifyOwner: proposalObservation.verifyOwner, clock });
+  } else if (actualImplementation === bundle.config.sourceCommit) {
     requireThat(!opening.implementation, 'frozen image cannot reopen a separately qualified implementation');
   } else {
     requireThat(opening.gate && opening.sourceEvidenceDigest && typeof verifyImplementationSource === 'function',
@@ -112,6 +136,7 @@ export async function createDetachedAuthority({ bundle: suppliedBundle, signers,
     });
   }
   const requireImplementationAuthorization = async () => {
+    if (observationAuthority) { await observationAuthority.requireRemainder(); return; }
     if (actualImplementation === bundle.config.sourceCommit) return;
     const state = await ledger.read(), authorization = state.implementation?.authorization;
     requireThat(authorization && JSON.parse(authorization).body.implementationCommit === actualImplementation &&
@@ -224,6 +249,7 @@ export async function createDetachedAuthority({ bundle: suppliedBundle, signers,
   /** Independent provider reads and signed absence proof; no SDK mutation,
    * dispatch claim, new lease, result consumption or settlement is performed. */
   async function prepareBaselineContinuation({ checkpoint: supplied }) {
+    requireThat(!observationAuthority, 'D cannot replace or replay historical B BASE continuation');
     const checked = validateOriginalBaselinePacket(supplied, { runtime: bundle.runtime,
       caseInputs: bundle.caseInputs, originalBase: bundle.config.baseInstructions });
     same(checked.packet.binding, bundle.binding, 'continuation checkpoint changed frozen experiment');
@@ -269,6 +295,7 @@ export async function createDetachedAuthority({ bundle: suppliedBundle, signers,
 
   /** Protected control-plane input only, never exposed as a driver RPC. */
   async function authorizeBaselineContinuation(descriptor) {
+    requireThat(!observationAuthority, 'D cannot replace historical B owner authorization');
     const state = await ledger.read();
     requireThat(typeof verifyContinuationOwner === 'function' && state.implementation?.preparation,
       'independent owner authorization verifier or original prepare absent');
@@ -857,6 +884,9 @@ export async function createDetachedAuthority({ bundle: suppliedBundle, signers,
     record(supplied, ['schema', 'mode', 'operationId', 'leaseId', 'requestDigest', 'reason'],
       'protected operation reconciliation');
     const input = copy(supplied);
+    if (observationAuthority) requireThat(input.operationId !==
+      (await observationAuthority.status()).preparationEnvelope?.body.retained.operationId,
+    'D original fourth observation cannot be reclassified by generic reconciliation');
     requireThat(input.schema === 'gk-learning-authority-reconciliation-v1', 'operation reconciliation schema');
     requireThat(['failed-execution', 'settlement-only'].includes(input.mode), 'protected reconciliation mode');
     text(input.reason, 'operation reconciliation reason', 2000);
@@ -961,7 +991,16 @@ export async function createDetachedAuthority({ bundle: suppliedBundle, signers,
     initialize: () => ledger.read(),
     managedGate, admit, settle, issueEvaluation, issueNovelty, fitFeedback, activation, noveltyDecision,
     applyProtectedReview, applyProtectedReconciliation, authorizeBaselineContinuation, prepareBaselineContinuation,
+    prepareProposalObservation: input => {
+      requireThat(observationAuthority, 'qualified D observation authority absent');
+      return observationAuthority.prepare(input);
+    },
+    authorizeProposalObservation: descriptor => {
+      requireThat(observationAuthority, 'qualified D observation authority absent');
+      return observationAuthority.authorize(descriptor);
+    },
     implementationStatus: async () => {
+      if (observationAuthority) return observationAuthority.status();
       const state = await ledger.read();
       requireThat(state.implementation, 'separately qualified implementation absent');
       return { qualificationEnvelope: JSON.parse(state.implementation.qualification),
@@ -975,10 +1014,15 @@ export async function createDetachedAuthority({ bundle: suppliedBundle, signers,
     },
     operatorStatus: async () => {
       const state = await ledger.read();
+      const observationStatus = observationAuthority ? await observationAuthority.status() : null;
       const active = state.activeCallId === null ? null : callById(state, state.activeCallId).call;
       return { schema: 'gk-learning-authority-operator-status-v1', binding: bundle.binding,
         implementation: { frozenExperimentCommit: bundle.binding.sourceCommit, actualPlatformCommit: actualImplementation,
-          qualificationReceiptId: state.implementation ? JSON.parse(state.implementation.qualification).body.receiptId : null,
+          ...(observationStatus ? { historicalImplementationCommit: observationStatus.qualificationEnvelope.body.historicalImplementationCommit,
+            historicalQualificationReceiptId: JSON.parse(state.implementation.qualification).body.receiptId,
+            proposalObservation: observationStatus } : {}),
+          qualificationReceiptId: observationStatus ? observationStatus.qualificationEnvelope.body.receiptId :
+            state.implementation ? JSON.parse(state.implementation.qualification).body.receiptId : null,
           continuationReceiptId: state.implementation?.authorization ?
             JSON.parse(state.implementation.authorization).body.receiptId : null,
           preparedProof: state.implementation?.preparation ? JSON.parse(state.implementation.preparation) : null },

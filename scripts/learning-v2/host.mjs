@@ -21,6 +21,9 @@ import { turnInputDigest } from './trueforge-turn.mjs';
 import { verifyImplementationStatus } from './implementation-proof.mjs';
 import { createOriginalBaselinePacket, validateOriginalBaselinePacket, initializeBaselineContinuation,
   readBaselineContinuation, startBaselineContinuation } from './baseline-continuation.mjs';
+import { PROPOSAL_OBSERVATION_STATUS, verifyProposalObservationStatus } from './proposal-observation-proof.mjs';
+import { createOriginalProposalPacket, initializeProposalObservation, readProposalObservation,
+  consumeProposalObservation } from './proposal-observation.mjs';
 
 const KINDS = ['baseline', 'proposal', 'screen', 'confirmation'];
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -105,7 +108,7 @@ function prepare(options) {
     requireThat(value.binding.experimentId === config.experimentId && value.binding.sourceCommit === config.sourceCommit,
       'host implementation changed original experiment');
     implementation = { binding: copy(value.binding), sourceCommit: value.sourceCommit,
-      status: verifyImplementationStatus(value.status, { binding: value.binding, trust,
+      status: (value.status.schema === PROPOSAL_OBSERVATION_STATUS ? verifyProposalObservationStatus : verifyImplementationStatus)(value.status, { binding: value.binding, trust,
         implementationCommit: value.sourceCommit }) };
   }
   return { directory, repositoryRoot, config, trust, runtime, caseInputs, clock,
@@ -115,6 +118,11 @@ function prepare(options) {
 
 function compose(prepared, createDirectories) {
   const p = prepared;
+  const observationImplementation = p.implementation?.status.schema === PROPOSAL_OBSERVATION_STATUS;
+  const historicalImplementation = observationImplementation ? {
+    status: p.implementation.status.historicalImplementationStatus,
+    sourceCommit: p.implementation.status.historicalImplementationStatus.qualificationEnvelope.body.implementationCommit,
+  } : p.implementation;
   const controllerJournal = new FileJournal({ directory: join(p.directory, 'controller'),
     repositoryRoot: p.repositoryRoot, create: createDirectories });
   const dispatchJournal = new FileJournal({ directory: join(p.directory, 'dispatch'),
@@ -131,9 +139,20 @@ function compose(prepared, createDirectories) {
   });
   const continuationOptions = (id, link, create = false) => ({ originalJournal: originalJournalFor(id),
     continuationJournal: continuationJournalFor(id, create), link, binding: p.implementation?.binding,
-    trust: p.trust, implementationCommit: p.implementation?.sourceCommit });
+    trust: p.trust, implementationCommit: historicalImplementation?.sourceCommit });
+  const observationJournalFor = (id, create = false) => new FileJournal({
+    directory: join(p.directory, 'proposal-observations', digest({ operationId: id })),
+    repositoryRoot: p.repositoryRoot, create,
+  });
+  const observationOptions = (id, create = false) => ({ controllerJournal, dispatchJournal,
+    originalJournal: originalJournalFor(id), observationJournal: observationJournalFor(id, create),
+    binding: p.implementation.binding, trust: p.trust, runtime: p.runtime,
+    implementationCommit: p.implementation.sourceCommit, status: p.implementation.status, clock: p.clock });
   function authorizedImplementation() {
-    if (p.implementation) requireThat(p.implementation.status.authorizationEnvelope !== null,
+    if (observationImplementation) verifyProposalObservationStatus(p.implementation.status, {
+      binding: p.implementation.binding, trust: p.trust, implementationCommit: p.implementation.sourceCommit,
+      requireAuthorization: true, requireRemainder: true });
+    else if (p.implementation) requireThat(p.implementation.status.authorizationEnvelope !== null,
       'qualified host implementation allows prepare/status only until owner continuation authorization');
   }
   let ledger = null, busy = false;
@@ -169,11 +188,11 @@ function compose(prepared, createDirectories) {
         'controller operation has no matching durable dispatch intent');
       let continuation = null;
       if (entry.baselineContinuation) {
-        requireThat(p.implementation?.status.authorizationEnvelope,
+        requireThat(historicalImplementation?.status.authorizationEnvelope,
           'continued BASE requires its qualified actual implementation on reopen');
         continuation = await readBaselineContinuation({ ...continuationOptions(operation.id, entry.baselineContinuation),
           requireComplete: operation.consumed || operation.settled });
-        requireThat(digest(continuation.authorizationEnvelope) === digest(p.implementation.status.authorizationEnvelope),
+        requireThat(digest(continuation.authorizationEnvelope) === digest(historicalImplementation.status.authorizationEnvelope),
           'host BASE continuation authorization differs from actual implementation');
         if (operation.settled) requireThat(operation.actualCalls === 14 && operation.evidenceComplete,
           'continued BASE settlement must consume all fourteen original calls');
@@ -200,7 +219,33 @@ function compose(prepared, createDirectories) {
         'baseline non-admission resolution lacks controller disposition');
       }
     }
-    return { state, dispatch };
+    let observation = null;
+    if (observationImplementation) {
+      const id = operationId('proposal', p.config.experimentId + ':attempt:4');
+      let stored = null;
+      try { stored = await observationJournalFor(id).read(); }
+      catch (error) { if (error.code !== 'JOURNAL_DIRECTORY_MISSING') throw error; }
+      if (stored?.events.length) observation = await readProposalObservation(observationOptions(id));
+      else {
+        requireThat(!dispatch.entries.some(entry => entry.proposalObservation), 'mandatory D sidecar missing after durable link');
+        // Before consumption only the exact original four-attempt hold can
+        // exist. Missing custody can never become a successful later history.
+        const originalSnapshot = await originalJournalFor(id).read();
+        const packet = await createOriginalProposalPacket({ state, dispatch,
+          controllerSnapshot: await controllerJournal.read(), dispatchSnapshot: await dispatchJournal.read(), originalSnapshot,
+          archive: await archiveFor(id).read(), binding: p.implementation.binding, runtime: p.runtime });
+        if (p.implementation.status.preparationEnvelope) requireThat(
+          digest(packet) === p.implementation.status.preparationEnvelope.body.retained.hostPacketDigest,
+        'D original host cut changed after signed observation');
+      }
+      if (observation) requireThat(digest(state) === digest(observation.state) && digest(dispatch) === digest(observation.dispatch),
+        'host changed while checking mandatory D linkage');
+    } else requireThat(!dispatch.entries.some(entry => entry.proposalObservation),
+      'historical B cannot reopen D observation history as its own implementation');
+    return { state, dispatch, ...(observationImplementation ? { observation: observation ? {
+      complete: observation.complete, originalArchiveHead: observation.retained.originalArchiveHead,
+      qualificationDigest: observation.link.qualificationDigest, authorizationDigest: observation.link.authorizationDigest,
+      preparationDigest: observation.link.preparationDigest, additionalModelCalls: 0 } : null } : {}) };
   }
 
   async function status() {
@@ -213,10 +258,16 @@ function compose(prepared, createDirectories) {
       completed: dispatch.entries.filter(item => item.resolution).length } };
   }
 
-  async function exclusive(work) {
+  async function exclusive(work, { observationOnly = false } = {}) {
     requireThat(!busy, 'another host mutation is in progress');
     busy = true;
-    try { return await work(); }
+    try {
+      if (observationImplementation && !observationOnly) {
+        authorizedImplementation();
+        requireThat((await bound()).observation?.complete, 'ordinary D mutation requires completed original fourth observation linkage');
+      }
+      return await work();
+    }
     finally { busy = false; }
   }
 
@@ -269,6 +320,7 @@ function compose(prepared, createDirectories) {
     } });
 
   async function originalBaselineCheckpoint() {
+    requireThat(!observationImplementation, 'D cannot prepare historical B BASE continuation');
     requireThat(p.implementation, 'nondispatching BASE prepare requires separately qualified actual image');
     const beforeController = (await controllerJournal.read()).head, beforeDispatch = (await dispatchJournal.read()).head;
     const { state, dispatch } = await bound(), id = dispatch.pending?.operation.id;
@@ -289,7 +341,9 @@ function compose(prepared, createDirectories) {
       return copy({ ...snapshot, ...(p.implementation ? { implementation: {
         frozenExperimentCommit: p.config.sourceCommit, actualPlatformCommit: p.implementation.sourceCommit,
         qualificationReceiptId: p.implementation.status.qualificationEnvelope.body.receiptId,
-        continuationReceiptId: p.implementation.status.authorizationEnvelope?.body.receiptId ?? null } } : {}) });
+        continuationReceiptId: historicalImplementation.status.authorizationEnvelope?.body.receiptId ?? null,
+        ...(observationImplementation ? { historicalImplementationCommit: historicalImplementation.sourceCommit,
+          proposalObservationReceiptId: p.implementation.status.authorizationEnvelope?.body.receiptId ?? null } : {}) } } : {}) });
     },
     async inspectOperation(id) {
       identifier(id, 'operationId');
@@ -311,8 +365,45 @@ function compose(prepared, createDirectories) {
     },
     /** Read-only host capture followed by an independent authority prepare. */
     async prepareBaselineContinuation() { return exclusive(originalBaselineCheckpoint); },
+    async requireProposalObservationComplete() {
+      if (!observationImplementation) return;
+      authorizedImplementation();
+      requireThat((await bound()).observation?.complete, 'D remainder requires complete original fourth consumed-state proof');
+    },
+    async prepareProposalObservation() {
+      return exclusive(async () => {
+        requireThat(observationImplementation, 'qualified actual D required for original fourth prepare');
+        const { state, dispatch } = await bound();
+        const id = operationId('proposal', p.config.experimentId + ':attempt:4');
+        const c = await controllerJournal.read(), d = await dispatchJournal.read(), o = await originalJournalFor(id).read();
+        const packet = await createOriginalProposalPacket({ state, dispatch, controllerSnapshot: c, dispatchSnapshot: d,
+          originalSnapshot: o, archive: await archiveFor(id).read(), binding: p.implementation.binding, runtime: p.runtime });
+        requireThat((await controllerJournal.read()).head === c.head && (await dispatchJournal.read()).head === d.head &&
+          (await originalJournalFor(id).read()).head === o.head, 'original fourth host changed during read-only capture');
+        return packet;
+      }, { observationOnly: true });
+    },
+    async consumeProposalObservation() {
+      return exclusive(async () => {
+        requireThat(observationImplementation, 'qualified actual D required for original fourth consumption');
+        const checked = verifyProposalObservationStatus(p.implementation.status, { binding: p.implementation.binding,
+          trust: p.trust, implementationCommit: p.implementation.sourceCommit, requireAuthorization: true });
+        const { state, dispatch } = await bound(), id = checked.preparationEnvelope.body.retained.operationId;
+        let stored = null;
+        try { stored = await observationJournalFor(id).read(); }
+        catch (error) { if (error.code !== 'JOURNAL_DIRECTORY_MISSING') throw error; }
+        if (!stored?.events.length) {
+          const packet = await createOriginalProposalPacket({ state, dispatch, controllerSnapshot: await controllerJournal.read(),
+            dispatchSnapshot: await dispatchJournal.read(), originalSnapshot: await originalJournalFor(id).read(),
+            archive: await archiveFor(id).read(), binding: p.implementation.binding, runtime: p.runtime });
+          await initializeProposalObservation(observationOptions(id, true), packet);
+        }
+        return consumeProposalObservation(observationOptions(id));
+      }, { observationOnly: true });
+    },
     async continueBaseline() {
       return exclusive(async () => {
+        requireThat(!observationImplementation, 'D cannot replay historical B BASE continuation');
         authorizedImplementation();
         requireThat(p.implementation?.status.authorizationEnvelope, 'owner-authorized implementation required');
         const { qualificationEnvelope, authorizationEnvelope } = p.implementation.status;
@@ -398,6 +489,8 @@ function compose(prepared, createDirectories) {
     async reconcileOperationUsage(id, value) {
       authorizedImplementation();
       identifier(id, 'usage operationId');
+      requireThat(!observationImplementation || id !== p.implementation.status.preparationEnvelope?.body.retained.operationId,
+        'original fourth closed observation retains its signed unknown-price settlement');
       const signed = envelope(value);
       // Accounting may catch up while an unrelated dispatch awaits recovery.
       // This cannot admit, settle, retry, or complete any dispatch operation.
@@ -581,6 +674,8 @@ function compose(prepared, createDirectories) {
         const entry = dispatch.pending;
         requireThat(entry?.operation.id === recovery.operationId, 'matching pending dispatch required');
         requireThat(!entry.baselineContinuation, 'continued BASE cannot use generic abandonment/recovery');
+        requireThat(!entry.proposalObservation && (!observationImplementation || entry.operation.attemptId !== p.config.experimentId + ':attempt:4'),
+          'original fourth later observation cannot use generic abandonment/recovery');
         let held = state.operations.find(item => item.id === recovery.operationId);
         const admission = recovery.admissionEnvelope ?? (entry.admission ? parsedEnvelope(entry.admission) : null);
         requireThat(admission, 'independent admission reconciliation receipt required');
@@ -668,6 +763,8 @@ function compose(prepared, createDirectories) {
 export async function initializeLearningHost(options, initial) {
   objectFields(initial, [], ['history', 'budgetEnvelope'], 'host initialization');
   const captured = original(initial), prepared = prepare(options);
+  requireThat(prepared.implementation?.status.schema !== PROPOSAL_OBSERVATION_STATUS,
+    'D cannot initialize another host experiment');
   const created = compose(prepared, true);
   const controllerBefore = await created.controllerJournal.read();
   const dispatchBefore = await created.dispatchJournal.read();
