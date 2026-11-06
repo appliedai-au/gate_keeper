@@ -39,12 +39,12 @@ async function runEntrypoint({ command = 'prepare-proposal-observation', preflig
     './operational-diagnostics.mjs': { createOperationalDiagnostic: options => createOperationalDiagnostic({
       ...options, emit: line => diagnosticLines.push(line) }) },
   };
-  const execute = new vm.Script('(async function(require, process, console, AbortController) {\n' +
+  const execute = new vm.Script('(async function(require, process, console, AbortController, exports) {\n' +
     compiled.outputText + '\n})', { filename: 'actual-status-entrypoint.cjs' }).runInThisContext();
   let rejection = null;
   try {
     await execute(name => { assert.ok(Object.hasOwn(dependencies, name)); return dependencies[name]; },
-      fakeProcess, { log: line => reports.push(line) }, AbortController);
+      fakeProcess, { log: line => reports.push(line) }, AbortController, {});
   } catch (error) { rejection = error; }
   const events = diagnosticLines.map(line => JSON.parse(line.slice('GK_OPERATION_DIAGNOSTIC '.length)));
   assert.equal(diagnosticLines.join('\n').includes(SECRET), false);
