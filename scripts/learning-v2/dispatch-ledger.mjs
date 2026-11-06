@@ -133,6 +133,22 @@ function apply(state, event, identity) {
     entry.selectionCount++;
     return state;
   }
+  if (event.type === 'baseline-continuation-linked') {
+    record(event, ['schema', 'type', 'operationId', 'link'], 'BASE continuation linkage record');
+    record(event.link, ['authorizationDigest', 'qualificationDigest', 'originalArchiveHead', 'implementationCommit'],
+      'BASE continuation linkage');
+    for (const key of ['authorizationDigest', 'qualificationDigest', 'originalArchiveHead']) {
+      hash(event.link[key], 'BASE continuation ' + key);
+    }
+    hash(event.link.implementationCommit, 'BASE continuation actual implementation', 40);
+    const entry = pendingEntry(state, event.operationId);
+    requireThat(state.entries.length === 1 && entry.operation.kind === 'baseline' &&
+      entry.operation.attemptId === null && entry.request.requiredCalls === 14 && entry.admission !== null &&
+      entry.settlement === null && entry.notAdmitted === null && !entry.baselineContinuation,
+    'only the original unconsumed BASE can receive one immutable continuation link');
+    entry.baselineContinuation = copy(event.link);
+    return state;
+  }
   if (event.type === 'completed') {
     const guarded = Object.hasOwn(event, 'observationDigest');
     record(event, ['schema', 'type', 'operationId', 'resolution', ...(guarded ? ['observationDigest'] : [])],
@@ -199,9 +215,11 @@ export class DispatchLedger {
     return { head: value.head, state: replay(value.events, this.#identity) };
   }
 
-  async #append(value) {
+  async #append(value, expectedHead = undefined) {
     const event = boundedEvent(value); // Copy before the first await.
     const { head, state } = await this.#snapshot();
+    if (expectedHead !== undefined) requireThat(head === expectedHead,
+      'dispatch journal differs from the explicitly authorized original head');
     const next = apply(state, event, this.#identity);
     await this.#journal.append(head, event); // No stale-write or ambiguous-write retry.
     return copy(next);
@@ -230,6 +248,13 @@ export class DispatchLedger {
   /** Explicit recovery selection of retained bytes; no admission or dispatch. */
   async select(operationId, kind, observationIndex) {
     return this.#append({ schema: SCHEMA, type: 'selected', operationId, kind, observationIndex });
+  }
+
+  /** Reference a separately verified additive archive before any continuation
+   * SDK mutation. Ordinary claims, failures and completions remain immutable. */
+  async linkBaselineContinuation(operationId, link, originalHead) {
+    hash(originalHead, 'authorized original dispatch head');
+    return this.#append({ schema: SCHEMA, type: 'baseline-continuation-linked', operationId, link }, originalHead);
   }
 
   /** The host authenticates this resolution; this transition grants no authority.

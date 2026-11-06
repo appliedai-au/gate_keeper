@@ -112,5 +112,7 @@ export function createDetachedAuthorityClient({ baseUrl, token, trust, binding, 
     noveltyDecision: input => invoke('noveltyDecision', input),
     reconcileUsage: input => invoke('reconcileUsage', input),
     operationReconciliation: input => invoke('operationReconciliation', input),
+    implementationStatus: () => invoke('implementationStatus'),
+    prepareBaselineContinuation: checkpoint => invoke('prepareBaselineContinuation', { checkpoint }),
   });
 }

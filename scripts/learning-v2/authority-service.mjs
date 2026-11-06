@@ -12,6 +12,7 @@ import { createDetachedAuthority } from './authority-core.mjs';
 import { openAuthorityCustody } from './authority-custody.mjs';
 import { createAuthorityRelay } from './authority-relay.mjs';
 import { createSourceGateVerifier } from './authority-source-proof.mjs';
+import { createImplementationSourceVerifier, verifyOwnerContinuationAuthorization } from './implementation-proof.mjs';
 
 const CUSTODY = '/data/gk-v4-authority';
 export const AUTHORITY_GATE_POLICY = Object.freeze({
@@ -61,6 +62,8 @@ export function createAuthorityHttpServer({ authority, token, binding }) {
     noveltyDecision: { keys: ['operationId'], invoke: args => authority.noveltyDecision(args) },
     reconcileUsage: { keys: ['operationId'], invoke: args => authority.reconcileUsage(args) },
     operationReconciliation: { keys: ['operationId'], invoke: args => authority.operationReconciliation(args) },
+    implementationStatus: { keys: [], invoke: () => authority.implementationStatus() },
+    prepareBaselineContinuation: { keys: ['checkpoint'], invoke: args => authority.prepareBaselineContinuation(args) },
     'sessions.create': { keys: ['input'], invoke: args => authority.sdk.create(args.input) },
     'sessions.createTurn': { keys: ['sessionId', 'input'],
       invoke: args => authority.sdk.createTurn(args.sessionId, args.input) },
@@ -168,7 +171,10 @@ export function emitAuthorityStatus(status, emit = console.log) {
 export async function startAuthorityService({ env = process.env, repositoryRoot = '/app', emit = console.log } = {}) {
   requireThat(['initialize', 'serve'].includes(env.GK_AUTHORITY_MODE), 'explicit authority mode required');
   const config = authorityConfiguration(JSON.parse(env.GK_AUTHORITY_CONFIG || 'null'));
-  requireThat(env.RAILWAY_GIT_COMMIT_SHA === config.sourceCommit, 'authority deployed source differs from frozen source');
+  const implementationCommit = hash(env.RAILWAY_GIT_COMMIT_SHA, 'actual authority image source', 40);
+  const differentImplementation = implementationCommit !== config.sourceCommit;
+  requireThat(!differentImplementation || env.GK_AUTHORITY_MODE === 'serve' && env.GK_AUTHORITY_IMPLEMENTATION_PROOF,
+    'different authority image requires explicit separate implementation qualification');
   text(env.TRUEFORGE_TOKEN, 'existing authorized TrueForge credential', 4096);
   const baseUrl = validatePrivateHost(env.TRUEFORGE_BASE_URL);
   const verifyRuntime = () => observeAuthorityServer({ baseUrl, token: env.TRUEFORGE_TOKEN,
@@ -204,8 +210,17 @@ export async function startAuthorityService({ env = process.env, repositoryRoot 
     journal: new FileJournal({ directory: custody.ledgerDirectory, repositoryRoot }),
     artifactStore: custody.artifactStore, provider, upstreamModelId: config.upstreamModelId,
     reviewerId: config.reviewerId, verifyRuntime,
+    implementationCommit,
+    verifyImplementationSource: differentImplementation ? createImplementationSourceVerifier({
+      descriptor: JSON.parse(env.GK_AUTHORITY_IMPLEMENTATION_PROOF) }) : null,
+    verifyContinuationOwner: differentImplementation ? verifyOwnerContinuationAuthorization : null,
     verifySourceGate: createSourceGateVerifier({ descriptor: JSON.parse(env.GK_AUTHORITY_SOURCE_PROOF || 'null') }) });
   const snapshot = await authority.initialize();
+  if (env.GK_AUTHORITY_BASE_CONTINUATION_AUTHORIZATION) {
+    requireThat(differentImplementation, 'BASE continuation authorization requires separately qualified actual image');
+    await authority.authorizeBaselineContinuation(JSON.parse(env.GK_AUTHORITY_BASE_CONTINUATION_AUTHORIZATION));
+    emit('GK_AUTHORITY_BASE_CONTINUATION_AUTHORIZED');
+  }
   // A controlled review restart is safe only after independent terminal reads
   // closed the last provider call. Startup never retries a durable open intent.
   if (env.GK_AUTHORITY_REVIEW_DECISION) {

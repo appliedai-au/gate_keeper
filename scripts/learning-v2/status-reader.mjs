@@ -13,6 +13,7 @@ import { LearningController } from './controller.mjs';
 import { DispatchLedger } from './dispatch-ledger.mjs';
 import { FileJournal } from './journal.mjs';
 import { OperationArchive } from './operation-archive.mjs';
+import { readBaselineContinuation } from './baseline-continuation.mjs';
 import { statusView } from './prompts.mjs';
 import { projectLearningStatus, validateLearningStatusBinding } from '../../integrations/base44/shared/learning-status-contract.js';
 
@@ -47,10 +48,11 @@ export function createReadOnlyLearningStatusReader({ directory, repositoryRoot, 
     journal: new FileJournal({ directory: join(directory, 'controller'), repositoryRoot, create: false, readOnly: true }),
     trust: pinnedTrust,
   });
-  const archiveFor = id => new OperationArchive({ journal: new FileJournal({
+  const originalJournalFor = id => new FileJournal({
     directory: join(directory, 'operations', digest({ operationId: id })),
     repositoryRoot, create: false, readOnly: true,
-  }) });
+  });
+  const archiveFor = id => new OperationArchive({ journal: originalJournalFor(id) });
 
   return async function readStatus() {
     const state = await controller.state();
@@ -90,14 +92,26 @@ export function createReadOnlyLearningStatusReader({ directory, repositoryRoot, 
       const entry = dispatch.entries.find(item => item.operation.id === operation.id);
       requireThat(entry && entry.operation.requestDigest === operation.requestDigest,
         'controller operation lacks durable dispatch identity');
+      let continuation = null;
+      if (entry.baselineContinuation) {
+        continuation = await readBaselineContinuation({ originalJournal: originalJournalFor(operation.id),
+          continuationJournal: new FileJournal({ directory: join(directory, 'baseline-continuations',
+            digest({ operationId: operation.id })), repositoryRoot, create: false, readOnly: true }),
+          link: entry.baselineContinuation, binding: { ...fixed, configDigest }, trust: pinnedTrust,
+          requireComplete: operation.consumed || operation.settled });
+        requireThat(!operation.settled || operation.actualCalls === 14 && operation.evidenceComplete,
+          'continued BASE status requires its original fourteen-call settlement');
+      }
       if (operation.settled && !operation.reconciliationOnly &&
           (operation.evidenceComplete || operation.observedFreshCalls > 0 || operation.actualCalls > 0)) {
-        const archived = await archiveFor(operation.id).read();
+        const archived = continuation?.archive ?? await archiveFor(operation.id).read();
         requireThat(archived.operation?.id === operation.id &&
           archived.operation.leaseId === operation.leaseId &&
           archived.operation.requestDigest === operation.requestDigest &&
           digest(archived.request) === operation.requestDigest,
         'recorded execution archive is missing or differs');
+        requireThat(!archived.calls.some(call => call.stages.at(-1)?.stage === 'failure') || !operation.evidenceComplete,
+          'failed original archive cannot conceal missing continuation evidence');
       }
     }
     for (const entry of dispatch.entries.filter(item => item.resolution)) {
