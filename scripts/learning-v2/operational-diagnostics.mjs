@@ -9,7 +9,7 @@ const STAGES = new Set(['startup', 'preflight-status', 'gateway-start', 'request
   'shutdown', 'request', 'response-read', 'response-decode', 'response-contract', 'complete']);
 const OUTCOMES = new Set(['started', 'finished', 'failed', 'held', 'disabled']);
 const REASONS = new Set(['aborted', 'transport-unresolved', 'authority-refused', 'response-invalid',
-  'response-too-large', 'response-contract-invalid', 'startup-incomplete', 'child-held']);
+  'response-too-large', 'response-contract-invalid', 'startup-incomplete', 'child-held', 'observation-direct']);
 const METHODS = new Set(['sessions.create', 'sessions.createTurn', 'sessions.getTurn',
   'sessions.listTurnEvents', 'evaluation.issue', 'novelty.issue', 'gateway.admit', 'gateway.settle',
   'managedGate', 'fitFeedback', 'activation', 'noveltyDecision', 'reconcileUsage',
