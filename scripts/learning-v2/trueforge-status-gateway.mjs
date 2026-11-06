@@ -12,6 +12,9 @@ import { LEARNING_STATUS_PATH } from '../../integrations/base44/shared/learning-
 import { createReadOnlyLearningStatusReader } from './status-reader.mjs';
 import { readStatusConfig } from './status-config.mjs';
 import { createReadOnlyStatusHandler } from './status-listener.mjs';
+import { REVIEW_PATH } from '../../integrations/base44/shared/review-contract.js';
+import { configuredReviews } from '../reviews/runtime.mjs';
+import { reviewUnavailable } from '../reviews/service.mjs';
 
 const UPSTREAM_PORT = 8790;
 const CONFIG_PATH = '/var/lib/gk-v2-private-journal/status-config.json';
@@ -46,8 +49,8 @@ export function configuredStatusHandler({ env = process.env, readConfig = readSt
   }
 }
 
-/** The router has two outcomes only: dedicated read-only path or unchanged TrueForge. */
-export function createStatusRoutingHandler({ statusHandler, proxyHandler }) {
+/** Dedicated scoped routes precede unchanged ordinary TrueForge transport. */
+export function createStatusRoutingHandler({ statusHandler, proxyHandler, reviewHandler = reviewUnavailable }) {
   if (typeof statusHandler !== 'function' || typeof proxyHandler !== 'function') reject('invalid handler');
   return (req, res) => {
     const target = req.url;
@@ -61,9 +64,10 @@ export function createStatusRoutingHandler({ statusHandler, proxyHandler }) {
     let pathname;
     try { pathname = new URL(target, 'http://localhost').pathname; }
     catch { res.writeHead(400, noStore); res.end('{"error":"bad_request"}'); return; }
-    if (pathname === LEARNING_STATUS_PATH) {
-      void Promise.resolve(statusHandler(req, res)).catch(() => {
-        if (!res.headersSent) unavailable(req, res);
+    if (pathname === LEARNING_STATUS_PATH || pathname === REVIEW_PATH) {
+      const handler = pathname === LEARNING_STATUS_PATH ? statusHandler : reviewHandler;
+      void Promise.resolve(handler(req, res)).catch(() => {
+        if (!res.headersSent) (pathname === LEARNING_STATUS_PATH ? unavailable : reviewUnavailable)(req, res);
         else res.destroy();
       });
     } else {
@@ -130,7 +134,7 @@ export function configuredShutdownGraceMs(env = process.env) {
 
 /** Own only transport/child lifetimes; this does not add agent authority. */
 export function superviseTrueForgeGateway({ server, child,
-  shutdownGraceMs = configuredShutdownGraceMs() }) {
+  shutdownGraceMs = configuredShutdownGraceMs(), onStopping = () => {} }) {
   if (!Number.isInteger(shutdownGraceMs) || shutdownGraceMs < 1 ||
       shutdownGraceMs > MAX_TIMEOUT_MS) reject('invalid shutdown grace');
   const sockets = new Set();
@@ -159,6 +163,7 @@ export function superviseTrueForgeGateway({ server, child,
   const stop = (signal = 'SIGTERM') => {
     if (stopping) return stopped;
     stopping = true;
+    onStopping();
     server.close(() => { serverClosed = true; finish(); });
     server.closeIdleConnections();
     kill(signal);
@@ -204,14 +209,16 @@ export async function startTrueForgeStatusGateway({ env = process.env, run = spa
   if (!Number.isInteger(port) || port < 1024 || port > 65535 || port === UPSTREAM_PORT ||
       port === 8791) reject('invalid external port');
   const shutdownGraceMs = configuredShutdownGraceMs(env);
+  const reviews = await configuredReviews({ env });
   const child = run(process.execPath, ['node_modules/@truefoundry/trueforge/dist/main.js'], {
     cwd: '/app', stdio: 'inherit',
     env: { ...env, HOST: '127.0.0.1', PORT: String(UPSTREAM_PORT) },
   });
   const server = createServer(createStatusRoutingHandler({
-    statusHandler, proxyHandler: forwardTrueForge,
+    statusHandler, proxyHandler: forwardTrueForge, reviewHandler: reviews.handler,
   }));
-  const lifecycle = superviseTrueForgeGateway({ server, child, shutdownGraceMs });
+  const lifecycle = superviseTrueForgeGateway({ server, child, shutdownGraceMs, onStopping: reviews.stop });
+  void lifecycle.stopped.then(() => reviews.close()).catch(() => {});
   try {
     await new Promise((resolve, fail) => {
       server.once('error', fail);
