@@ -7,12 +7,15 @@ import { createProposalObservationSourceVerifier } from '../scripts/learning-v2/
 import { originalFourthFixture, D } from './helpers/proposal-observation-fixture.mjs';
 import { proposalObservationSourceFixture, D_HEAD } from './helpers/proposal-observation-source-fixture.mjs';
 
-const malformed = ['1.0', '+0', '-0', '1e0', '0x0', '10,000', '00', '1_000'];
+const malformed = ['1.0', '+0', '-0', '1e0', '0x0', '10,000', '00', '1_000',
+  'Done.10', '...3', 'x10', 'count:10'];
 const bodies = malformed.flatMap(value => [
   ['plain ' + value, '✅ Approved\nNo issues found.\n' + value + ' findings'],
   ['compact ' + value, '<kbd>✅ Approved</kbd> <kbd>' + value + ' findings</kbd>'],
   ['closed pair ' + value, '✅ Approved\n' + value + ' closed / ' + value + ' findings'],
 ]);
+bodies.push(['period-prefixed open count', '✅ Approved\nNo issues found.\nDone.10 open'],
+  ['punctuation-prefixed issues', '✅ Approved\nNo issues found.\n….3 issues']);
 for (const [name, body] of bodies) test('dashboard rejects whole malformed numeric token: ' + name, () => {
   assert.equal(hasCompleteReviewDashboard(body), false);
 });
