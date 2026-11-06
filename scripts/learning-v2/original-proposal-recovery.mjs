@@ -42,6 +42,11 @@ function expectedInput(supplied) {
   for (const reference of expected.history) {
     identifier(reference.id, 'recovery prior reference');
     requireThat(!ids.has(reference.id), 'recovery duplicate prior reference');
+    // Historical references can cover a different fault family. The controller
+    // retains each already-normalized procedure in its ORIGINAL scope; do not
+    // filter it out or coerce it into the current proposal's scope.
+    same(procedure(reference.procedure, reference.procedure?.scope), reference.procedure,
+      'recovery prior procedure is not its retained normalized identity');
     ids.add(reference.id);
   }
   const entry = expected.ownedEntry;
@@ -109,7 +114,6 @@ function originalCheckpoint(supplied, expected) {
     failure.callId === call.callId && failure.operationId === op.id && failure.inputDigest === inputDigest &&
     failure.sessionId === entry.sessionId && failure.turnId === entry.turnId,
     'only an original read interruption is eligible; ambiguous writes remain held');
-  for (const reference of expected.history) procedure(reference.procedure, learner.scope);
   return { checkpoint, call, scope: learner.scope, entry };
 }
 
