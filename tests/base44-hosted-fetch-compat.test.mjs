@@ -12,7 +12,7 @@ import { createLearningStatusBackend } from '../integrations/base44/shared/learn
 import { createLearningHistoryBackend } from '../integrations/base44/shared/learning-history-backend.js';
 import { createReviewBridge } from '../integrations/base44/shared/review-backend.js';
 import { REVIEW_PUBLIC_URL, REVIEW_APP_ID } from '../integrations/base44/shared/review-contract.js';
-import { binding, nowMs, completedResponse } from './base44-completed-learning-fixture.mjs';
+import { binding, nowMs, completedResponse, legacyCompletedResponse } from './base44-completed-learning-fixture.mjs';
 
 const marker = 'synthetic-private-value-never-exposed';
 const token = 'synthetic_' + 'x'.repeat(48);
@@ -22,7 +22,8 @@ const values = {
   GATEKEEPER_LEARNING_SOURCE_COMMIT: binding.sourceCommit,
   GATEKEEPER_LEARNING_READ_TOKEN: token,
   GATEKEEPER_LEARNING_HISTORY_SOURCE_COMMIT: binding.servingSourceCommit,
-  GATEKEEPER_LEARNING_EXECUTION_SOURCE_COMMIT: binding.executionSourceCommit,
+  GATEKEEPER_LEARNING_EXECUTION_SOURCE_COMMIT: binding.originalExecutionSourceCommit,
+  GATEKEEPER_LEARNING_FINAL_EXECUTION_SOURCE_COMMIT: binding.finalExecutionSourceCommit,
   GATEKEEPER_LEARNING_CLOSURE_SHA256: binding.closureDigest,
   GATEKEEPER_REVIEW_OWNER_ID: binding.ownerId,
   GATEKEEPER_REVIEW_ENABLED: 'enabled',
@@ -284,6 +285,22 @@ test('real loopback redirects never receive a forwarded token, body or second re
       privateLogsAbsent(host.logs);
     }
   }
+});
+
+test('actual hosted history keeps B pinned, requires D and refuses v1 after the manual fetch boundary', async () => {
+  const specification = specifications.find(value => value.name === 'gatekeeperLearningHistory');
+  const finalName = 'GATEKEEPER_LEARNING_FINAL_EXECUTION_SOURCE_COMMIT';
+  for (const finalPin of [undefined, binding.originalExecutionSourceCommit, binding.servingSourceCommit]) {
+    const host = hosted(specification, { readSecret: name => Promise.resolve(name === finalName ? finalPin : values[name]) });
+    await fixedError(await host.handle(incoming({})), 503, 'learning_history_unavailable');
+    assert.equal(host.calls.length, 0); assert.equal(host.reads[0], specification.ownerName);
+    assert.ok(host.reads.includes(finalName)); privateLogsAbsent(host.logs);
+  }
+  const legacy = hosted(specification, { fetchResult: () => Response.json(legacyCompletedResponse()) });
+  await fixedError(await legacy.handle(incoming({})), 503, 'learning_history_unavailable');
+  assert.equal(legacy.calls.length, 1); assert.equal(legacy.calls[0].init.redirect, 'manual');
+  assert.equal(values.GATEKEEPER_LEARNING_EXECUTION_SOURCE_COMMIT, binding.originalExecutionSourceCommit);
+  privateLogsAbsent(legacy.logs);
 });
 
 test('installation manifest permits only pinned import literals and optional one final LF removal', async () => {

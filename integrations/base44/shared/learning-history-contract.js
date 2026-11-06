@@ -1,7 +1,7 @@
 // Public completed-history boundary only. No journal, issuer, credential or SDK.
 import { MAX_STATUS_BYTES, projectLearningStatus, validateLearningStatusBinding } from './learning-status-contract.js';
 
-export const LEARNING_HISTORY_SCHEMA = 'gk-learning-completed-history-response-v1';
+export const LEARNING_HISTORY_SCHEMA = 'gk-learning-completed-history-response-v2';
 export const MAX_LEARNING_HISTORY_BYTES = MAX_STATUS_BYTES;
 const TERMINAL_COUNTS = ['duplicate', 'unresolved', 'invalid', 'noCoverage', 'rejected', 'confirmed'];
 
@@ -26,16 +26,17 @@ function timestamp(value) {
   return time;
 }
 
-/** A remains the experiment binding; B and C cannot substitute for its source. */
+/** A stays frozen; original B, final D and serving C are separate owner pins. */
 export function validateLearningHistoryBinding(value) {
   record(value, ['ownerId', 'experimentId', 'sourceCommit', 'servingSourceCommit',
-    'executionSourceCommit', 'closureDigest']);
+    'originalExecutionSourceCommit', 'finalExecutionSourceCommit', 'closureDigest']);
   const original = validateLearningStatusBinding({ ownerId: value.ownerId,
     experimentId: value.experimentId, sourceCommit: value.sourceCommit });
   const servingSourceCommit = hash(value.servingSourceCommit, 40);
-  const executionSourceCommit = hash(value.executionSourceCommit, 40);
-  check(new Set([original.sourceCommit, servingSourceCommit, executionSourceCommit]).size === 3);
-  return { ...original, servingSourceCommit, executionSourceCommit,
+  const originalExecutionSourceCommit = hash(value.originalExecutionSourceCommit, 40);
+  const finalExecutionSourceCommit = hash(value.finalExecutionSourceCommit, 40);
+  check(new Set([original.sourceCommit, servingSourceCommit, originalExecutionSourceCommit, finalExecutionSourceCommit]).size === 4);
+  return { ...original, servingSourceCommit, originalExecutionSourceCommit, finalExecutionSourceCommit,
     closureDigest: hash(value.closureDigest, 64) };
 }
 
@@ -50,22 +51,29 @@ export function projectLearningHistoryForDisplay(value, binding) {
   record(value.serving, ['mode', 'sourceCommit']);
   check(value.serving.mode === 'completed-history');
   const servingSourceCommit = hash(value.serving.sourceCommit, 40);
-  record(value.archive, ['experimentSourceCommit', 'executionSourceCommit', 'closureDigest', 'archivedAt']);
+  record(value.archive, ['experimentSourceCommit', 'originalExecutionSourceCommit', 'finalExecutionSourceCommit',
+    'recovery', 'closureDigest', 'archivedAt']);
   const experimentSourceCommit = hash(value.archive.experimentSourceCommit, 40);
-  const executionSourceCommit = hash(value.archive.executionSourceCommit, 40);
+  const originalExecutionSourceCommit = hash(value.archive.originalExecutionSourceCommit, 40);
+  const finalExecutionSourceCommit = hash(value.archive.finalExecutionSourceCommit, 40);
+  record(value.archive.recovery, ['kind', 'attempt', 'additionalModelCalls']);
+  check(value.archive.recovery.kind === 'original-invalid-proposal-observation' &&
+    value.archive.recovery.attempt === 4 && value.archive.recovery.additionalModelCalls === 0);
   const closureDigest = hash(value.archive.closureDigest, 64);
   check(timestamp(value.archive.archivedAt) <= checked);
-  check(new Set([experimentSourceCommit, executionSourceCommit, servingSourceCommit]).size === 3);
+  check(new Set([experimentSourceCommit, originalExecutionSourceCommit, finalExecutionSourceCommit, servingSourceCommit]).size === 4);
 
   const fixed = binding === undefined ? null : validateLearningHistoryBinding(binding);
   if (fixed) check(fixed.sourceCommit === experimentSourceCommit &&
-    fixed.executionSourceCommit === executionSourceCommit && fixed.servingSourceCommit === servingSourceCommit &&
+    fixed.originalExecutionSourceCommit === originalExecutionSourceCommit &&
+    fixed.finalExecutionSourceCommit === finalExecutionSourceCommit && fixed.servingSourceCommit === servingSourceCommit &&
     fixed.closureDigest === closureDigest);
   const status = projectLearningStatus(value.status, fixed ? {
     ownerId: fixed.ownerId, experimentId: fixed.experimentId, sourceCommit: fixed.sourceCommit,
   } : undefined);
   check(status.sourceCommit === experimentSourceCommit && status.counts.attempted === 10 &&
-    status.counts.provisional === 0 && TERMINAL_COUNTS.reduce((sum, key) => sum + status.counts[key], 0) === 10 &&
+    status.counts.provisional === 0 && status.counts.invalid >= 4 &&
+    TERMINAL_COUNTS.reduce((sum, key) => sum + status.counts[key], 0) === 10 &&
     status.baseline.status === 'complete' && status.baseline.failureCode === null &&
     status.pendingOperation === null && status.dispatch.pending === null &&
     status.dispatch.completed >= 11 && status.dispatch.completed <= 31 &&
@@ -75,7 +83,9 @@ export function projectLearningHistoryForDisplay(value, binding) {
   // retains the original accounting semantics and may truthfully remain false.
   return { schema: LEARNING_HISTORY_SCHEMA, checkedAt: value.checkedAt,
     serving: { mode: 'completed-history', sourceCommit: servingSourceCommit },
-    archive: { experimentSourceCommit, executionSourceCommit, closureDigest, archivedAt: value.archive.archivedAt },
+    archive: { experimentSourceCommit, originalExecutionSourceCommit, finalExecutionSourceCommit,
+      recovery: { kind: 'original-invalid-proposal-observation', attempt: 4, additionalModelCalls: 0 },
+      closureDigest, archivedAt: value.archive.archivedAt },
     status };
 }
 

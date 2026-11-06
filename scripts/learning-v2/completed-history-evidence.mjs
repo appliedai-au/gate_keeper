@@ -5,6 +5,7 @@ import { verifyEvaluation, compareEvaluations } from './evidence.mjs';
 import { TURN_CONFIG, turnInputDigest } from './trueforge-turn.mjs';
 import { originalReceipt, verifyAuthorityCapsule } from './completed-authority-export.mjs';
 import { bytesSha, isoTime, same } from './completed-history-files.mjs';
+import { COMPLETED_RECOVERY } from './completed-proposal-observation.mjs';
 
 const retained = value => { const { calls, ...rest } = value; return copy(rest); };
 const OP_KEYS = ['id', 'kind', 'attemptId', 'namespace', 'requestDigest'];
@@ -134,7 +135,7 @@ function expectedEvaluations(request, state, attempt) {
 
 /** No counters are accepted as proof of completion. Every original proposal,
  * lease, request, call and settlement is matched one-to-one across custody. */
-export function verifyClosedHostEvidence({ state, controllerSnapshot, dispatch, archives, continuation,
+export function verifyClosedHostEvidence({ state, controllerSnapshot, dispatch, archives, continuation, observation,
   capsule: supplied, binding, trust }) {
   requireThat(state.schema === 'gk-learning-v2-experiment' && state.configDigest === binding.configDigest &&
     state.config.sourceCommit === binding.sourceCommit && state.config.experimentId === binding.experimentId,
@@ -145,7 +146,18 @@ export function verifyClosedHostEvidence({ state, controllerSnapshot, dispatch, 
   same(state.trustPins, { ...Object.fromEntries(['evaluation', 'novelty', 'budget', 'activation'].map(role =>
     [role, trust[role].pinnedFingerprint])), gatewayId: trust.budget.gatewayId }, 'closed role pins changed');
   const checked = verifyAuthorityCapsule(supplied, { binding, trust, config: state.config, history: state.history });
-  const { capsule, gate, implementation } = checked;
+  const { capsule, gate, implementation, proposalObservation } = checked;
+  const prepared = proposalObservation.status.preparationEnvelope.body;
+  requireThat(observation?.complete === true && observation.prefix === '2:3' &&
+    observation.snapshots.controller.head === controllerSnapshot.head &&
+    observation.retained.operationId === state.operations[4]?.id &&
+    digest(observation.packet.archive) === prepared.retained.originalArchiveDigest,
+  'closed fourth lacks its exact retained failure and complete D consumption cut');
+  same(observation.status, proposalObservation.status, 'host D proof differs from original authority D');
+  same(observation.dispatch, dispatch, 'closed D dispatch capture differs');
+  same(observation.state, state, 'closed D controller capture differs');
+  same(observation.packet.archive, archives[state.operations[4].id], 'closed fourth original failure archive changed');
+  same(observation.link, dispatch.entries[4].proposalObservation, 'mandatory closed D dispatch link missing or changed');
   const chronology = validateControllerHistory(controllerSnapshot, state);
   same(state.gate, { receiptId: gate.receiptId, digest: digest(gate), targetId: gate.targetId, runId: gate.runId },
     'host did not consume the original managed gate');
@@ -220,7 +232,13 @@ export function verifyClosedHostEvidence({ state, controllerSnapshot, dispatch, 
       const observed = owned.calls[callIndex];
       requireThat(!seenCalls.has(observed.callId), 'closed SDK call reused'); seenCalls.add(observed.callId);
       const turn = canonical([observed.sessionId, observed.turnId]); requireThat(!seenTurns.has(turn), 'closed SDK turn reused'); seenTurns.add(turn);
-      results.set(observed.callId, terminalCall(saved, observed, operation, request, capsule.frozen.runtime));
+      if (index === 4) {
+        requireThat(operation.kind === 'proposal' && saved.stages.map(item => item.stage).join(',') === 'session,turn,failure' &&
+          digest(saved.call) === prepared.retained.callDigest && digest(saved.stages[2].payload) === prepared.retained.failureDigest &&
+          ['callId', 'sessionId', 'turnId', 'inputDigest', 'outputDigest', 'modelDigest'].every(key => observed[key] === prepared.observed[key]),
+        'recovered fourth changed its original failed host read or authentic later observation');
+        results.set(observed.callId, copy(prepared.observed));
+      } else results.set(observed.callId, terminalCall(saved, observed, operation, request, capsule.frozen.runtime));
     }
     const scheduled = expectedEvaluations(request, state, attempt);
     requireThat(scheduled.length === owned.evaluations.length, 'closed evaluation arm set differs');
@@ -301,11 +319,17 @@ export function verifyClosedHostEvidence({ state, controllerSnapshot, dispatch, 
     const review = capsule.reviews.find(item => item.operationId === proposal.operation.id);
     let disposition, evaluatedCandidate = false;
     if (candidate === null) {
+      if (index === 3) {
+        requireThat(!review && proposal.archive.artifacts.length === 0 && result.classification === 'invalid' &&
+          proposal.operation.id === prepared.retained.operationId && proposal.operation.actualCalls === 1 && proposal.operation.actualMicros === null,
+        'later original observation cannot add a final/artifact or replace original one-call accounting');
+      } else {
       requireThat(!review && proposal.archive.artifacts.length === 1 &&
         proposal.archive.artifacts[0].id === 'proposal-invalid' && proposal.archive.artifacts[0].kind === 'proposal',
       'invalid original proposal has an unexpected review or artifact');
       same(proposal.archive.artifacts[0].payload, { callId: result.callId, reason: 'invalid structured procedure' },
         'invalid original proposal artifact changed');
+      }
       disposition = 'invalid';
     } else if (exact.length) {
       requireThat(!review && proposal.archive.artifacts.length === 1 &&
@@ -406,7 +430,11 @@ export function verifyClosedHostEvidence({ state, controllerSnapshot, dispatch, 
   }
   requireThat(state.activeVersionId === active && capsule.activeVersionId === active, 'final incumbent differs across custody');
   same([...consumedReceipts].sort(), [...state.receipts].sort(), 'controller contains missing or unauthenticated receipts');
-  return { binding: copy(binding), executionSourceCommit: capsule.executionSourceCommit,
+  return { binding: copy(binding), originalExecutionSourceCommit: capsule.originalExecutionSourceCommit,
+    finalExecutionSourceCommit: capsule.finalExecutionSourceCommit, recovery: copy(COMPLETED_RECOVERY),
+    observationQualificationDigest: digest(proposalObservation.status.qualificationEnvelope),
+    observationPreparationDigest: digest(proposalObservation.status.preparationEnvelope),
+    observationAuthorizationDigest: digest(proposalObservation.status.authorizationEnvelope),
     operations: state.operations.length, calls: seenCalls.size, genuineAttempts: 10,
     activeVersionId: active, lastHostEventAt: chronology.lastEventAt,
     unknownCostOperations: state.operations.filter(item => item.actualMicros === null && !item.usageReconciliation).length };

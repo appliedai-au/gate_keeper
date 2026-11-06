@@ -1,5 +1,5 @@
 /** Explicit C control-plane roles. Only capture/activate create files, and only
- * in the new completed-history directory. Historical A/B files stay read-only. */
+ * in the new completed-history directory. Historical A/B/D files stay read-only. */
 import { constants, closeSync, fstatSync, fsyncSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,11 +63,16 @@ export async function installCapturedHistory({ env = process.env, fetcher = fetc
   publishCompletedProfileFile({ directory: COMPLETED_HISTORY_DIRECTORY, name: 'authority-capsule.json', bytes: captured.capsuleBytes });
   publishCompletedProfileFile({ directory: COMPLETED_HISTORY_DIRECTORY, name: 'closure.json', bytes: captured.closureBytes });
   exactDirectory(COMPLETED_HISTORY_DIRECTORY, ['authority-capsule.json', 'closure.json']);
-  return { schema: 'gk-completed-history-captured-v1', servingSourceCommit: captured.closure.servingSourceCommit,
-    experimentSourceCommit: captured.closure.binding.sourceCommit, executionSourceCommit: captured.closure.executionSourceCommit,
+  return { schema: 'gk-completed-history-captured-v2', servingSourceCommit: captured.closure.servingSourceCommit,
+    experimentSourceCommit: captured.closure.binding.sourceCommit, originalExecutionSourceCommit: captured.closure.originalExecutionSourceCommit,
+    finalExecutionSourceCommit: captured.closure.finalExecutionSourceCommit,
     authorityCapsuleSha256: bytesSha(captured.capsuleBytes), closureDigest: bytesSha(captured.closureBytes),
     qualificationDescriptorDigest: captured.source.descriptorDigest, archivedAt: captured.closure.archivedAt,
     configDigest: captured.closure.binding.configDigest, genuineAttempts: captured.closure.completion.genuineAttempts,
+    recovery: copy(captured.closure.completion.recovery),
+    observationQualificationDigest: captured.closure.completion.observationQualificationDigest,
+    observationPreparationDigest: captured.closure.completion.observationPreparationDigest,
+    observationAuthorizationDigest: captured.closure.completion.observationAuthorizationDigest,
     driver: 'unavailable', activation: 'owner-pin-required' };
 }
 
@@ -77,9 +82,9 @@ export async function installCompletedActivation({ env = process.env, fetcher = 
   exactDirectory(COMPLETED_HISTORY_DIRECTORY, ['authority-capsule.json', 'closure.json']);
   const capsule = readArchiveJson(join(COMPLETED_HISTORY_DIRECTORY, 'authority-capsule.json'));
   const saved = readArchiveJson(join(COMPLETED_HISTORY_DIRECTORY, 'closure.json')), closure = saved.value;
-  record(closure, ['schema', 'binding', 'executionSourceCommit', 'servingSourceCommit', 'archivedAt',
+  record(closure, ['schema', 'binding', 'originalExecutionSourceCommit', 'finalExecutionSourceCommit', 'servingSourceCommit', 'archivedAt',
     'authorityCapsuleSha256', 'qualificationDescriptorDigest', 'host', 'completion'], 'closed activation manifest');
-  requireThat(closure.schema === 'gk-completed-history-closure-v1' && closure.servingSourceCommit === env.RAILWAY_GIT_COMMIT_SHA &&
+  requireThat(closure.schema === 'gk-completed-history-closure-v2' && closure.servingSourceCommit === env.RAILWAY_GIT_COMMIT_SHA &&
     closure.authorityCapsuleSha256 === bytesSha(capsule.bytes) && canonical(closure) === saved.bytes.toString('utf8') &&
     canonical(capsule.value) === capsule.bytes.toString('utf8'), 'closed activation source or capsule changed');
   const sourceDescriptor = decodedInput(env.GK_COMPLETED_HISTORY_SOURCE_PROOF_B64);
@@ -90,10 +95,13 @@ export async function installCompletedActivation({ env = process.env, fetcher = 
   same(snapshot.completion, closure.completion, 'closed activation acceptance changed');
   const source = await createCompletedSourceVerifier({ descriptor: sourceDescriptor, fetcher })({
     actualSourceCommit: env.RAILWAY_GIT_COMMIT_SHA, binding: snapshot.binding,
-    historicalQualification: snapshot.historical.qualificationEnvelope.body });
+    originalQualification: snapshot.historical.qualificationEnvelope.body,
+    finalQualification: snapshot.observation.status.qualificationEnvelope.body });
   requireThat(source.descriptorDigest === closure.qualificationDescriptorDigest &&
     capsule.value.provenance.exportSourceCommit === env.RAILWAY_GIT_COMMIT_SHA &&
-    capsule.value.provenance.qualificationDescriptorDigest === source.descriptorDigest,
+    capsule.value.provenance.qualificationDescriptorDigest === source.descriptorDigest &&
+    closure.originalExecutionSourceCommit === capsule.value.originalExecutionSourceCommit &&
+    closure.finalExecutionSourceCommit === capsule.value.finalExecutionSourceCommit,
   'closed activation differs from qualified actual-C exporter');
   const closureDigest = bytesSha(saved.bytes);
   await verifyCompletedOwnerPin({ pin: ownerPin, closure, closureDigest, sourceEvidence: source, fetcher });
@@ -104,9 +112,9 @@ export async function installCompletedActivation({ env = process.env, fetcher = 
   'closure changed during owner verification');
   exactDirectory(COMPLETED_HISTORY_DIRECTORY, ['authority-capsule.json', 'closure.json']);
   publishCompletedProfileFile({ directory: COMPLETED_HISTORY_DIRECTORY, name: 'activation.json',
-    bytes: Buffer.from(canonical({ schema: 'gk-completed-history-activation-v1', closureDigest,
+    bytes: Buffer.from(canonical({ schema: 'gk-completed-history-activation-v2', closureDigest,
       sourceDescriptor: copy(sourceDescriptor), ownerPin: copy(ownerPin) })) });
-  return { schema: 'gk-completed-history-activated-v1', servingSourceCommit: env.RAILWAY_GIT_COMMIT_SHA,
+  return { schema: 'gk-completed-history-activated-v2', servingSourceCommit: env.RAILWAY_GIT_COMMIT_SHA,
     closureDigest, driver: 'unavailable' };
 }
 

@@ -11,6 +11,7 @@ import { FileJournal } from './journal.mjs';
 import { AuthorityLedger } from './authority-ledger.mjs';
 import { verifyImplementationStatus, verifyPreparedContinuation } from './implementation-proof.mjs';
 import { createCompletedSourceVerifier } from './completed-history-proof.mjs';
+import { historicalProposalObservation, projectCompletedObservation } from './completed-proposal-observation.mjs';
 import { bytesSha, exactDirectory, inventoryTree, isoTime, privateDirectory, readArchiveJson, same } from './completed-history-files.mjs';
 
 export const COMPLETED_AUTHORITY_ROOT = '/data/gk-v4-authority';
@@ -34,14 +35,14 @@ export function originalReceipt(serialized, trust, role, schema, expected = {}) 
 }
 
 export function historicalImplementation(capsule, { binding, trust }) {
-  record(capsule.implementation, ['qualification', 'preparation', 'authorization'], 'historical implementation');
-  const qualificationEnvelope = JSON.parse(capsule.implementation.qualification);
-  const authorizationEnvelope = JSON.parse(capsule.implementation.authorization);
+  record(capsule.originalImplementation, ['qualification', 'preparation', 'authorization'], 'historical implementation');
+  const qualificationEnvelope = JSON.parse(capsule.originalImplementation.qualification);
+  const authorizationEnvelope = JSON.parse(capsule.originalImplementation.authorization);
   const status = verifyImplementationStatus({ qualificationEnvelope, authorizationEnvelope }, {
-    binding, trust, implementationCommit: capsule.executionSourceCommit, requireAuthorization: true,
+    binding, trust, implementationCommit: capsule.originalExecutionSourceCommit, requireAuthorization: true,
   });
-  const preparation = verifyPreparedContinuation(JSON.parse(capsule.implementation.preparation), {
-    binding, trust, implementationCommit: capsule.executionSourceCommit,
+  const preparation = verifyPreparedContinuation(JSON.parse(capsule.originalImplementation.preparation), {
+    binding, trust, implementationCommit: capsule.originalExecutionSourceCommit,
     qualificationEnvelope: status.qualificationEnvelope, retained: status.authorizationEnvelope.body.retained,
   });
   requireThat(digest(preparation) === status.authorizationEnvelope.body.preparedProofDigest,
@@ -53,14 +54,16 @@ export function historicalImplementation(capsule, { binding, trust }) {
  * exact bindings here; host closure independently checks all operations and
  * call results. The external owner pin later authenticates these capsule bytes. */
 export function verifyAuthorityCapsule(supplied, { binding, trust, config, history }) {
-  record(supplied, ['schema', 'binding', 'executionSourceCommit', 'frozen', 'provenance', 'gate',
-    'implementation', 'attempts', 'operations', 'reviews', 'activations', 'baselineDigest',
+  record(supplied, ['schema', 'binding', 'originalExecutionSourceCommit', 'finalExecutionSourceCommit', 'frozen', 'provenance', 'gate',
+    'originalImplementation', 'proposalObservation', 'attempts', 'operations', 'reviews', 'activations', 'baselineDigest',
     'activeVersionId', 'versionsDigest'], 'completed authority capsule');
   const capsule = copy(supplied);
-  requireThat(capsule.schema === 'gk-completed-authority-capsule-v1', 'completed authority schema');
+  requireThat(capsule.schema === 'gk-completed-authority-capsule-v2', 'completed authority schema');
   same(capsule.binding, binding, 'completed authority frozen binding');
-  hash(capsule.executionSourceCommit, 'historical implementation', 40);
-  requireThat(capsule.executionSourceCommit !== binding.sourceCommit, 'completed history requires historical continuation B');
+  hash(capsule.originalExecutionSourceCommit, 'historical implementation', 40);
+  hash(capsule.finalExecutionSourceCommit, 'historical final implementation D', 40);
+  requireThat(new Set([binding.sourceCommit, capsule.originalExecutionSourceCommit, capsule.finalExecutionSourceCommit]).size === 3,
+    'completed history requires distinct frozen A, original B and final D');
   record(capsule.frozen, ['bundleDigest', 'trustDigest', 'configDigest', 'historyDigest', 'legacyBankDigest',
     'runtime', 'caseManifestDigest'], 'completed frozen provenance');
   for (const key of ['bundleDigest', 'trustDigest', 'configDigest', 'historyDigest', 'legacyBankDigest', 'caseManifestDigest'])
@@ -76,21 +79,27 @@ export function verifyAuthorityCapsule(supplied, { binding, trust, config, histo
   isoTime(capsule.provenance.capturedAt, 'authority capture time');
   hash(capsule.provenance.exportSourceCommit, 'actual C export image', 40);
   requireThat(Date.parse(capsule.provenance.lastEventAt) <= Date.parse(capsule.provenance.capturedAt) &&
-    ![binding.sourceCommit, capsule.executionSourceCommit].includes(capsule.provenance.exportSourceCommit),
-  'authority capture precedes final event or impersonates A/B');
+    ![binding.sourceCommit, capsule.originalExecutionSourceCommit, capsule.finalExecutionSourceCommit].includes(capsule.provenance.exportSourceCommit),
+  'authority capture precedes final event or impersonates A/B/D');
   nonempty(capsule.provenance.files, 100000, 'authority artifact inventory');
   const fileNames = new Set();
   for (const item of capsule.provenance.files) {
     record(item, ['path', 'bytes', 'sha256'], 'authority artifact identity');
-    requireThat(typeof item.path === 'string' && /^(?:frozen-bundle\.json|public-identities\.json|ledger\/(?:\.head\.json|\d{12}\.json)|artifacts\/[a-f0-9]{64}\.json)$/u.test(item.path) &&
+    requireThat(typeof item.path === 'string' && /^(?:frozen-bundle\.json|public-identities\.json|(?:ledger|proposal-observation)\/(?:\.head\.json|\d{12}\.json)|artifacts\/[a-f0-9]{64}\.json)$/u.test(item.path) &&
       !fileNames.has(item.path), 'authority inventory path or duplicate'); fileNames.add(item.path);
     integer(item.bytes, 'authority artifact bytes', 1, 32 * 1024 * 1024); hash(item.sha256, 'authority artifact hash');
     if (item.path.startsWith('artifacts/')) requireThat(item.sha256 === item.path.slice(10, -5),
       'authority artifact content address changed');
   }
   requireThat(fileNames.has('frozen-bundle.json') && fileNames.has('public-identities.json') &&
-    fileNames.has('ledger/.head.json'), 'authority inventory omits retained roots');
+    fileNames.has('ledger/.head.json') && fileNames.has('proposal-observation/.head.json') &&
+    ['000000000001.json', '000000000002.json', '000000000003.json'].every(name => fileNames.has('proposal-observation/' + name)) &&
+    [...fileNames].filter(name => name.startsWith('proposal-observation/')).length === 4,
+  'authority inventory omits original or exact D proof custody');
   const implementation = historicalImplementation(capsule, { binding, trust });
+  const proposalObservation = historicalProposalObservation(capsule, { binding, trust, config, historical: implementation });
+  requireThat(Date.parse(capsule.proposalObservation.provenance.lastEventAt) <= Date.parse(capsule.provenance.capturedAt),
+    'D proof capture precedes its final authorization');
   const gate = originalReceipt(capsule.gate, trust, 'evaluation', 'gk-learning-v2-managed-gate', {
     ...identity(binding), ...config.gatePolicy, status: 'passed', fullSuite: true, independent: true,
     baseCurrent: true, cleanupComplete: true, noSkippedChecks: true,
@@ -105,6 +114,8 @@ export function verifyAuthorityCapsule(supplied, { binding, trust, config, histo
     attemptIds.add(attempt.id); hash(attempt.incumbentVersionId, 'attempt incumbent'); hash(attempt.historyDigest, 'attempt history');
     if (attempt.candidateDigest !== null) hash(attempt.candidateDigest, 'attempt candidate');
   }
+  requireThat(capsule.attempts.slice(0, 4).every(item => item.status === 'invalid' && item.candidateDigest === null),
+    'completed D profile requires four genuine initial invalid proposals');
   nonempty(capsule.operations, 31, 'authority operation count');
   const ids = new Set(), leases = new Set(), calls = new Set(), turns = new Set(), receipts = new Set([gate.receiptId]);
   for (const operation of capsule.operations) {
@@ -191,21 +202,38 @@ export function verifyAuthorityCapsule(supplied, { binding, trust, config, histo
         purpose: 'experiment-incumbent-only' });
   }
   for (const key of ['baselineDigest', 'activeVersionId', 'versionsDigest']) hash(capsule[key], key);
-  return { capsule, implementation, gate };
+  const prepared = proposalObservation.status.preparationEnvelope.body;
+  const fourth = capsule.operations[4], owned = fourth?.calls[0];
+  requireThat(fourth?.kind === 'proposal' && fourth.id === prepared.retained.operationId &&
+    fourth.attemptId === capsule.attempts[3].id && fourth.requestDigest === prepared.retained.requestDigest &&
+    fourth.lease === prepared.admissionSerialized && fourth.settlement === prepared.settlementSerialized &&
+    fourth.maxCalls === 1 && fourth.calls.length === 1 && owned.evidenceDigest === prepared.authorityEvidenceDigest &&
+    ['callId', 'sessionId', 'turnId', 'inputDigest', 'outputDigest', 'modelDigest'].every(key => owned[key] === prepared.observed[key]),
+  'completed fourth differs from original B call/settlement and signed D observation');
+  const settled = JSON.parse(fourth.settlement).body;
+  requireThat(settled.actualCalls === 1 && settled.actualMicros === null,
+    'zero additional recovery calls cannot replace the original one-call nullable-price settlement');
+  return { capsule, implementation, proposalObservation, gate };
 }
 
 /** Pure projection used by the read-only exporter and synthetic qualification.
  * getArtifact verifies the named private content address; raw artifacts never
  * enter the returned object. It supplies no provider/network capability. */
 export async function projectCompletedAuthority({ bundle, state, snapshot, files, getArtifact,
-  exportSourceCommit, qualificationDescriptorDigest, capturedAt }) {
+  exportSourceCommit, qualificationDescriptorDigest, capturedAt, observationSnapshot, observationState }) {
   requireThat(state.schema === 'gk-detached-authority-state-v1' && state.activeCallId === null &&
     !state.baselineError && state.baseline && state.operations.every(item => item.settlement !== null && !item.reconciliation) &&
     state.reviews.every(item => typeof item.envelope === 'string') && state.implementation?.authorization,
   'authority retains pending, ambiguous, reconciled or incomplete work');
   same(state.binding, bundle.binding, 'authority state frozen binding');
   const implementation = state.implementation;
-  const executionSourceCommit = JSON.parse(implementation.qualification).body.implementationCommit;
+  const originalExecutionSourceCommit = JSON.parse(implementation.qualification).body.implementationCommit;
+  const historical = historicalImplementation({ originalExecutionSourceCommit, originalImplementation: {
+    qualification: implementation.qualification, preparation: implementation.preparation, authorization: implementation.authorization } },
+  { binding: bundle.binding, trust: bundle.trust });
+  const proposalObservation = await projectCompletedObservation({ bundle, originalSnapshot: snapshot, originalState: state,
+    observationSnapshot, observationState, getArtifact, historical });
+  const finalExecutionSourceCommit = JSON.parse(proposalObservation.qualification).body.implementationCommit;
   const operations = [];
   for (const op of state.operations) {
     const calls = [];
@@ -234,13 +262,13 @@ export async function projectCompletedAuthority({ bundle, state, snapshot, files
       evaluations: op.evaluations.map(item => ({ arm: item.arm, pairId: item.pairId, envelope: item.envelope })) });
   }
   const capsule = {
-    schema: 'gk-completed-authority-capsule-v1', binding: copy(bundle.binding), executionSourceCommit,
+    schema: 'gk-completed-authority-capsule-v2', binding: copy(bundle.binding), originalExecutionSourceCommit, finalExecutionSourceCommit,
     frozen: { bundleDigest: digest(bundle), trustDigest: digest(bundle.trust), configDigest: bundle.binding.configDigest,
       historyDigest: digest(bundle.history), legacyBankDigest: bundle.legacyBankDigest,
       runtime: copy(bundle.runtime), caseManifestDigest: digest(bundle.config.cases) },
     provenance: { authorityHead: snapshot.head, events: snapshot.events.length, stateDigest: digest(state),
       lastEventAt: snapshot.events.at(-1).recordedAt, capturedAt, exportSourceCommit, qualificationDescriptorDigest, files: copy(files) },
-    gate: state.gate, implementation: { qualification: implementation.qualification,
+    gate: state.gate, proposalObservation, originalImplementation: { qualification: implementation.qualification,
       preparation: implementation.preparation, authorization: implementation.authorization },
     attempts: state.attempts.map(item => ({ id: item.id, number: item.number, status: item.status,
       incumbentVersionId: item.incumbentVersionId, historyDigest: item.historyDigest, candidateDigest: item.candidateDigest ?? null })),
@@ -254,7 +282,7 @@ export async function projectCompletedAuthority({ bundle, state, snapshot, files
 }
 
 function custodyInventory(directory) {
-  exactDirectory(directory, ['artifacts', 'frozen-bundle.json', 'keys', 'ledger', 'public-identities.json', 'relay-prefix']);
+  exactDirectory(directory, ['artifacts', 'frozen-bundle.json', 'keys', 'ledger', 'proposal-observation', 'public-identities.json', 'relay-prefix']);
   // Inspect secret custody names/types only. Never open key or relay bytes.
   exactDirectory(join(directory, 'keys'), ROLES.map(role => role + '.pem'));
   for (const path of [join(directory, 'relay-prefix'), ...ROLES.map(role => join(directory, 'keys', role + '.pem'))]) {
@@ -265,9 +293,9 @@ function custodyInventory(directory) {
   const roots = ['frozen-bundle.json', 'public-identities.json'];
   const files = roots.map(path => { const { bytes } = readArchiveJson(join(directory, path));
     return { path, bytes: bytes.length, sha256: bytesSha(bytes) }; });
-  for (const group of ['ledger', 'artifacts']) {
+  for (const group of ['ledger', 'proposal-observation', 'artifacts']) {
     const list = inventoryTree(join(directory, group), { allow: (path, isDirectory) => !isDirectory &&
-      (group === 'ledger' ? /^(?:\.head\.json|\d{12}\.json)$/u.test(path) : /^[a-f0-9]{64}\.json$/u.test(path)) });
+      (group !== 'artifacts' ? /^(?:\.head\.json|\d{12}\.json)$/u.test(path) : /^[a-f0-9]{64}\.json$/u.test(path)) });
     files.push(...list.map(item => ({ ...item, path: group + '/' + item.path })));
   }
   return files.sort((a, b) => a.path.localeCompare(b.path));
@@ -286,20 +314,29 @@ export async function readCompletedAuthorityArchive({ directory, repositoryRoot,
   const ledger = new AuthorityLedger({ journal, binding: bundle.binding, initial: null });
   const state = await ledger.read();
   requireThat(state.implementation?.qualification, 'historical B qualification absent');
-  const historical = historicalImplementation({ executionSourceCommit: JSON.parse(state.implementation.qualification).body.implementationCommit,
-    implementation: { qualification: state.implementation.qualification, preparation: state.implementation.preparation,
+  const historical = historicalImplementation({ originalExecutionSourceCommit: JSON.parse(state.implementation.qualification).body.implementationCommit,
+    originalImplementation: { qualification: state.implementation.qualification, preparation: state.implementation.preparation,
       authorization: state.implementation.authorization } }, { binding: bundle.binding, trust: bundle.trust });
-  const source = await createCompletedSourceVerifier({ descriptor: sourceDescriptor, fetcher })({
-    actualSourceCommit, historicalQualification: historical.qualificationEnvelope.body, binding: bundle.binding });
+  const observationJournal = new FileJournal({ directory: join(directory, 'proposal-observation'), repositoryRoot, create: false, readOnly: true });
+  const observationSnapshot = await observationJournal.read();
+  const observationState = await new AuthorityLedger({ journal: observationJournal, binding: bundle.binding, initial: null }).read();
   const getArtifact = async key => {
     hash(key, 'retained authority artifact'); const found = readArchiveJson(join(directory, 'artifacts', key + '.json'));
     requireThat(bytesSha(found.bytes) === key && digest(found.value) === key, 'retained authority artifact changed');
     return found.value;
   };
   const capsule = await projectCompletedAuthority({ bundle, state, snapshot, files: before, getArtifact,
-    exportSourceCommit: actualSourceCommit, qualificationDescriptorDigest: source.descriptorDigest,
+    observationSnapshot, observationState,
+    exportSourceCommit: actualSourceCommit, qualificationDescriptorDigest: digest(sourceDescriptor),
     capturedAt: new Date(clock()).toISOString() });
+  // Retained evidence may be read before C authentication, but it cannot leave
+  // this control-plane call until the actual new source passes independently.
+  const source = await createCompletedSourceVerifier({ descriptor: sourceDescriptor, fetcher })({
+    actualSourceCommit, originalQualification: historical.qualificationEnvelope.body,
+    finalQualification: JSON.parse(capsule.proposalObservation.qualification).body, binding: bundle.binding });
+  requireThat(source.descriptorDigest === capsule.provenance.qualificationDescriptorDigest, 'C exporter source descriptor changed');
   same(await journal.read(), snapshot, 'authority journal advanced during export');
+  same(await observationJournal.read(), observationSnapshot, 'D authority proof journal advanced during export');
   same(custodyInventory(directory), before, 'authority files advanced during export');
   return { capsule, source };
 }

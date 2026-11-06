@@ -4,7 +4,7 @@ import { projectLearningHistoryForDisplay } from "../shared/learning-history-con
 import "./GateKeeperLearningStatus.css";
 
 const FUNCTION = "gatekeeperLearningHistory";
-const WAIT_MS = 20_000;
+const WAIT_MS = 75_000;
 const COUNTS = [["attempted", "Attempted"], ["scored", "Scored"], ["duplicate", "Duplicate"],
   ["unresolved", "Unresolved"], ["invalid", "Invalid"], ["noCoverage", "No coverage"],
   ["rejected", "Rejected"], ["confirmed", "Confirmed"], ["activated", "Activations"]];
@@ -32,7 +32,7 @@ function CompletedRecords({ response }) {
       </section>
       <section className="gk-learning-card"><h2>Frozen baseline</h2>
         <p className="gk-learning-value">Complete</p>
-        <p>The original baseline and its authorized continuation remain linked to their retained evidence.</p>
+        <p>The original baseline and its earlier authorized continuation under B remain linked to their retained evidence.</p>
       </section>
       <section className="gk-learning-card"><h2>Execution checkpoint</h2>
         <p className="gk-learning-value">Closed</p>
@@ -67,7 +67,8 @@ function CompletedRecords({ response }) {
         <div><dt>Experiment</dt><dd><code>{status.experimentId}</code></dd></div>
         <div><dt>Review scope</dt><dd>{status.scope}</dd></div>
         <div><dt>Frozen experiment source (A)</dt><dd><code>{archive.experimentSourceCommit}</code></dd></div>
-        <div><dt>Historical execution source (B)</dt><dd><code>{archive.executionSourceCommit}</code></dd></div>
+        <div><dt>Earlier Learning implementation (B)</dt><dd><code>{archive.originalExecutionSourceCommit}</code></dd></div>
+        <div><dt>Recovery and final Learning implementation</dt><dd><code>{archive.finalExecutionSourceCommit}</code></dd></div>
         <div><dt>Current app serving source (C)</dt><dd><code>{serving.sourceCommit}</code></dd></div>
         <div><dt>Owner-pinned checkpoint</dt><dd><code>{archive.closureDigest}</code></dd></div>
         <div><dt>Original version</dt><dd><code>{status.originalVersion}</code></dd></div>
@@ -75,6 +76,13 @@ function CompletedRecords({ response }) {
         <div><dt>Confirmed learned versions</dt><dd>{status.confirmedVersions}</dd></div>
         <div><dt>Archived checkpoint</dt><dd><time dateTime={archive.archivedAt}>{formatTime(archive.archivedAt)}</time></dd></div>
       </dl>
+      <p className="gk-learning-note">A and B retain the original baseline and earlier proposal execution. The recovery implementation later verified the already-dispatched fourth proposal's original result, recorded its invalid outcome, and completed the separately authorized remaining original attempts. These source identities do not claim a model improvement.</p>
+      <dl className="gk-learning-identity">
+        <div><dt>Recovered original attempt</dt><dd>{archive.recovery.attempt}</dd></div>
+        <div><dt>Recovery method</dt><dd>Later read of the original invalid proposal</dd></div>
+        <div><dt>Additional model calls for recovery</dt><dd>{archive.recovery.additionalModelCalls}</dd></div>
+      </dl>
+      <p className="gk-learning-note">The original model call is counted once. Zero additional recovery calls does not mean the original call was free; unknown prices remain unknown.</p>
       <p className="gk-learning-note">The frozen pilot's rules are retained here. This archive does not apply them to ordinary private reviews, authorize repairs, or provide learning or promotion controls.</p>
     </section>
   </>;

@@ -1,20 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, linkSync, readFileSync, readdirSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, linkSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonical, copy, digest } from '../scripts/learning-v2/contracts.mjs';
+import { AuthorityLedger } from '../scripts/learning-v2/authority-ledger.mjs';
 import { FileJournal } from '../scripts/learning-v2/journal.mjs';
 import { readClosedHostSnapshot, openCompletedHistoryReader } from '../scripts/learning-v2/completed-history.mjs';
 import { verifyAuthorityCapsule, readCompletedAuthorityArchive, projectCompletedAuthority } from '../scripts/learning-v2/completed-authority-export.mjs';
 import { bytesSha, decodeHistoryChunks, encodeHistoryChunks } from '../scripts/learning-v2/completed-history-files.mjs';
 import { completedPilotFixture } from './helpers/completed-pilot-fixture.mjs';
 import { C } from './helpers/completed-source-fixture.mjs';
+import { verifyProposalObservationStatus } from '../scripts/learning-v2/proposal-observation-proof.mjs';
 
 // Execute only under the isolated remote exact-source qualification recipe.
 const observeBytes = path => readdirSync(path, { recursive: true }).filter(name => name.endsWith('.json')).sort().map(name =>
   [name, bytesSha(readFileSync(join(path, name)))]);
 const reader = f => openCompletedHistoryReader({ root: f.hostRoot, repositoryRoot: f.repositoryRoot,
   actualSourceCommit: C, fetcher: f.source.fetcher, clock: () => f.capturedAt + 5000 });
+
+async function replaceSyntheticJournal(path, repositoryRoot, events) {
+  rmSync(path, { recursive: true, force: true });
+  const journal = new FileJournal({ directory: path, repositoryRoot }); let head = null;
+  for (const event of events) head = (await journal.append(head, event)).head;
+}
 
 test('completed C reads ten genuine negative results and original expired-lease 1+13 BASE without any learning mutation', async t => {
   const f = await completedPilotFixture(t);
@@ -26,7 +34,9 @@ test('completed C reads ten genuine negative results and original expired-lease 
     'genuine invalid proposals need not be successful evaluations');
   const history = await reader(f), first = await history.readStatus(), second = await history.readStatus();
   assert.equal(first.serving.sourceCommit, C); assert.equal(first.archive.experimentSourceCommit, 'a'.repeat(40));
-  assert.equal(first.archive.executionSourceCommit, 'b'.repeat(40)); assert.equal(first.status.counts.attempted, 10);
+  assert.equal(first.archive.originalExecutionSourceCommit, 'b'.repeat(40)); assert.equal(first.status.counts.attempted, 10);
+  assert.equal(first.archive.finalExecutionSourceCommit, 'd'.repeat(40));
+  assert.deepEqual(first.archive.recovery, { kind: 'original-invalid-proposal-observation', attempt: 4, additionalModelCalls: 0 });
   assert.equal(first.status.counts.invalid, 10); assert.equal(first.status.baseline.status, 'complete');
   assert.equal(first.status.budget.complete, false); assert.equal(first.status.budget.unknownCostOperations, 11);
   assert.equal(first.status.budget.observedSpentMicros, 0); // Unknown costs stay unknown, not a priced zero.
@@ -44,7 +54,7 @@ test('completed C reads ten genuine negative results and original expired-lease 
 test('exact duplicate proposals count only their one authentic result and preserve negative prior history', async t => {
   const f = await completedPilotFixture(t, { exactDuplicate: true });
   const result = await (await reader(f)).readStatus();
-  assert.equal(result.status.counts.duplicate, 10); assert.equal(result.status.counts.scored, 0);
+  assert.equal(result.status.counts.invalid, 4); assert.equal(result.status.counts.duplicate, 6); assert.equal(result.status.counts.scored, 0);
   assert.equal(f.snapshot.completion.operations, 11); assert.equal(f.controls.turns, 24);
   assert.equal(f.capsule.reviews.length, 0, 'exact duplicates do not require invented semantic receipts');
   await f.assertOriginal();
@@ -59,9 +69,9 @@ test('completed history verifies real paired screen, three fresh confirmation pa
   assert.equal(result.status.counts.activated, 1); assert.equal(f.capsule.activations.length, 1);
   assert.equal(f.capsule.activations[0].renewals.length, 1);
   assert.equal(result.status.incumbentVersion, f.final.state.versions[1].id);
-  assert.deepEqual(f.final.state.attempts[0].confirmation.map(item => item.order), [
+  assert.deepEqual(f.final.state.attempts[4].confirmation.map(item => item.order), [
     ['incumbent', 'candidate'], ['candidate', 'incumbent'], ['incumbent', 'candidate']]);
-  const uncertain = f.final.state.operations.find(item => item.kind === 'proposal' && item.attemptId.endsWith(':2'));
+  const uncertain = f.final.state.operations.find(item => item.kind === 'proposal' && item.attemptId.endsWith(':6'));
   assert.equal(uncertain.actualCalls, 1); assert.equal(uncertain.evidenceComplete, false);
   const wrong = copy(f.capsule); wrong.activations[0].renewals = [];
   await assert.rejects(readClosedHostSnapshot({ root: f.hostRoot, repositoryRoot: f.repositoryRoot,
@@ -76,6 +86,8 @@ test('authority closure rejects missing/extra attempts, changed call evidence, a
   const f = await completedPilotFixture(t);
   const options = { binding: f.bundle.binding, trust: f.trust, config: f.bundle.config, history: f.bundle.history };
   const cases = [
+    value => { value.schema = 'gk-completed-authority-capsule-v1'; },
+    value => { value.executionSourceCommit = value.originalExecutionSourceCommit; },
     value => value.attempts.pop(),
     value => value.attempts.push(copy(value.attempts[0])),
     value => { value.attempts[9].id = value.attempts[0].id; },
@@ -88,8 +100,8 @@ test('authority closure rejects missing/extra attempts, changed call evidence, a
     value => { value.operations[1].calls[0].observedModelCalls = 0; },
     value => { value.operations[1].calls = []; },
     value => { value.operations[1].evaluations = copy(value.operations[0].evaluations); },
-    value => { value.implementation.authorization = value.implementation.qualification; },
-    value => { value.executionSourceCommit = C; },
+    value => { value.originalImplementation.authorization = value.originalImplementation.qualification; },
+    value => { value.finalExecutionSourceCommit = C; },
   ];
   for (const mutate of cases) { const value = copy(f.capsule); mutate(value); assert.throws(() => verifyAuthorityCapsule(value, options)); }
   assert.equal(f.controls.turns, 24);
@@ -150,7 +162,8 @@ test('closure rejects pending provider/review work, the tenth only reserved, and
   const f = await completedPilotFixture(t), originalState = await f.authorityState();
   const context = { bundle: f.bundle, snapshot: await f.journal.read(), files: f.capsule.provenance.files,
     exportSourceCommit: C, qualificationDescriptorDigest: digest(f.source.descriptor),
-    capturedAt: new Date(f.capturedAt).toISOString(), getArtifact: async id => copy(f.artifacts.get(id)) };
+    capturedAt: new Date(f.capturedAt).toISOString(), observationSnapshot: await f.proofJournal.read(),
+    observationState: await new AuthorityLedger({ journal: f.proofJournal, binding: f.bundle.binding, initial: null }).read(), getArtifact: async id => copy(f.artifacts.get(id)) };
   const mutations = [
     state => { state.activeCallId = state.operations[1].calls[0].callId; },
     state => { state.operations[1].settlement = null; },
@@ -196,4 +209,80 @@ test('private numbered capsule transport rejects omitted, duplicated, reordered 
   const partial = copy(lines); partial[1].data = partial[1].data.slice(0, -4);
   assert.throws(() => decodeHistoryChunks(partial, expected));
   assert.throws(() => decodeHistoryChunks(lines, '0'.repeat(64)));
+});
+
+test('ten-attempt v2 rejects an authentic consume-only D authorization and altered historical D facts', async t => {
+  const f = await completedPilotFixture(t), options = { binding: f.bundle.binding, trust: f.trust,
+    config: f.bundle.config, history: f.bundle.history };
+  const value = copy(f.capsule), envelope = JSON.parse(value.proposalObservation.authorization);
+  envelope.body.allowRemainingExperiment = false;
+  const signed = f.keys.evaluation.issue(envelope.body);
+  value.proposalObservation.authorization = JSON.stringify(signed);
+  const status = copy(f.implementation.status); status.authorizationEnvelope = signed;
+  assert.equal(verifyProposalObservationStatus(status, { binding: f.bundle.binding, trust: f.trust,
+    implementationCommit: value.finalExecutionSourceCommit, requireAuthorization: true }).authorizationEnvelope.body.allowRemainingExperiment, false,
+  'the signed proof is sufficient only for bounded original-fourth consumption');
+  assert.throws(() => verifyAuthorityCapsule(value, options), /remainder|remaining/i);
+  const wrongFacts = copy(f.capsule); wrongFacts.proposalObservation.qualificationFacts.source.parents.reverse();
+  assert.throws(() => verifyAuthorityCapsule(wrongFacts, options), /qualification|facts/);
+  const changedOutput = copy(f.capsule), prepared = JSON.parse(changedOutput.proposalObservation.preparation);
+  prepared.body.observed.text = JSON.stringify(f.bundle.history[0].procedure);
+  prepared.body.observed.outputDigest = bytesSha(prepared.body.observed.text);
+  changedOutput.proposalObservation.preparation = JSON.stringify(f.keys.evaluation.issue(prepared.body));
+  const authorization = JSON.parse(changedOutput.proposalObservation.authorization);
+  authorization.body.preparedProofDigest = digest(JSON.parse(changedOutput.proposalObservation.preparation));
+  changedOutput.proposalObservation.authorization = JSON.stringify(f.keys.evaluation.issue(authorization.body));
+  assert.throws(() => verifyAuthorityCapsule(changedOutput, options), /invalidity|invalid/);
+  assert.equal(f.capsule.operations[4].calls.length, 1);
+  assert.equal(JSON.parse(f.capsule.operations[4].settlement).body.actualCalls, 1);
+  assert.equal(JSON.parse(f.capsule.operations[4].settlement).body.actualMicros, null);
+  assert.equal(f.controls.turns, 24);
+});
+
+test('v2 requires the exact completed D cut and original failure even with self-consistent replacement journal hashes', async t => {
+  const f = await completedPilotFixture(t), id = f.final.state.operations[4].id;
+  const observationPath = join(f.directory, 'proposal-observations', digest({ operationId: id }));
+  const originalPath = join(f.directory, 'operations', digest({ operationId: id }));
+  const dispatchPath = join(f.directory, 'dispatch');
+  const read = path => new FileJournal({ directory: path, repositoryRoot: f.repositoryRoot, create: false, readOnly: true }).read();
+  const sidecar = await read(observationPath), original = await read(originalPath), dispatch = await read(dispatchPath);
+  const check = () => readClosedHostSnapshot({ root: f.hostRoot, repositoryRoot: f.repositoryRoot, capsule: f.capsule, closurePresent: true });
+  const rejectUnchanged = async () => { const before = observeBytes(f.hostRoot); await assert.rejects(check());
+    assert.deepEqual(observeBytes(f.hostRoot), before); assert.equal(f.controls.turns, 24); };
+  await replaceSyntheticJournal(observationPath, f.repositoryRoot, sidecar.events.slice(0, 1));
+  await rejectUnchanged();
+  await replaceSyntheticJournal(observationPath, f.repositoryRoot, sidecar.events);
+  const wrongCut = copy(sidecar.events); wrongCut[1].dispatchHead = '0'.repeat(64);
+  await replaceSyntheticJournal(observationPath, f.repositoryRoot, wrongCut); await rejectUnchanged();
+  await replaceSyntheticJournal(observationPath, f.repositoryRoot, sidecar.events);
+  const withoutLink = dispatch.events.filter(event => event.type !== 'proposal-observation-linked');
+  await replaceSyntheticJournal(dispatchPath, f.repositoryRoot, withoutLink); await rejectUnchanged();
+  await replaceSyntheticJournal(dispatchPath, f.repositoryRoot, dispatch.events);
+  const wrongLink = copy(dispatch.events); wrongLink.find(event => event.type === 'proposal-observation-linked').link.initialHead = '0'.repeat(64);
+  await replaceSyntheticJournal(dispatchPath, f.repositoryRoot, wrongLink); await rejectUnchanged();
+  await replaceSyntheticJournal(dispatchPath, f.repositoryRoot, dispatch.events);
+  const changedFailure = copy(original.events);
+  changedFailure.at(-1).payload.raw.TEST_ONLY_changed_original_failure = true;
+  await replaceSyntheticJournal(originalPath, f.repositoryRoot, changedFailure); await rejectUnchanged();
+  await replaceSyntheticJournal(originalPath, f.repositoryRoot, original.events);
+  await check(); assert.equal(f.controls.turns, 24);
+});
+
+test('C authority export requires unchanged independent D custody and refuses an extra or ambiguous proof tail without writes', async t => {
+  const f = await completedPilotFixture(t), proofPath = join(f.authorityRoot, 'proposal-observation');
+  const original = await f.observationAuthorityJournal.read();
+  const exportAgain = () => readCompletedAuthorityArchive({ directory: f.authorityRoot, repositoryRoot: f.repositoryRoot,
+    sourceDescriptor: f.source.descriptor, actualSourceCommit: C, fetcher: f.source.fetcher, clock: () => f.capturedAt });
+  const before = observeBytes(f.authorityRoot);
+  renameSync(proofPath, proofPath + '-held'); await assert.rejects(exportAgain()); renameSync(proofPath + '-held', proofPath);
+  const lock = join(proofPath, '.writer.lock'); writeFileSync(lock, 'TEST-ONLY held writer', { mode: 0o600, flag: 'wx' });
+  await assert.rejects(exportAgain()); assert.equal(readFileSync(lock, 'utf8'), 'TEST-ONLY held writer'); unlinkSync(lock);
+  const last = original.events.at(-1);
+  const extra = { schema: last.schema, binding: copy(last.binding), kind: 'TEST-ONLY extra D mutation',
+    recordedAt: last.recordedAt, previousDigest: last.stateDigest, stateDigest: last.stateDigest, changes: [] };
+  await replaceSyntheticJournal(proofPath, f.repositoryRoot, [...original.events, extra]);
+  const mutated = observeBytes(f.authorityRoot); await assert.rejects(exportAgain());
+  assert.deepEqual(observeBytes(f.authorityRoot), mutated);
+  await replaceSyntheticJournal(proofPath, f.repositoryRoot, original.events);
+  await exportAgain(); assert.deepEqual(observeBytes(f.authorityRoot), before); assert.equal(f.controls.turns, 24);
 });

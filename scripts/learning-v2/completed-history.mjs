@@ -13,6 +13,7 @@ import { statusView } from './prompts.mjs';
 import { projectLearningStatus } from '../../integrations/base44/shared/learning-status-contract.js';
 import { projectLearningHistoryResponse, validateLearningHistoryBinding } from '../../integrations/base44/shared/learning-history-contract.js';
 import { historicalImplementation } from './completed-authority-export.mjs';
+import { readCompletedHostObservation, COMPLETED_RECOVERY } from './completed-proposal-observation.mjs';
 import { verifyClosedHostEvidence } from './completed-history-evidence.mjs';
 import { createCompletedSourceVerifier, verifyCompletedOwnerPin } from './completed-history-proof.mjs';
 import { bytesSha, exactDirectory, inventoryTree, isoTime, privateDirectory, readArchiveFile, readArchiveJson, same } from './completed-history-files.mjs';
@@ -20,8 +21,17 @@ import { bytesSha, exactDirectory, inventoryTree, isoTime, privateDirectory, rea
 export const COMPLETED_HOST_ROOT = '/var/lib/gk-v2-private-journal';
 export const COMPLETED_HISTORY_DIRECTORY = COMPLETED_HOST_ROOT + '/completed-history';
 const RETAINED_FILES = ['production-config.json', 'status-config.json', 'implementation-qualification.json',
-  'baseline-continuation-authorization.json'];
+  'baseline-continuation-authorization.json', 'proposal-observation-qualification.json',
+  'proposal-observation-preparation.json', 'proposal-observation-authorization.json'];
 const journalHead = snapshot => ({ head: snapshot.head, events: snapshot.events.length });
+
+function freezeSnapshot(value) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freezeSnapshot(child);
+    Object.freeze(value);
+  }
+  return value;
+}
 
 function hostRootNames(root, { closurePresent }) {
   privateDirectory(root);
@@ -55,23 +65,27 @@ function retainedFrozenBundle(root) {
 
 function experimentInventory(directory, operationIds) {
   const original = new Set(operationIds.map(id => digest({ operationId: id })));
-  const baseline = digest({ operationId: operationIds[0] });
-  exactDirectory(directory, ['controller', 'dispatch', 'operations', 'baseline-continuations']);
+  const baseline = digest({ operationId: operationIds[0] }), fourth = digest({ operationId: operationIds[4] });
+  exactDirectory(directory, ['controller', 'dispatch', 'operations', 'baseline-continuations', 'proposal-observations']);
   exactDirectory(join(directory, 'operations'), [...original]);
   exactDirectory(join(directory, 'baseline-continuations'), [baseline]);
+  exactDirectory(join(directory, 'proposal-observations'), [fourth]);
   return inventoryTree(directory, { allow: (path, directoryEntry) => {
     const parts = path.split('/');
     if (['controller', 'dispatch'].includes(parts[0])) return parts.length === 1 ? directoryEntry :
       parts.length === 2 && !directoryEntry && /^(?:\.head\.json|\d{12}\.json)$/u.test(parts[1]);
-    if (!['operations', 'baseline-continuations'].includes(parts[0])) return false;
+    if (!['operations', 'baseline-continuations', 'proposal-observations'].includes(parts[0])) return false;
     if (parts.length === 1) return directoryEntry;
-    if (!(parts[0] === 'operations' ? original.has(parts[1]) : parts[1] === baseline)) return false;
+    if (!(parts[0] === 'operations' ? original.has(parts[1]) : parts[1] === (parts[0] === 'baseline-continuations' ? baseline : fourth))) return false;
     return parts.length === 2 ? directoryEntry : parts.length === 3 && !directoryEntry &&
       /^(?:\.head\.json|\d{12}\.json)$/u.test(parts[2]);
   } });
 }
 
-/** This shared collector always uses actual read-only FileJournal instances.
+/** This shared collector opens actual read-only FileJournal instances for each
+ * read. The initial verified snapshots are frozen and reused only inside this
+ * invocation; all actual journals and all byte inventories are reread before
+ * returning. No previous request or last-good result can satisfy this read.
  * Tests may supply their own private roots; configured production entrypoints
  * below independently pin the exact existing mount and repository paths. */
 export async function readClosedHostSnapshot({ root, repositoryRoot, capsule, closurePresent = false }) {
@@ -82,10 +96,19 @@ export async function readClosedHostSnapshot({ root, repositoryRoot, capsule, cl
   requireThat(config.directory === join(root, 'experiment') && config.repositoryRoot === repositoryRoot,
     'original status config roots changed');
   const binding = { ...copy(config.binding), configDigest: config.configDigest }, directory = config.directory;
-  const journalFor = relative => new FileJournal({ directory: join(directory, relative), repositoryRoot,
-    create: false, readOnly: true });
-  const controllerJournal = journalFor('controller'), dispatchJournal = journalFor('dispatch');
-  const controllerSnapshot = await controllerJournal.read(), dispatchSnapshot = await dispatchJournal.read();
+  const readWindow = new Map();
+  const journalFor = async relative => {
+    if (!readWindow.has(relative)) {
+      const actual = new FileJournal({ directory: join(directory, relative), repositoryRoot, create: false, readOnly: true });
+      const snapshot = freezeSnapshot(await actual.read());
+      const journal = Object.freeze({ read: async () => snapshot,
+        append: async () => { throw new Error('completed history snapshot has no write capability'); } });
+      readWindow.set(relative, { actual, snapshot, journal });
+    }
+    return readWindow.get(relative);
+  };
+  const { journal: controllerJournal, snapshot: controllerSnapshot } = await journalFor('controller');
+  const { journal: dispatchJournal, snapshot: dispatchSnapshot } = await journalFor('dispatch');
   const state = await new LearningController({ journal: controllerJournal, trust: config.trust }).state();
   // The fixed original file necessarily contains credential bytes. Validate
   // only its bundle, then discard the enclosing object. Never invoke the
@@ -108,37 +131,51 @@ export async function readClosedHostSnapshot({ root, repositoryRoot, capsule, cl
   const baselineId = state.operations[0].id, baselineEntry = dispatch.entries[0];
   requireThat(baselineEntry?.operation.id === baselineId && baselineEntry.baselineContinuation,
     'completed BASE has no mandatory durable continuation linkage');
-  const originalJournal = journalFor('operations/' + digest({ operationId: baselineId }));
-  const continuationJournal = journalFor('baseline-continuations/' + digest({ operationId: baselineId }));
-  const continuationSnapshot = await continuationJournal.read();
+  const { journal: originalJournal } = await journalFor('operations/' + digest({ operationId: baselineId }));
+  const { journal: continuationJournal, snapshot: continuationSnapshot } =
+    await journalFor('baseline-continuations/' + digest({ operationId: baselineId }));
   const continuation = await readBaselineContinuation({ originalJournal, continuationJournal,
     link: baselineEntry.baselineContinuation, binding, trust: config.trust,
-    implementationCommit: capsule.executionSourceCommit, requireComplete: true });
+    implementationCommit: capsule.originalExecutionSourceCommit, requireComplete: true });
+  const fourthId = state.operations[4].id;
+  const { journal: observationJournal } = await journalFor('proposal-observations/' + digest({ operationId: fourthId }));
+  const observation = await readCompletedHostObservation({ controllerJournal, dispatchJournal,
+    originalJournal: (await journalFor('operations/' + digest({ operationId: fourthId }))).journal, observationJournal,
+    capsule, binding, trust: config.trust, config: state.config, historical });
+  for (const [file, key] of [['proposal-observation-qualification.json', 'qualification'],
+    ['proposal-observation-preparation.json', 'preparation'], ['proposal-observation-authorization.json', 'authorization']]) {
+    requireThat(JSON.stringify(readArchiveJson(join(root, file)).value) === capsule.proposalObservation[key],
+      'retained D proof file differs from original signed authority bytes');
+  }
   const archives = Object.create(null), operationHeads = [];
   for (const operation of state.operations) {
-    const journal = journalFor('operations/' + digest({ operationId: operation.id }));
-    const snapshot = await journal.read();
+    const { journal, snapshot } = await journalFor('operations/' + digest({ operationId: operation.id }));
     const original = await new OperationArchive({ journal }).read();
     archives[operation.id] = operation.kind === 'baseline' ? continuation.archive : original;
     operationHeads.push({ operationId: operation.id, ...journalHead(snapshot) });
   }
-  const completion = verifyClosedHostEvidence({ state, controllerSnapshot, dispatch, archives, continuation,
+  const completion = verifyClosedHostEvidence({ state, controllerSnapshot, dispatch, archives, continuation, observation,
     capsule, binding, trust: config.trust });
   const status = projectLearningStatus({ ...statusView(state), dispatch: { pending: null, completed: dispatch.entries.length } }, config.binding);
   const capture = { controller: journalHead(controllerSnapshot), dispatch: journalHead(dispatchSnapshot),
     operations: operationHeads, continuation: { operationId: baselineId, ...journalHead(continuationSnapshot),
-      link: copy(baselineEntry.baselineContinuation) }, retainedFiles, files };
+      link: copy(baselineEntry.baselineContinuation) }, proposalObservation: { operationId: fourthId,
+      ...journalHead(observation.snapshots.sidecar), link: copy(observation.link),
+      consumptionCut: copy(observation.snapshots.sidecar.events[1]) }, retainedFiles, files };
   // Recheck every head and named byte inventory after semantic validation. A
   // lock, missing sidecar, extra store or changed tail never produces status.
-  same(await controllerJournal.read(), controllerSnapshot, 'controller advanced during closed read');
-  same(await dispatchJournal.read(), dispatchSnapshot, 'dispatch advanced during closed read');
-  same(await continuationJournal.read(), continuationSnapshot, 'continuation advanced during closed read');
-  for (const held of operationHeads) same(journalHead(await journalFor('operations/' + digest({ operationId: held.operationId })).read()),
-    { head: held.head, events: held.events }, 'operation advanced during closed read');
+  // Bypass the request-local snapshots here. A valid later append, changed
+  // original byte, lock or file-custody change must be observed on disk.
+  for (const [relative, held] of readWindow) {
+    const label = relative === 'controller' || relative === 'dispatch' ? relative :
+      relative.startsWith('operations/') ? 'operation' : relative.startsWith('baseline-continuations/') ?
+        'continuation' : 'recovery observation';
+    same(await held.actual.read(), held.snapshot, label + ' advanced during closed read');
+  }
   same(experimentInventory(directory, state.operations.map(item => item.id)), files, 'experiment bytes changed during closed read');
   same(retainedInventory(root), retainedFiles, 'original host configuration/proofs changed during closed read');
   hostRootNames(root, { closurePresent });
-  return { capture, completion, status, config, binding, historical };
+  return { capture, completion, status, config, binding, historical, observation };
 }
 
 export async function captureCompletedHistory({ root = COMPLETED_HOST_ROOT, repositoryRoot = '/app', capsuleBytes,
@@ -152,14 +189,16 @@ export async function captureCompletedHistory({ root = COMPLETED_HOST_ROOT, repo
   requireThat(canonical(capsule) === capsuleBytes.toString('utf8'), 'authority capsule serialization changed');
   const snapshot = await readClosedHostSnapshot({ root, repositoryRoot, capsule });
   const source = await createCompletedSourceVerifier({ descriptor: sourceDescriptor, fetcher })({ actualSourceCommit,
-    binding: snapshot.binding, historicalQualification: snapshot.historical.qualificationEnvelope.body });
+    binding: snapshot.binding, originalQualification: snapshot.historical.qualificationEnvelope.body,
+    finalQualification: snapshot.observation.status.qualificationEnvelope.body });
   requireThat(capsule.provenance.exportSourceCommit === actualSourceCommit &&
     capsule.provenance.qualificationDescriptorDigest === source.descriptorDigest, 'capsule exporter is not this independently qualified C');
   const archivedAt = new Date(clock()).toISOString();
   requireThat(Date.parse(archivedAt) >= Date.parse(capsule.provenance.capturedAt) &&
     Date.parse(archivedAt) >= Date.parse(snapshot.completion.lastHostEventAt), 'closure capture time precedes historical evidence');
-  const closure = { schema: 'gk-completed-history-closure-v1', binding: snapshot.binding,
-    executionSourceCommit: capsule.executionSourceCommit, servingSourceCommit: actualSourceCommit,
+  const closure = { schema: 'gk-completed-history-closure-v2', binding: snapshot.binding,
+    originalExecutionSourceCommit: capsule.originalExecutionSourceCommit, finalExecutionSourceCommit: capsule.finalExecutionSourceCommit,
+    servingSourceCommit: actualSourceCommit,
     archivedAt, authorityCapsuleSha256: expectedCapsuleSha256, qualificationDescriptorDigest: source.descriptorDigest,
     host: snapshot.capture, completion: snapshot.completion };
   const after = await readClosedHostSnapshot({ root, repositoryRoot, capsule });
@@ -177,26 +216,29 @@ export async function openCompletedHistoryReader({ root, repositoryRoot, actualS
   const savedClosure = readArchiveJson(join(path, 'closure.json'));
   const savedActivation = readArchiveJson(join(path, 'activation.json'), { maximum: 65536 });
   const closure = savedClosure.value, activation = savedActivation.value, capsule = savedCapsule.value;
-  record(closure, ['schema', 'binding', 'executionSourceCommit', 'servingSourceCommit', 'archivedAt',
+  record(closure, ['schema', 'binding', 'originalExecutionSourceCommit', 'finalExecutionSourceCommit', 'servingSourceCommit', 'archivedAt',
     'authorityCapsuleSha256', 'qualificationDescriptorDigest', 'host', 'completion'], 'immutable completed closure');
   record(activation, ['schema', 'closureDigest', 'sourceDescriptor', 'ownerPin'], 'completed activation config');
-  requireThat(closure.schema === 'gk-completed-history-closure-v1' && activation.schema === 'gk-completed-history-activation-v1' &&
+  requireThat(closure.schema === 'gk-completed-history-closure-v2' && activation.schema === 'gk-completed-history-activation-v2' &&
     canonical(closure) === savedClosure.bytes.toString('utf8') && canonical(capsule) === savedCapsule.bytes.toString('utf8') &&
     activation.closureDigest === bytesSha(savedClosure.bytes) && closure.authorityCapsuleSha256 === bytesSha(savedCapsule.bytes) &&
     closure.servingSourceCommit === actualSourceCommit && capsule.provenance.exportSourceCommit === actualSourceCommit &&
-    capsule.executionSourceCommit === closure.executionSourceCommit,
+    capsule.originalExecutionSourceCommit === closure.originalExecutionSourceCommit &&
+    capsule.finalExecutionSourceCommit === closure.finalExecutionSourceCommit,
   'completed profile changed source, capsule, closure or serialization');
   isoTime(closure.archivedAt, 'immutable archive capture time');
   requireThat(Date.parse(closure.archivedAt) >= Date.parse(capsule.provenance.capturedAt) && Date.parse(closure.archivedAt) <= clock(),
     'immutable capture time is invalid');
   const initial = await readClosedHostSnapshot({ root, repositoryRoot, capsule, closurePresent: true });
   const source = await createCompletedSourceVerifier({ descriptor: activation.sourceDescriptor, fetcher })({
-    actualSourceCommit, binding: initial.binding, historicalQualification: initial.historical.qualificationEnvelope.body });
+    actualSourceCommit, binding: initial.binding, originalQualification: initial.historical.qualificationEnvelope.body,
+    finalQualification: initial.observation.status.qualificationEnvelope.body });
   requireThat(source.descriptorDigest === closure.qualificationDescriptorDigest &&
     capsule.provenance.qualificationDescriptorDigest === source.descriptorDigest, 'completed C qualification identity changed');
   await verifyCompletedOwnerPin({ pin: activation.ownerPin, closure, closureDigest: activation.closureDigest, sourceEvidence: source, fetcher });
   const binding = validateLearningHistoryBinding({ ...initial.config.binding, servingSourceCommit: actualSourceCommit,
-    executionSourceCommit: capsule.executionSourceCommit, closureDigest: activation.closureDigest });
+    originalExecutionSourceCommit: capsule.originalExecutionSourceCommit, finalExecutionSourceCommit: capsule.finalExecutionSourceCommit,
+    closureDigest: activation.closureDigest });
   const assertClosure = snapshot => {
     same(snapshot.binding, closure.binding, 'closed frozen binding drift'); same(snapshot.capture, closure.host, 'pinned immutable host head or file drift');
     same(snapshot.completion, closure.completion, 'closed acceptance facts drift');
@@ -215,10 +257,11 @@ export async function openCompletedHistoryReader({ root, repositoryRoot, actualS
       const snapshot = await readClosedHostSnapshot({ root, repositoryRoot, capsule, closurePresent: true });
       assertClosure(snapshot); checkOwnFiles();
       const now = clock();
-      return projectLearningHistoryResponse({ schema: 'gk-learning-completed-history-response-v1',
+      return projectLearningHistoryResponse({ schema: 'gk-learning-completed-history-response-v2',
         checkedAt: new Date(now).toISOString(), serving: { mode: 'completed-history', sourceCommit: actualSourceCommit },
-        archive: { experimentSourceCommit: closure.binding.sourceCommit, executionSourceCommit: closure.executionSourceCommit,
-          closureDigest: activation.closureDigest, archivedAt: closure.archivedAt }, status: snapshot.status }, binding, now);
+        archive: { experimentSourceCommit: closure.binding.sourceCommit, originalExecutionSourceCommit: closure.originalExecutionSourceCommit,
+          finalExecutionSourceCommit: closure.finalExecutionSourceCommit, closureDigest: activation.closureDigest,
+          archivedAt: closure.archivedAt, recovery: copy(COMPLETED_RECOVERY) }, status: snapshot.status }, binding, now);
     } });
 }
 

@@ -57,7 +57,8 @@ export function verifyCompletedVolume({ env = process.env, currentUid = process.
     (leaf.mode & 0o777) === 0o700, 'completed profile refuses fresh/unprepared volume');
   const names = list(COMPLETED_MOUNT);
   for (const required of ['production-config.json', 'status-config.json', 'implementation-qualification.json',
-    'baseline-continuation-authorization.json', 'experiment']) requireThat(names.includes(required), 'retained host evidence absent');
+    'baseline-continuation-authorization.json', 'proposal-observation-qualification.json',
+    'proposal-observation-preparation.json', 'proposal-observation-authorization.json', 'experiment']) requireThat(names.includes(required), 'retained host evidence absent');
   if (role !== 'capture') requireThat(names.includes('completed-history'), 'create-once closure absent');
   if (names.includes('lost+found')) {
     const found = stat(COMPLETED_MOUNT + '/lost+found');

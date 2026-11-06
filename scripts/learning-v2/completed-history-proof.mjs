@@ -21,21 +21,21 @@ const equal = (a, b, why) => requireThat(canonical(a) === canonical(b), why);
  * has registered or executed them. A future exact-C owner receipt must name
  * this complete recipe. A descriptor cannot select the older B recipe. */
 export const COMPLETED_QUALIFICATION_RECIPE = Object.freeze({
-  schema: 'gk-completed-history-qualification-recipe-v1',
+  schema: 'gk-completed-history-qualification-recipe-v2',
   dockerfile: 'Dockerfile.reviews-qualify',
   dockerfileSha256: 'c4ff16a3eaca5db2d02bad81b40337a688d336472946468ee4488b7f0f0aceac',
   runner: 'scripts/reviews/qualify.sh',
   runnerSha256: '1bac3526e9e44fead93177814c351217aff85a75bb0f709558b271c6e4584d0d',
 });
 export const COMPLETED_OUTPUT_PROFILE = Object.freeze({
-  schema: 'gk-completed-history-qualification-output-v1', node: '24.19.0', trueforge: '0.182.0',
+  schema: 'gk-completed-history-qualification-output-v2', node: '24.19.0', trueforge: '0.182.0',
   postgres: '15', canary: 'all-pass-no-skip', typecheck: 'passed', scorerSelfTests: 5,
   nodeSuite: 'all-tests-all-pass-no-skip', realPostgres: 'mandatory-all-pass-no-skip', caddy: 'passed',
   providerCredentials: 'absent', cleanup: 'observed-after-terminal-success',
 });
 export function completedGatePolicy(treeSha) {
   hash(treeSha, 'qualified C tree', 40);
-  return { targetId: 'gatekeeper-completed-history-reviews-v1',
+  return { targetId: 'gatekeeper-completed-history-reviews-v2',
     presetDigest: digest(COMPLETED_QUALIFICATION_RECIPE), outputProfileDigest: digest(COMPLETED_OUTPUT_PROFILE),
     effectiveTreeDigest: digest({ repository: REPOSITORY, gitTree: treeSha }) };
 }
@@ -85,7 +85,7 @@ async function nativeReviewInventory(fetcher, pullRequest) {
 export function createCompletedSourceVerifier({ descriptor: supplied, fetcher = fetch }) {
   record(supplied, ['schema', 'repository', 'sourceCommit', 'qualification'], 'protected source proof');
   const descriptor = copy(supplied);
-  requireThat(descriptor.schema === 'gk-completed-history-source-proof-v1' &&
+  requireThat(descriptor.schema === 'gk-completed-history-source-proof-v2' &&
     descriptor.repository === REPOSITORY, 'protected source proof repository');
   hash(descriptor.sourceCommit, 'protected source commit', 40);
   record(descriptor.qualification, ['commentId', 'bodySha256', 'authorId', 'authorLogin'],
@@ -95,11 +95,20 @@ export function createCompletedSourceVerifier({ descriptor: supplied, fetcher = 
   text(descriptor.qualification.authorLogin, 'qualification author login', 100);
   hash(descriptor.qualification.bodySha256, 'qualification body hash');
 
-  return async ({ actualSourceCommit, historicalQualification, binding }) => {
+  return async ({ actualSourceCommit, originalQualification, finalQualification, binding }) => {
     hash(actualSourceCommit, 'actual serving image', 40);
-    requireThat(actualSourceCommit === descriptor.sourceCommit && actualSourceCommit !== binding.sourceCommit &&
-      actualSourceCommit !== historicalQualification.implementationCommit, 'completed source is not actual distinct C');
-    const originalOwner = historicalQualification.qualification;
+    requireThat(originalQualification?.schema === 'gk-learning-v2-qualified-implementation' &&
+      finalQualification?.schema === 'gk-learning-qualified-proposal-observation-v1' &&
+      finalQualification.historicalImplementationCommit === originalQualification.implementationCommit,
+    'completed v2 source requires independently verified historical B and D qualifications');
+    equal(finalQualification.binding, binding, 'historical D frozen binding changed');
+    hash(finalQualification.implementationTree, 'historical D qualified tree', 40);
+    requireThat(actualSourceCommit === descriptor.sourceCommit && new Set([actualSourceCommit, binding.sourceCommit,
+      originalQualification.implementationCommit, finalQualification.implementationCommit]).size === 4,
+    'completed source is not actual distinct C after original A/B/D');
+    const originalOwner = originalQualification.qualification;
+    requireThat(finalQualification.qualification.authorId === originalOwner.authorId &&
+      finalQualification.qualification.authorLogin === originalOwner.authorLogin, 'D qualification owner differs from original B');
     requireThat(descriptor.qualification.authorId === originalOwner.authorId &&
       descriptor.qualification.authorLogin === originalOwner.authorLogin,
     'C qualification owner differs from the original authenticated GitHub owner');
@@ -111,7 +120,7 @@ export function createCompletedSourceVerifier({ descriptor: supplied, fetcher = 
     const proof = JSON.parse(comment.body.slice(PREFIX.length));
     record(proof, ['schema', 'repository', 'pullRequest', 'qualifiedCommit', 'baseCommit', 'treeSha',
       'gatePolicy', 'deployment', 'cleanup', 'checks', 'rawLogsDigest', 'review'], 'owner qualification receipt');
-    requireThat(proof.schema === 'gk-completed-history-source-qualification-v1' && proof.repository === REPOSITORY,
+    requireThat(proof.schema === 'gk-completed-history-source-qualification-v2' && proof.repository === REPOSITORY,
       'qualification schema or repository');
     integer(proof.pullRequest, 'qualification PR', 1);
     for (const key of ['qualifiedCommit', 'baseCommit', 'treeSha']) hash(proof[key], key, 40);
@@ -167,9 +176,10 @@ export function createCompletedSourceVerifier({ descriptor: supplied, fetcher = 
       base.sha === proof.baseCommit && qualified.tree?.sha === proof.treeSha &&
       source.tree?.sha === proof.treeSha && main.commit?.sha === descriptor.sourceCommit,
     'qualified source tree or current main changed');
-    requireThat(source.parents?.length === 2 && source.parents[0].sha === proof.baseCommit &&
+    requireThat(proof.baseCommit === finalQualification.implementationCommit && base.tree?.sha === finalQualification.implementationTree &&
+      source.parents?.length === 2 && source.parents[0].sha === proof.baseCommit &&
       source.parents[1].sha === proof.qualifiedCommit,
-    'merged source lacks exact qualified and current-base parents');
+    'merged C source lacks exact final D and qualified-candidate parents');
     const review = proof.review;
     record(review, ['mode', 'requestedHead', 'request', 'acknowledgement', 'approval',
       'resolvedComments', 'nativeReviews'], 'qualification independent review');
@@ -258,7 +268,7 @@ export function createCompletedSourceVerifier({ descriptor: supplied, fetcher = 
     return { sourceCommit: actualSourceCommit, sourceTree: proof.treeSha,
       pullRequest: proof.pullRequest, owner: { id: q.authorId, login: q.authorLogin },
       descriptorDigest: digest(descriptor), runId: proof.deployment.deploymentId, rawLogsDigest: proof.rawLogsDigest,
-      evidence: { schema: 'gk-completed-history-source-proof-evidence-v1', descriptor, qualification: proof,
+      evidence: { schema: 'gk-completed-history-source-proof-evidence-v2', descriptor, qualification: proof,
         ownerComment: comment, pullRequest: pr, qualified, source, base,
         observedMain: main.commit.sha, reviewArtifacts: artifacts,
         trustBoundary: 'Authenticated owner attests actual Railway execution; authority independently retrieves exact source, owner receipt and Gitar artifacts.' } };
@@ -279,11 +289,16 @@ export async function verifyCompletedOwnerPin({ pin, closure, closureDigest, sou
     comment.issue_url === ROOT + '/issues/' + sourceEvidence.pullRequest,
   'completed owner authorization author, bytes or C PR changed');
   const body = JSON.parse(comment.body.slice(prefix.length));
-  equal(body, { schema: 'gk-completed-history-owner-activation-v1', purpose: 'read-only-completed-pilot',
-    experimentSourceCommit: closure.binding.sourceCommit, executionSourceCommit: closure.executionSourceCommit,
+  equal(body, { schema: 'gk-completed-history-owner-activation-v2', purpose: 'read-only-completed-pilot',
+    experimentSourceCommit: closure.binding.sourceCommit, originalExecutionSourceCommit: closure.originalExecutionSourceCommit,
+    finalExecutionSourceCommit: closure.finalExecutionSourceCommit,
     servingSourceCommit: closure.servingSourceCommit, configDigest: closure.binding.configDigest,
     closureDigest, authorityCapsuleSha256: closure.authorityCapsuleSha256,
     qualificationDescriptorDigest: sourceEvidence.descriptorDigest,
+    observationQualificationDigest: closure.completion.observationQualificationDigest,
+    observationPreparationDigest: closure.completion.observationPreparationDigest,
+    observationAuthorizationDigest: closure.completion.observationAuthorizationDigest,
+    recovery: { kind: 'original-invalid-proposal-observation', attempt: 4, additionalModelCalls: 0 },
     driver: 'unavailable' }, 'owner activation differs from exact completed closure');
   requireThat(Number.isFinite(Date.parse(comment.created_at)) &&
     Date.parse(comment.created_at) >= Date.parse(closure.archivedAt), 'owner activation predates capture');

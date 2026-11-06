@@ -28,6 +28,8 @@ test('completed roles are explicit and refuse Learning execution credentials or 
     ['GK_PRODUCTION_COMMAND', 'run'], ['GK_PRODUCTION_CONFIG_B64', 'TEST-ONLY-driver-config'],
     ['GK_AUTHORITY_ROLE', 'serve'], ['GK_V3_READONLY_STATUS', 'enabled'],
     ['GK_IMPLEMENTATION_QUALIFICATION_B64', 'TEST-ONLY-historical-B'],
+    ['GK_PRODUCTION_PROPOSAL_OBSERVATION_PROOF', 'TEST-ONLY-historical-D-proof'],
+    ['GK_AUTHORITY_PROPOSAL_OBSERVATION_AUTHORIZATION', 'TEST-ONLY-historical-D-owner-pin'],
     ['GATEKEEPER_LEARNING_READ_TOKEN', 'TEST-ONLY-extra-token'],
     ['GATEKEEPER_AUTHORITY_TOKEN', 'TEST-ONLY-authority-token'],
     ['GK_COMPLETED_HISTORY_SOURCE_PROOF_B64', 'TEST-ONLY-leftover-import'],
@@ -43,7 +45,8 @@ test('completed roles are explicit and refuse Learning execution credentials or 
 
 test('retained-volume preflight refuses an empty mount and never prepares, changes ownership or accepts ambiguous mounts', () => {
   const names = ['production-config.json', 'status-config.json', 'implementation-qualification.json',
-    'baseline-continuation-authorization.json', 'experiment', 'completed-history'];
+    'baseline-continuation-authorization.json', 'proposal-observation-qualification.json',
+    'proposal-observation-preparation.json', 'proposal-observation-authorization.json', 'experiment', 'completed-history'];
   const mountinfo = '36 25 0:31 / ' + COMPLETED_MOUNT + ' rw - ext4 /dev/TEST-ONLY rw\n';
   const stat = path => ({ isDirectory: () => true, isSymbolicLink: () => false,
     uid: path === COMPLETED_MOUNT ? 1000 : 0, gid: path === COMPLETED_MOUNT ? 1000 : 0,
@@ -52,6 +55,9 @@ test('retained-volume preflight refuses an empty mount and never prepares, chang
     list: path => path === COMPLETED_MOUNT ? [...names] : [] };
   assert.deepEqual(verifyCompletedVolume(options), { ready: true, prepared: false, path: COMPLETED_MOUNT, role: 'serve' });
   assert.throws(() => verifyCompletedVolume({ ...options, list: () => [] }), /retained host evidence/);
+  assert.throws(() => verifyCompletedVolume({ ...options,
+    list: path => path === COMPLETED_MOUNT ? names.filter(name => name !== 'proposal-observation-preparation.json') : [] }),
+  /retained host evidence/);
   assert.throws(() => verifyCompletedVolume({ ...options, currentUid: 1000 }), /root preflight/);
   assert.throws(() => verifyCompletedVolume({ ...options, mountinfo: '' }), /dedicated volume/);
   assert.throws(() => verifyCompletedVolume({ ...options, mountinfo: mountinfo + mountinfo }), /ambiguous/);
@@ -118,7 +124,7 @@ async function response(handler, patch = {}) {
   return output;
 }
 
-test('completed status retains the owner-only transport boundary and truthful A/B/C provenance', async () => {
+test('completed status retains the owner-only transport boundary and truthful A/B/D/C provenance', async () => {
   let reads = 0;
   const handler = createCompletedStatusHandler({ binding, readToken: token, clock: () => nowMs,
     readStatus: async () => { reads++; return completedResponse(); } });
@@ -136,7 +142,7 @@ test('completed status retains the owner-only transport boundary and truthful A/
   assert.equal(result.status, 200); assert.equal(reads, 1);
   assert.deepEqual(result.body, completedResponse()); assert.match(result.headers['Cache-Control'], /no-store/);
   assert.equal(result.body.status.sourceCommit, binding.sourceCommit);
-  assert.equal(result.body.archive.executionSourceCommit, binding.executionSourceCommit);
+  assert.equal(result.body.archive.finalExecutionSourceCommit, binding.finalExecutionSourceCommit);
   assert.equal(result.body.serving.sourceCommit, source);
 });
 
@@ -146,6 +152,7 @@ test('completed status holds on stale, substituted or unreadable closure with a 
     async () => ({ ...completedResponse(), checkedAt: new Date(nowMs - 61000).toISOString() }),
     async () => ({ ...completedResponse(), serving: { mode: 'completed-history', sourceCommit: 'b'.repeat(40) } }),
     async () => ({ schema: 'gk-learning-v2-status-response', checkedAt: new Date(nowMs).toISOString(), status: completedResponse().status }),
+    async () => ({ ...completedResponse(), schema: 'gk-learning-completed-history-response-v1' }),
   ]) {
     const result = await response(createCompletedStatusHandler({ binding, readToken: token, clock: () => nowMs, readStatus }));
     assert.equal(result.status, 503); assert.deepEqual(result.body, { error: 'learning_status_unavailable' });

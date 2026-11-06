@@ -198,8 +198,8 @@
       "hostedPath": "base44/shared/learningHistoryBackend.ts",
       "mappingEvidence": "planned-new-function",
       "repository": {
-        "bytes": 5407,
-        "sha256": "1d3d3eae1ebd81fa2183366767a218ce37b8f713549180169f86eb9d11b3ad68"
+        "bytes": 5682,
+        "sha256": "18e961ea5bedfd9308bf65528c8d37d0b5f2a512172f81a82397535f41221035"
       },
       "importReplacements": [
         {
@@ -213,12 +213,12 @@
       ],
       "hosted": {
         "withFinalLf": {
-          "bytes": 5403,
-          "sha256": "ec18d340b94fb9ab05b4f6f1eea8134e2589fa0e20d5bddcab34e1f368cc7f95"
+          "bytes": 5678,
+          "sha256": "661d0f3aae206aa7d3052a48843abafb5aa59886dcde782de60c28f8cc1c5d8b"
         },
         "withoutFinalLf": {
-          "bytes": 5402,
-          "sha256": "fd3de2ddea4a99be0e851dbf4ec34c93c271ece13a0f08336f1600960e0e454e"
+          "bytes": 5677,
+          "sha256": "f0ea497472370e8e31a91728c0743f1d1ac5209391477e8483f40f72fcb54a8c"
         }
       }
     },
@@ -227,8 +227,8 @@
       "hostedPath": "base44/shared/learningHistoryContract.ts",
       "mappingEvidence": "planned-new-function",
       "repository": {
-        "bytes": 5351,
-        "sha256": "a7ad8f5268770d64d033c6d36a5e1f7e2db689cf124a53d2988f11b81189fd5b"
+        "bytes": 6277,
+        "sha256": "35e59e5d7622fd2cdaa2c4c89ccc971bc6b05e1b32d56b560588c9668dc3293e"
       },
       "importReplacements": [
         {
@@ -238,12 +238,12 @@
       ],
       "hosted": {
         "withFinalLf": {
-          "bytes": 5349,
-          "sha256": "7b422d8d65ec955381a1e713a6bc75d21e96a9d4fe463fc894af389693435a86"
+          "bytes": 6275,
+          "sha256": "40f9c66c0baec2461cddec72bd740c4df961b4e6645638a829812065454099d1"
         },
         "withoutFinalLf": {
-          "bytes": 5348,
-          "sha256": "ebbad0055abfa744152879681356f72e18b3396e145c92709382bbf4f8cffcda"
+          "bytes": 6274,
+          "sha256": "6599408d470e156786df88ea6b16eab40b5eacfbd4f80fa50b195818e5152c54"
         }
       }
     }

@@ -4,10 +4,10 @@ import { createHash } from 'node:crypto';
 import { copy, digest } from '../../scripts/learning-v2/contracts.mjs';
 import { completedGatePolicy } from '../../scripts/learning-v2/completed-history-proof.mjs';
 
-export const C = 'd'.repeat(40), HEAD = 'e'.repeat(40), TREE = 'f'.repeat(40), BASE = 'b'.repeat(40);
+export const C = '7'.repeat(40), HEAD = '8'.repeat(40), TREE = '9'.repeat(40), BASE = 'd'.repeat(40);
 const root = 'https://api.github.com/repos/appliedai-au/gate_keeper';
 const sha = value => createHash('sha256').update(value).digest('hex');
-export function completedSourceFixture(now) {
+export function completedSourceFixture(now, { finalExecutionSourceCommit = BASE, finalExecutionTree = 'e'.repeat(40) } = {}) {
   const owner = { id: 123, login: 'TEST-ONLY-owner' }, bot = { id: 159877585, login: 'gitar-bot[bot]' };
   const time = delta => new Date(now + delta).toISOString();
   const request = { id: 600, user: owner, issue_url: root + '/issues/59',
@@ -15,8 +15,8 @@ export function completedSourceFixture(now) {
   const approval = { id: 601, user: bot, body: 'TEST-ONLY current-head approval',
     commit_id: HEAD, state: 'APPROVED', submitted_at: time(-110000) };
   const all = { tests: 1, pass: 1, fail: 0, skipped: 0, cancelled: 0, todo: 0 };
-  const proof = { schema: 'gk-completed-history-source-qualification-v1', repository: 'appliedai-au/gate_keeper',
-    pullRequest: 59, qualifiedCommit: HEAD, baseCommit: BASE, treeSha: TREE, gatePolicy: completedGatePolicy(TREE),
+  const proof = { schema: 'gk-completed-history-source-qualification-v2', repository: 'appliedai-au/gate_keeper',
+    pullRequest: 59, qualifiedCommit: HEAD, baseCommit: finalExecutionSourceCommit, treeSha: TREE, gatePolicy: completedGatePolicy(TREE),
     deployment: { projectId: '11111111-1111-1111-1111-111111111111', environmentId: '22222222-2222-2222-2222-222222222222',
       serviceId: '33333333-3333-3333-3333-333333333333', deploymentId: '44444444-4444-4444-4444-444444444444',
       finishedAt: time(-90000), status: 'SUCCESS' },
@@ -28,7 +28,7 @@ export function completedSourceFixture(now) {
       approval: { id: approval.id, bodySha256: sha(approval.body) }, resolvedComments: [],
       nativeReviews: [{ id: approval.id, commitId: HEAD, state: 'APPROVED' }] } };
   const comment = { id: 602, user: owner, created_at: time(-70000), issue_url: root + '/issues/59' };
-  const descriptor = { schema: 'gk-completed-history-source-proof-v1', repository: 'appliedai-au/gate_keeper', sourceCommit: C,
+  const descriptor = { schema: 'gk-completed-history-source-proof-v2', repository: 'appliedai-au/gate_keeper', sourceCommit: C,
     qualification: { commentId: comment.id, bodySha256: '', authorId: owner.id, authorLogin: owner.login } };
   const routes = new Map([
     ['/issues/comments/600', request], ['/pulls/59/reviews/601', approval], ['/issues/comments/602', comment],
@@ -36,8 +36,9 @@ export function completedSourceFixture(now) {
     ['/pulls/59', { head: { sha: HEAD, repo: { full_name: 'appliedai-au/gate_keeper' } },
       base: { ref: 'main', repo: { full_name: 'appliedai-au/gate_keeper' } }, merged: true, merge_commit_sha: C }],
     ['/git/commits/' + HEAD, { sha: HEAD, tree: { sha: TREE } }],
-    ['/git/commits/' + C, { sha: C, tree: { sha: TREE }, parents: [{ sha: BASE }, { sha: HEAD }] }],
-    ['/git/commits/' + BASE, { sha: BASE, tree: { sha: '1'.repeat(40) } }], ['/branches/main', { commit: { sha: C } }],
+    ['/git/commits/' + C, { sha: C, tree: { sha: TREE }, parents: [{ sha: finalExecutionSourceCommit }, { sha: HEAD }] }],
+    ['/git/commits/' + finalExecutionSourceCommit, { sha: finalExecutionSourceCommit, tree: { sha: finalExecutionTree } }],
+    ['/branches/main', { commit: { sha: C } }],
   ]);
   for (const path of ['Dockerfile.reviews-qualify', 'scripts/reviews/qualify.sh']) routes.set('/contents/' + path + '?ref=' + C,
     { encoding: 'base64', content: readFileSync(new URL('../../' + path, import.meta.url)).toString('base64') });
@@ -53,10 +54,15 @@ export function completedSourceFixture(now) {
   };
   function ownerPin(closure, closureDigest) {
     const body = 'GK_COMPLETED_HISTORY_ACTIVATION\n' + JSON.stringify({
-      schema: 'gk-completed-history-owner-activation-v1', purpose: 'read-only-completed-pilot',
-      experimentSourceCommit: closure.binding.sourceCommit, executionSourceCommit: closure.executionSourceCommit,
+      schema: 'gk-completed-history-owner-activation-v2', purpose: 'read-only-completed-pilot',
+      experimentSourceCommit: closure.binding.sourceCommit, originalExecutionSourceCommit: closure.originalExecutionSourceCommit,
+      finalExecutionSourceCommit: closure.finalExecutionSourceCommit,
       servingSourceCommit: closure.servingSourceCommit, configDigest: closure.binding.configDigest, closureDigest,
-      authorityCapsuleSha256: closure.authorityCapsuleSha256, qualificationDescriptorDigest: digest(descriptor), driver: 'unavailable' });
+      authorityCapsuleSha256: closure.authorityCapsuleSha256, qualificationDescriptorDigest: digest(descriptor),
+      observationQualificationDigest: closure.completion.observationQualificationDigest,
+      observationPreparationDigest: closure.completion.observationPreparationDigest,
+      observationAuthorizationDigest: closure.completion.observationAuthorizationDigest,
+      recovery: { kind: 'original-invalid-proposal-observation', attempt: 4, additionalModelCalls: 0 }, driver: 'unavailable' });
     routes.set('/issues/comments/603', { id: 603, user: owner, created_at: time(1000), issue_url: root + '/issues/59', body });
     return { commentId: 603, bodySha256: sha(body) };
   }

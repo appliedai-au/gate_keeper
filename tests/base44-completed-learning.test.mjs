@@ -8,7 +8,7 @@ import { validateLearningHistoryBinding, projectLearningHistoryForDisplay,
   projectLearningHistoryResponse } from '../integrations/base44/shared/learning-history-contract.js';
 import { projectLearningStatus } from '../integrations/base44/shared/learning-status-contract.js';
 import { createLearningHistoryBackend } from '../integrations/base44/shared/learning-history-backend.js';
-import { binding, nowMs, completedResponse } from './base44-completed-learning-fixture.mjs';
+import { binding, nowMs, completedResponse, legacyCompletedResponse } from './base44-completed-learning-fixture.mjs';
 
 const marker = 'synthetic-private-value-never-reflected';
 const token = 'synthetic_' + 'x'.repeat(48);
@@ -18,7 +18,8 @@ const values = {
   GATEKEEPER_LEARNING_SOURCE_COMMIT: binding.sourceCommit,
   GATEKEEPER_LEARNING_READ_TOKEN: token,
   GATEKEEPER_LEARNING_HISTORY_SOURCE_COMMIT: binding.servingSourceCommit,
-  GATEKEEPER_LEARNING_EXECUTION_SOURCE_COMMIT: binding.executionSourceCommit,
+  GATEKEEPER_LEARNING_EXECUTION_SOURCE_COMMIT: binding.originalExecutionSourceCommit,
+  GATEKEEPER_LEARNING_FINAL_EXECUTION_SOURCE_COMMIT: binding.finalExecutionSourceCommit,
   GATEKEEPER_LEARNING_CLOSURE_SHA256: binding.closureDigest,
 };
 const ownerName = 'GATEKEEPER_LEARNING_OWNER_ID';
@@ -36,6 +37,20 @@ async function fixedError(response, status, error) {
   assert.deepEqual(JSON.parse(text), { error });
   for (const value of [marker, token, binding.ownerId]) assert.equal(text.includes(value), false);
 }
+const flush = () => new Promise(resolve => setImmediate(resolve));
+function controlledDeadlines(t) {
+  const timers = []; let elapsed = 0;
+  t.mock.method(AbortSignal, 'timeout', milliseconds => {
+    const controller = new AbortController();
+    timers.push({ milliseconds, deadline: elapsed + milliseconds, controller });
+    return controller.signal;
+  });
+  return { timers, advance(milliseconds) {
+    elapsed += milliseconds;
+    for (const timer of timers) if (!timer.controller.signal.aborted && timer.deadline <= elapsed)
+      timer.controller.abort(new DOMException('Synthetic timeout', 'TimeoutError'));
+  } };
+}
 
 test('completed public projection retains A exactly and accepts negative outcomes with unknown prices', () => {
   const original = completedResponse();
@@ -47,7 +62,11 @@ test('completed public projection retains A exactly and accepts negative outcome
   assert.equal(result.status.budget.complete, false); assert.equal(result.status.budget.unknownCostCalls, 24);
   assert.equal(result.archive.archivedAt, original.archive.archivedAt);
   assert.equal(result.serving.sourceCommit, binding.servingSourceCommit);
-  assert.equal(result.archive.executionSourceCommit, binding.executionSourceCommit);
+  assert.equal(result.archive.originalExecutionSourceCommit, binding.originalExecutionSourceCommit);
+  assert.equal(result.archive.finalExecutionSourceCommit, binding.finalExecutionSourceCommit);
+  assert.deepEqual(result.archive.recovery, { kind: 'original-invalid-proposal-observation', attempt: 4, additionalModelCalls: 0 });
+  assert.equal(result.status.counts.invalid, 4); assert.equal(result.status.budget.observedSpentMicros, 0);
+  assert.notEqual(result.archive.recovery, original.archive.recovery);
   assert.notEqual(result, original); assert.notEqual(result.status, original.status);
   assert.deepEqual(validateLearningHistoryBinding(binding), binding);
 });
@@ -55,11 +74,12 @@ test('completed public projection retains A exactly and accepts negative outcome
 test('history contract refuses source/closure substitution, private fields and legacy envelopes', () => {
   for (const mutate of [
     value => { value.serving.sourceCommit = 'e'.repeat(40); },
-    value => { value.archive.executionSourceCommit = 'e'.repeat(40); },
+    value => { value.archive.originalExecutionSourceCommit = 'e'.repeat(40); },
+    value => { value.archive.finalExecutionSourceCommit = 'e'.repeat(40); },
     value => { value.archive.closureDigest = 'e'.repeat(64); },
     value => { value.archive.experimentSourceCommit = 'e'.repeat(40); },
     value => { value.status.sourceCommit = binding.servingSourceCommit; },
-    value => { value.serving.sourceCommit = binding.executionSourceCommit; },
+    value => { value.serving.sourceCommit = binding.originalExecutionSourceCommit; },
     value => { value.privateEvidence = marker; },
     value => { value.archive.providerSession = marker; },
     value => { value.status.privatePrompt = marker; },
@@ -84,7 +104,8 @@ test('a completed label requires all ten terminal dispositions, BASE and public 
   for (const mutate of [
     value => { value.status.counts.attempted = 9; },
     value => { value.status.counts.provisional = 1; },
-    value => { value.status.counts.noCoverage = 3; },
+    value => { value.status.counts.noCoverage--; },
+    value => { value.status.counts.invalid = 3; value.status.counts.noCoverage = 4; },
     value => { value.status.baseline.status = 'planned'; },
     value => { value.status.qualification = 'source-only-unqualified'; },
     value => { value.status.dispatch.completed = 10; },
@@ -99,6 +120,51 @@ test('a completed label requires all ten terminal dispositions, BASE and public 
     assert.throws(() => projectLearningHistoryResponse(value, binding, nowMs));
     assert.throws(() => projectLearningHistoryForDisplay(value, binding));
   }
+});
+
+test('v2 rejects v1 and hybrid envelope shapes without a legacy execution alias', () => {
+  const hybrid = completedResponse(); hybrid.archive = legacyCompletedResponse().archive;
+  const extra = completedResponse(); extra.archive.executionSourceCommit = binding.originalExecutionSourceCommit;
+  const nestedLegacy = completedResponse(); nestedLegacy.status.schema = 'gk-learning-v1-status';
+  for (const value of [legacyCompletedResponse(), hybrid, extra, nestedLegacy]) {
+    assert.throws(() => projectLearningHistoryResponse(value, binding, nowMs));
+    assert.throws(() => projectLearningHistoryForDisplay(value, binding));
+  }
+  const legacyBinding = { ...binding, executionSourceCommit: binding.originalExecutionSourceCommit };
+  delete legacyBinding.originalExecutionSourceCommit; delete legacyBinding.finalExecutionSourceCommit;
+  assert.throws(() => validateLearningHistoryBinding(legacyBinding));
+});
+
+test('every source role must remain distinct in both trusted pins and the public envelope', () => {
+  const fields = ['sourceCommit', 'originalExecutionSourceCommit', 'finalExecutionSourceCommit', 'servingSourceCommit'];
+  for (let left = 0; left < fields.length; left++) for (let right = left + 1; right < fields.length; right++) {
+    const pins = { ...binding, [fields[right]]: binding[fields[left]] };
+    assert.throws(() => validateLearningHistoryBinding(pins));
+    const value = completedResponse();
+    if (fields[right] === 'servingSourceCommit') value.serving.sourceCommit = binding[fields[left]];
+    else value.archive[fields[right]] = binding[fields[left]];
+    assert.throws(() => projectLearningHistoryForDisplay(value));
+    assert.throws(() => projectLearningHistoryResponse(value, binding, nowMs));
+  }
+});
+
+test('recovery is exactly the original fourth invalid observation with zero additional calls', () => {
+  for (const mutate of [
+    value => { value.archive.recovery.kind = 'new-proposal'; },
+    value => { value.archive.recovery.attempt = 5; },
+    value => { value.archive.recovery.additionalModelCalls = 1; },
+    value => { value.archive.recovery.additionalModelCalls = '0'; },
+    value => { value.archive.recovery.originalTurnId = marker; },
+    value => { delete value.archive.recovery; },
+  ]) {
+    const value = completedResponse(); mutate(value);
+    assert.throws(() => projectLearningHistoryResponse(value, binding, nowMs));
+    assert.throws(() => projectLearningHistoryForDisplay(value, binding));
+  }
+  const value = completedResponse(); let accessed = false;
+  Object.defineProperty(value.archive.recovery, 'attempt', { enumerable: true,
+    get() { accessed = true; return 4; } });
+  assert.throws(() => projectLearningHistoryForDisplay(value, binding)); assert.equal(accessed, false);
 });
 
 test('freshness belongs to checkedAt, while archive time stays strict and historical', () => {
@@ -145,7 +211,7 @@ test('actual backend enforces the exact stale/future boundaries even for structu
   }
 });
 
-test('authentication and configured owner precede read token and all C/B/closure pins', async () => {
+test('authentication and configured owner precede read token and all serving/execution/closure pins', async () => {
   for (const [user, status, code, expectedReads] of [
     [null, 401, 'unauthorized', []],
     [{ id: binding.ownerId, role: 'user' }, 403, 'forbidden', []],
@@ -178,10 +244,103 @@ test('private history bridge keeps its fixed read-only URL/options and enforces 
   assert.deepEqual(observed.init.headers, { 'X-Gatekeeper-Learning-Token': token,
     'X-Gatekeeper-Learning-Owner': binding.ownerId, Accept: 'application/json' });
   for (const name of ['GATEKEEPER_LEARNING_HISTORY_SOURCE_COMMIT', 'GATEKEEPER_LEARNING_EXECUTION_SOURCE_COMMIT',
-    'GATEKEEPER_LEARNING_CLOSURE_SHA256']) {
+    'GATEKEEPER_LEARNING_FINAL_EXECUTION_SOURCE_COMMIT', 'GATEKEEPER_LEARNING_CLOSURE_SHA256']) {
     const mismatch = factory({ readSecret: async key => key === name ? 'e'.repeat(key.endsWith('SHA256') ? 64 : 40) : values[key] });
     await fixedError(await mismatch(request()), 503, 'learning_history_unavailable');
   }
+});
+
+test('final execution pin is required after owner authentication and never repurposes the original B secret', async () => {
+  const finalName = 'GATEKEEPER_LEARNING_FINAL_EXECUTION_SOURCE_COMMIT';
+  for (const missingOrAliased of [undefined, binding.sourceCommit, binding.originalExecutionSourceCommit, binding.servingSourceCommit]) {
+    const reads = []; let fetches = 0;
+    const bridge = factory({ readSecret: async name => { reads.push(name); return name === finalName ? missingOrAliased : values[name]; },
+      fetchImpl: async () => { fetches++; return Response.json(completedResponse()); } });
+    await fixedError(await bridge(request()), 503, 'learning_history_unavailable');
+    assert.equal(reads[0], ownerName); assert.ok(reads.includes(finalName)); assert.equal(fetches, 0);
+  }
+  let resolveOwner; const reads = [];
+  const bridge = factory({ readSecret: name => {
+    reads.push(name); return name === ownerName ? new Promise(resolve => { resolveOwner = resolve; }) : values[name];
+  }, fetchImpl: async () => assert.fail('unmatched owner cannot fetch') });
+  const pending = bridge(request()); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(reads, [ownerName]); resolveOwner('another-owner');
+  await fixedError(await pending, 403, 'forbidden'); assert.deepEqual(reads, [ownerName]);
+  assert.equal(values.GATEKEEPER_LEARNING_EXECUTION_SOURCE_COMMIT, binding.originalExecutionSourceCommit);
+  assert.notEqual(values.GATEKEEPER_LEARNING_EXECUTION_SOURCE_COMMIT, values[finalName]);
+});
+
+test('completed-history fetch may finish after 7 or 20 seconds within its separate 60-second deadline', async t => {
+  const deadlines = controlledDeadlines(t);
+  let resolveFetch, fetchSignal, completed = false, fetches = 0;
+  const bridge = factory({ fetchImpl: (_, { signal }) => {
+    fetches++; fetchSignal = signal;
+    return new Promise((resolve, reject) => {
+      resolveFetch = resolve;
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+  } });
+  const pending = bridge(request()).then(value => { completed = true; return value; });
+  await flush();
+  assert.deepEqual(deadlines.timers.map(timer => timer.milliseconds), [7000, 60_000]);
+  deadlines.advance(7000); await flush();
+  assert.equal(deadlines.timers[0].controller.signal.aborted, true);
+  assert.equal(fetchSignal.aborted, false); assert.equal(completed, false);
+  deadlines.advance(13_000); await flush();
+  assert.equal(fetchSignal.aborted, false); assert.equal(completed, false);
+  deadlines.advance(39_999);
+  resolveFetch(Response.json(completedResponse()));
+  const response = await pending;
+  assert.equal(response.status, 200); assert.deepEqual(await response.json(), completedResponse());
+  assert.equal(fetchSignal.aborted, false); assert.equal(fetches, 1);
+});
+
+test('incoming empty JSON still has its own exact 7-second deadline before pins or fetch', async t => {
+  const deadlines = controlledDeadlines(t), reads = [];
+  let completed = false, cancelled = 0, fetches = 0;
+  const body = new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('{}')); },
+    cancel() { cancelled++; },
+  });
+  const incoming = new Request('https://fixture.invalid/function', {
+    method: 'POST', body, duplex: 'half', headers: { 'Content-Type': 'application/json' },
+  });
+  const bridge = factory({ readSecret: async name => { reads.push(name); return values[name]; },
+    fetchImpl: async () => { fetches++; return Response.json(completedResponse()); } });
+  const pending = bridge(incoming).then(value => { completed = true; return value; });
+  await flush();
+  assert.deepEqual(deadlines.timers.map(timer => timer.milliseconds), [7000]);
+  deadlines.advance(6999); await flush(); assert.equal(completed, false);
+  deadlines.advance(1);
+  await fixedError(await pending, 400, 'bad_request');
+  assert.equal(cancelled, 1); assert.equal(fetches, 0); assert.deepEqual(reads, [ownerName]);
+});
+
+test('the same 60-second upstream deadline bounds both fetch and a stalled response body without retry', async t => {
+  for (const stalledAt of ['headers', 'body']) await t.test(stalledAt, async child => {
+    const deadlines = controlledDeadlines(child);
+    let completed = false, fetches = 0, cancelled = 0, fetchSignal;
+    const bridge = factory({ fetchImpl: (_, { signal }) => {
+      fetches++; fetchSignal = signal;
+      if (stalledAt === 'headers') return new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+      return Promise.resolve(new Response(new ReadableStream({
+        start(controller) { controller.enqueue(new TextEncoder().encode('{"private":"' + marker)); },
+        cancel() { cancelled++; },
+      }), { headers: { 'Content-Type': 'application/json' } }));
+    } });
+    const pending = bridge(request()).then(value => { completed = true; return value; });
+    await flush();
+    assert.deepEqual(deadlines.timers.map(timer => timer.milliseconds), [7000, 60_000]);
+    assert.equal(fetchSignal, deadlines.timers[1].controller.signal);
+    deadlines.advance(59_999); await flush(); assert.equal(completed, false);
+    deadlines.advance(1);
+    await fixedError(await pending, 503, 'learning_history_unavailable');
+    assert.equal(fetches, 1); assert.equal(fetchSignal.aborted, true);
+    assert.equal(cancelled, stalledAt === 'body' ? 1 : 0);
+    assert.equal(deadlines.timers.length, 2, 'reading the upstream body does not reset the deadline');
+  });
 });
 
 test('secret/transport failures and stale, oversized or redirected responses never expose data or retry', async () => {
@@ -196,6 +355,7 @@ test('secret/transport failures and stale, oversized or redirected responses nev
   for (const produce of [
     () => { throw new Error(marker); },
     () => Response.json(stale),
+    () => Response.json(legacyCompletedResponse()),
     () => Response.json({ schema: 'gk-learning-v2-status-response', checkedAt: new Date(nowMs).toISOString(), status: completedResponse().status }),
     () => new Response('x'.repeat(16_385), { headers: { 'Content-Type': 'application/json' } }),
     () => new Response(marker, { headers: { 'Content-Type': 'text/html' } }),

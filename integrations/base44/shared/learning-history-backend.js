@@ -4,7 +4,8 @@ import { MAX_LEARNING_HISTORY_BYTES, projectLearningHistoryResponse,
   validateLearningHistoryBinding } from './learning-history-contract.js';
 
 const ORIGIN = 'https://proxy-production-9553.up.railway.app';
-const TIMEOUT_MS = 7000;
+const BODY_TIMEOUT_MS = 7000;
+const UPSTREAM_TIMEOUT_MS = 60_000;
 const NO_STORE = Object.freeze({
   'Cache-Control': 'private, no-store, max-age=0', 'X-Content-Type-Options': 'nosniff',
 });
@@ -47,7 +48,7 @@ async function discard(message) {
   try { if (message.body) void message.body.cancel().catch(() => {}); } catch { /* no body exposed */ }
 }
 
-/** Fixed owner/A/B/C/closure pins. No browser-selected mode or legacy fallback. */
+/** Fixed owner, experiment, execution, serving and closure pins. */
 export function createLearningHistoryBackend({ authenticate, readSecret, fetchImpl = fetch, clock = () => new Date() }) {
   if (![authenticate, readSecret, fetchImpl, clock].every(value => typeof value === 'function'))
     throw new Error('Invalid learning history backend capabilities');
@@ -64,22 +65,25 @@ export function createLearningHistoryBackend({ authenticate, readSecret, fetchIm
     if (userId !== ownerId) return json({ error: 'forbidden' }, 403);
     try {
       if (new URL(request.url).search) { await discard(request); return json({ error: 'bad_request' }, 400); }
-      const body = await boundedJson(request, 1024, AbortSignal.timeout(TIMEOUT_MS));
+      const body = await boundedJson(request, 1024, AbortSignal.timeout(BODY_TIMEOUT_MS));
       if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 0)
         return json({ error: 'bad_request' }, 400);
     } catch { await discard(request); return json({ error: 'bad_request' }, 400); }
 
     let upstream;
     try {
-      const [experimentId, sourceCommit, readToken, servingSourceCommit, executionSourceCommit, closureDigest] = await Promise.all([
+      const [experimentId, sourceCommit, readToken, servingSourceCommit, originalExecutionSourceCommit,
+        finalExecutionSourceCommit, closureDigest] = await Promise.all([
         readSecret('GATEKEEPER_LEARNING_EXPERIMENT_ID'), readSecret('GATEKEEPER_LEARNING_SOURCE_COMMIT'),
         readSecret('GATEKEEPER_LEARNING_READ_TOKEN'), readSecret('GATEKEEPER_LEARNING_HISTORY_SOURCE_COMMIT'),
-        readSecret('GATEKEEPER_LEARNING_EXECUTION_SOURCE_COMMIT'), readSecret('GATEKEEPER_LEARNING_CLOSURE_SHA256'),
+        readSecret('GATEKEEPER_LEARNING_EXECUTION_SOURCE_COMMIT'),
+        readSecret('GATEKEEPER_LEARNING_FINAL_EXECUTION_SOURCE_COMMIT'), readSecret('GATEKEEPER_LEARNING_CLOSURE_SHA256'),
       ]);
       const binding = validateLearningHistoryBinding({ ownerId, experimentId, sourceCommit,
-        servingSourceCommit, executionSourceCommit, closureDigest });
+        servingSourceCommit, originalExecutionSourceCommit, finalExecutionSourceCommit, closureDigest });
       if (!isToken(readToken)) return unavailable();
-      const signal = AbortSignal.timeout(TIMEOUT_MS);
+      // One bounded deadline covers both headers and the complete verified body.
+      const signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
       upstream = await fetchImpl(ORIGIN + PUBLIC_LEARNING_STATUS_PATH, {
         method: 'GET', redirect: 'error', cache: 'no-store', signal,
         headers: { 'X-Gatekeeper-Learning-Token': readToken,

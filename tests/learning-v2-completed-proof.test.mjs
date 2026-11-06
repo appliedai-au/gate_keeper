@@ -6,10 +6,12 @@ import { createCompletedSourceVerifier, verifyCompletedOwnerPin } from '../scrip
 import { C, HEAD, completedSourceFixture } from './helpers/completed-source-fixture.mjs';
 
 const NOW = Date.UTC(2026, 10, 6, 12), sha = value => createHash('sha256').update(value).digest('hex');
-const original = { implementationCommit: 'b'.repeat(40), qualification: { authorId: 123, authorLogin: 'TEST-ONLY-owner' } };
+const original = { schema: 'gk-learning-v2-qualified-implementation', implementationCommit: 'b'.repeat(40), qualification: { authorId: 123, authorLogin: 'TEST-ONLY-owner' } };
 const binding = { ownerId: 'unrelated-Base44-owner', experimentId: 'TEST-ONLY-history', sourceCommit: 'a'.repeat(40), configDigest: '1'.repeat(64) };
+const final = { schema: 'gk-learning-qualified-proposal-observation-v1', implementationCommit: 'd'.repeat(40),
+  implementationTree: 'e'.repeat(40), historicalImplementationCommit: original.implementationCommit, binding, qualification: copy(original.qualification) };
 const verify = f => createCompletedSourceVerifier({ descriptor: f.descriptor, fetcher: f.fetcher })({
-  actualSourceCommit: C, historicalQualification: original, binding });
+  actualSourceCommit: C, originalQualification: original, finalQualification: final, binding });
 
 test('actual C qualification authenticates its own full real-database recipe and source independently of historical B', async () => {
   const f = completedSourceFixture(NOW), result = await verify(f);
@@ -18,10 +20,10 @@ test('actual C qualification authenticates its own full real-database recipe and
   assert.equal(result.evidence.qualification.checks.realPostgres.tests, 1);
   assert.equal(result.evidence.observedMain, C);
   await assert.rejects(createCompletedSourceVerifier({ descriptor: f.descriptor, fetcher: f.fetcher })({
-    actualSourceCommit: 'b'.repeat(40), historicalQualification: original, binding }), /actual distinct C/);
+    actualSourceCommit: 'b'.repeat(40), originalQualification: original, finalQualification: final, binding }), /actual distinct C/);
   await assert.rejects(createCompletedSourceVerifier({ descriptor: f.descriptor, fetcher: f.fetcher })({
-    actualSourceCommit: C, historicalQualification: { ...original,
-      qualification: { authorId: 987, authorLogin: binding.ownerId } }, binding }), /GitHub owner/);
+    actualSourceCommit: C, originalQualification: { ...original,
+      qualification: { authorId: 987, authorLogin: binding.ownerId } }, finalQualification: final, binding }), /owner/);
 });
 
 test('C qualification refuses a weaker recipe, omitted real PG, skipped tests, old runtime and reversed merge parents', async () => {
@@ -40,6 +42,29 @@ test('C qualification refuses a weaker recipe, omitted real PG, skipped tests, o
   for (const mutate of mutations) {
     const f = completedSourceFixture(NOW); mutate(f); f.refresh(); await assert.rejects(verify(f));
   }
+});
+
+test('v2 refuses the prior C protocol and a self-consistent merge onto B instead of the authenticated final D', async () => {
+  const oldDescriptor = completedSourceFixture(NOW);
+  oldDescriptor.descriptor.schema = 'gk-completed-history-source-proof-v1';
+  assert.throws(() => createCompletedSourceVerifier({ descriptor: oldDescriptor.descriptor, fetcher: oldDescriptor.fetcher }));
+  const oldReceipt = completedSourceFixture(NOW);
+  oldReceipt.proof.schema = 'gk-completed-history-source-qualification-v1'; oldReceipt.refresh();
+  await assert.rejects(verify(oldReceipt), /qualification schema/);
+  const wrongBase = completedSourceFixture(NOW), other = original.implementationCommit;
+  wrongBase.proof.baseCommit = other;
+  wrongBase.routes.get('/git/commits/' + C).parents[0].sha = other;
+  wrongBase.routes.set('/git/commits/' + other, { sha: other, tree: { sha: final.implementationTree } });
+  wrongBase.refresh(); await assert.rejects(verify(wrongBase), /final D/);
+  const changedD = { ...final, implementationCommit: '6'.repeat(40) };
+  const clean = completedSourceFixture(NOW);
+  await assert.rejects(createCompletedSourceVerifier({ descriptor: clean.descriptor, fetcher: clean.fetcher })({
+    actualSourceCommit: C, originalQualification: original, finalQualification: changedD, binding }), /final D/);
+  await assert.rejects(createCompletedSourceVerifier({ descriptor: clean.descriptor, fetcher: clean.fetcher })({
+    actualSourceCommit: C, originalQualification: original, finalQualification: { ...final, implementationTree: '1'.repeat(40) }, binding }), /final D/);
+  await assert.rejects(createCompletedSourceVerifier({ descriptor: clean.descriptor, fetcher: clean.fetcher })({
+    actualSourceCommit: C, originalQualification: original, finalQualification: { ...final, binding: { ...binding, configDigest: '0'.repeat(64) } }, binding }),
+  /frozen binding/);
 });
 
 test('fresh current-head approval is required and a new unpinned changes request cannot be hidden', async () => {
@@ -80,14 +105,16 @@ test('native review inventory follows bounded complete pages rather than trustin
 
 test('public closure authorization pins digests only and requires original GitHub owner after actual capture', async () => {
   const f = completedSourceFixture(NOW), source = await verify(f), closureDigest = '4'.repeat(64);
-  const closure = { binding, executionSourceCommit: 'b'.repeat(40), servingSourceCommit: C,
+  const closure = { binding, originalExecutionSourceCommit: 'b'.repeat(40), finalExecutionSourceCommit: 'd'.repeat(40),
+    servingSourceCommit: C, completion: { observationQualificationDigest: 'a'.repeat(64),
+      observationPreparationDigest: 'b'.repeat(64), observationAuthorizationDigest: 'c'.repeat(64) },
     authorityCapsuleSha256: '5'.repeat(64), archivedAt: new Date(NOW).toISOString() };
   const pin = f.ownerPin(closure, closureDigest);
   const result = await verifyCompletedOwnerPin({ pin, closure, closureDigest, sourceEvidence: source, fetcher: f.fetcher });
   assert.equal(result.body.driver, 'unavailable');
   for (const privateKey of ['ownerId', 'operationId', 'leaseId', 'sessionId', 'turnId', 'retained'])
     assert.equal(Object.hasOwn(result.body, privateKey), false);
-  const wrong = copy(closure); wrong.executionSourceCommit = '6'.repeat(40);
+  const wrong = copy(closure); wrong.finalExecutionSourceCommit = '6'.repeat(40);
   await assert.rejects(verifyCompletedOwnerPin({ pin, closure: wrong, closureDigest, sourceEvidence: source, fetcher: f.fetcher }));
   f.routes.get('/issues/comments/603').user = { id: 999, login: binding.ownerId };
   await assert.rejects(verifyCompletedOwnerPin({ pin, closure, closureDigest, sourceEvidence: source, fetcher: f.fetcher }), /author/);

@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import * as contract from '../integrations/base44/shared/learning-history-contract.js';
-import { binding, nowMs, completedResponse } from './base44-completed-learning-fixture.mjs';
+import { binding, nowMs, completedResponse, legacyCompletedResponse } from './base44-completed-learning-fixture.mjs';
 
 const jsx = readFileSync(new URL('../integrations/base44/components/GateKeeperLearningHistory.jsx', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(jsx, { fileName: 'GateKeeperLearningHistory.jsx', reportDiagnostics: true,
@@ -26,7 +26,13 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function ui(invoke, { browserNowMs = nowMs } = {}) {
   const hooks = [], effects = [], cleanup = [], timers = [], requests = [];
-  let index = 0;
+  let index = 0, elapsed = 0;
+  function advance(milliseconds) {
+    elapsed += milliseconds;
+    for (const timer of timers) if (timer.active && timer.due <= elapsed) {
+      timer.active = false; timer.callback();
+    }
+  }
   const react = {
     createElement(type, props, ...children) {
       const complete = { ...props, children };
@@ -59,7 +65,11 @@ function ui(invoke, { browserNowMs = nowMs } = {}) {
   const module = { exports: {} };
   let statusContract, historyContract, parseBrowserJSON;
   const context = vm.createContext({ module, exports: module.exports, Date: FixedDate,
-    setTimeout(callback) { const timer = { callback, active: true }; timers.push(timer); return timer; },
+    setTimeout(callback, milliseconds) {
+      assert.ok(Number.isSafeInteger(milliseconds) && milliseconds >= 0);
+      const timer = { callback, active: true, due: elapsed + milliseconds };
+      timers.push(timer); return timer;
+    },
     clearTimeout(timer) { if (timer) timer.active = false; },
     require(name) {
       if (name === 'react') return { default: react, ...react };
@@ -91,23 +101,33 @@ function ui(invoke, { browserNowMs = nowMs } = {}) {
     value && typeof value === 'object' ? [value, ...walk(value.props?.children)] : [];
   const text = value => Array.isArray(value) ? value.map(text).join('') :
     value && typeof value === 'object' ? text(value.props?.children) : value == null ? '' : String(value);
-  return { requests, text: () => text(render()),
+  return { requests, advance, text: () => text(render()),
     async mount() { render(); for (const effect of effects.splice(0)) cleanup.push(effect()); await flush(); },
     refresh() { const button = walk(render()).find(node => node.type === 'button'); assert.ok(button); button.props.onClick(); },
-    expire() { const timer = timers.findLast(value => value.active); assert.ok(timer); timer.active = false; timer.callback(); },
+    expire() { const timer = timers.findLast(value => value.active); assert.ok(timer); advance(timer.due - elapsed); },
     unmount() { for (const callback of cleanup.splice(0)) callback?.(); },
   };
 }
 
-test('actual history UI distinguishes immutable archive, fresh read and A/B/C without claiming live learning', async () => {
+test('actual history UI distinguishes immutable archive, fresh read and all source roles without claiming live learning', async () => {
   const view = ui(async () => completedResponse()); await view.mount();
   const text = view.text();
   assert.match(text, /Completed pilot/); assert.match(text, /10 of 10 completed/);
   assert.match(text, /Prices remain unknown/); assert.match(text, /Last read:/); assert.match(text, /Archive captured:/);
   assert.match(text, /does not represent new pilot activity/);
   assert.match(text, /does not apply them to ordinary private reviews/);
-  for (const source of [binding.sourceCommit, binding.executionSourceCommit, binding.servingSourceCommit, binding.closureDigest])
+  for (const source of [binding.sourceCommit, binding.originalExecutionSourceCommit, binding.finalExecutionSourceCommit,
+    binding.servingSourceCommit, binding.closureDigest])
     assert.equal(text.includes(source), true);
+  assert.match(text, /Earlier Learning implementation \(B\)/);
+  assert.match(text, /Recovery and final Learning implementation/);
+  assert.match(text, /The recovery implementation later verified/);
+  assert.doesNotMatch(text, /implementation \([DE]\)|[DE] later verified/);
+  assert.match(text, /already-dispatched fourth proposal's original result/);
+  assert.match(text, /Additional model calls for recovery0/);
+  assert.match(text, /original model call is counted once/);
+  assert.match(text, /unknown prices remain unknown/);
+  assert.match(text, /do not claim a model improvement/);
   assert.deepEqual(view.requests.map(item => item.name), ['gatekeeperLearningHistory']);
   assert.equal(JSON.stringify(view.requests[0].command), '{}');
   view.unmount();
@@ -134,7 +154,12 @@ test('partial, malformed-time and legacy replies never produce completed labels 
   const invalidTime = completedResponse(); invalidTime.checkedAt = '2026-02-30T00:00:00.000Z';
   const invalidOrder = completedResponse(); invalidOrder.archive.archivedAt = new Date(nowMs + 1).toISOString();
   const legacy = { schema: 'gk-learning-v2-status-response', checkedAt: new Date(nowMs).toISOString(), status: completedResponse().status };
-  for (const body of [partial, invalidTime, invalidOrder, legacy]) {
+  const missingFinal = completedResponse(); delete missingFinal.archive.finalExecutionSourceCommit;
+  const inventedCall = completedResponse(); inventedCall.archive.recovery.additionalModelCalls = 1;
+  const tooFewInvalid = completedResponse(); tooFewInvalid.status.counts.invalid = 3; tooFewInvalid.status.counts.noCoverage = 4;
+  const hybrid = completedResponse(); hybrid.archive = legacyCompletedResponse().archive;
+  for (const body of [partial, invalidTime, invalidOrder, legacy, legacyCompletedResponse(), missingFinal,
+    inventedCall, tooFewInvalid, hybrid]) {
     const view = ui(async () => body); await view.mount();
     const text = view.text();
     assert.equal(text.includes('Completed pilot'), false); assert.equal(text.includes('10 of 10 completed'), false);
@@ -158,6 +183,30 @@ test('server freshness refusal remains unavailable on either skewed client clock
     assert.deepEqual(view.requests.map(item => item.name), ['gatekeeperLearningHistory']);
     view.unmount();
   }
+});
+
+test('actual UI waits through the 60-second server budget and rejects a reply at its 75-second deadline', async () => {
+  let resolveReply;
+  const view = ui(() => new Promise(resolve => { resolveReply = resolve; }));
+  await view.mount();
+  view.advance(20_000);
+  assert.match(view.text(), /Verifying the completed checkpoint/);
+  assert.doesNotMatch(view.text(), /Pilot archive is unavailable/);
+  view.advance(40_000);
+  assert.match(view.text(), /Verifying the completed checkpoint/);
+  resolveReply(completedResponse()); await flush();
+  assert.match(view.text(), /Completed pilot/);
+  view.refresh(); await flush();
+  assert.equal(view.text().includes(binding.closureDigest), false);
+  view.advance(74_999);
+  assert.match(view.text(), /Verifying the completed checkpoint/);
+  view.advance(1);
+  assert.match(view.text(), /Pilot archive is unavailable/);
+  resolveReply(completedResponse()); await flush();
+  assert.doesNotMatch(view.text(), /Completed pilot|10 of 10 completed/);
+  assert.equal(view.text().includes(binding.closureDigest), false);
+  assert.deepEqual(view.requests.map(item => item.name), Array(2).fill('gatekeeperLearningHistory'));
+  view.unmount();
 });
 
 test('refresh clears prior history and timeout/unmount prevent late replies restoring a completed snapshot', async () => {
