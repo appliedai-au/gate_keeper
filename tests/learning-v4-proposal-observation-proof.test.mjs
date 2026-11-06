@@ -59,12 +59,33 @@ test('D exact source qualification independently checks live complete review evi
       pull_request_url: 'https://api.github.com/repos/appliedai-au/gate_keeper/pulls/160',
       body: 'TEST-ONLY historical finding. Fixed by @' + g.owner.login + ' in ' + fix.slice(0, 8) };
     g.routes.set('/pulls/comments/704', finding);
-    g.routes.set('/compare/' + fix + '...' + D_HEAD + '?per_page=100', { status: 'ahead', base_commit: { sha: fix },
+    const comparisonPath = '/compare/' + fix + '...' + D_HEAD + '?per_page=100';
+    g.routes.set(comparisonPath, { status: 'ahead', base_commit: { sha: fix },
       merge_base_commit: { sha: fix }, total_commits: 1, commits: [{ sha: D_HEAD }] });
     g.proof.review.resolvedComments.push({ id: 704, bodySha256: g.sha(finding.body), commitId: original, fixCommit: fix }); g.refresh();
+    const fetcher = g.fetcher, comparisons = [];
+    g.fetcher = async (url, options) => {
+      if (url.includes('/compare/')) comparisons.push(url);
+      return fetcher(url, options);
+    };
     const approved = await verify(g); assert.equal(approved.implementationCommit, D);
-    g.routes.get('/compare/' + fix + '...' + D_HEAD + '?per_page=100').merge_base_commit.sha = original;
+    assert.deepEqual(comparisons, ['https://api.github.com/repos/appliedai-au/gate_keeper' + comparisonPath]);
+    g.routes.get(comparisonPath).merge_base_commit.sha = original;
     await assert.rejects(verify(g), /not proven/);
+  });
+  await t.test('comparison selectors reject traversal, encoding, query and noncanonical hashes before fetching', async () => {
+    for (const invalid of ['../main', '%2e%2e%2fmain', '2'.repeat(39), '2'.repeat(41),
+      'A'.repeat(40), '2'.repeat(40) + '?per_page=1', '2'.repeat(40) + '/..', '2'.repeat(40) + '...main']) {
+      const g = fresh(), fetcher = g.fetcher, comparisons = [];
+      g.proof.review.resolvedComments.push({ id: 704, bodySha256: '3'.repeat(64),
+        commitId: '1'.repeat(40), fixCommit: invalid }); g.refresh();
+      g.fetcher = async (url, options) => {
+        if (url.includes('/compare/')) comparisons.push(url);
+        return fetcher(url, options);
+      };
+      await assert.rejects(verify(g), /actual fix commit: invalid digest/);
+      assert.deepEqual(comparisons, [], 'an invalid selector must never reach the comparison transport');
+    }
   });
   await t.test('full review pagination is bounded and cannot omit a later page blocker', async () => {
     const g = fresh();
