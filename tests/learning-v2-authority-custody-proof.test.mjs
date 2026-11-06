@@ -9,6 +9,8 @@ import { copy, digest } from '../scripts/learning-v2/contracts.mjs';
 import { verifyEnvelope } from '../scripts/learning-trust.mjs';
 import { openAuthorityCustody } from '../scripts/learning-v2/authority-custody.mjs';
 import { createSourceGateVerifier } from '../scripts/learning-v2/authority-source-proof.mjs';
+import { createImplementationSourceVerifier, verifyOwnerContinuationAuthorization,
+  CONTINUATION_PURPOSE } from '../scripts/learning-v2/implementation-proof.mjs';
 
 // REMOTE-ONLY REGRESSION SOURCE. Disposable test keys and fake public GitHub
 // documents are not real signer identities, qualifications or pilot evidence.
@@ -124,6 +126,59 @@ test('source gate independently fetches exact merged tree and real dashboard evi
   assert.equal(result.runId, f.receipt.deployment.deploymentId);
   assert.equal(result.evidence.qualification.review.nativeReviews[0].state, 'COMMENTED');
   assert.equal(result.evidence.reviewArtifacts.find(item => item.id === 4).state, 'COMMENTED');
+});
+
+test('separate implementation proof verifies actual B tree and original owner without changing frozen A policy', async () => {
+  const f = sourceFixture(), originalProof = await f.verify(f.bundle);
+  const descriptor = { schema: 'gk-learning-implementation-source-proof-v1',
+    sourceProof: originalProof.evidence.descriptor, gatePolicy: copy(f.bundle.config.gatePolicy) };
+  const frozen = { binding: { sourceCommit: '1'.repeat(40) }, config: { gatePolicy: {
+    ...copy(f.bundle.config.gatePolicy), effectiveTreeDigest: sha('TEST-ONLY immutable A tree') } } };
+  const before = JSON.stringify(frozen);
+  const fetcher = async url => Response.json(copy(f.documents.get(url)));
+  const options = { bundle: frozen, originalEvidence: originalProof.evidence, implementationCommit: f.bundle.binding.sourceCommit };
+  const result = await createImplementationSourceVerifier({ descriptor, fetcher })(options);
+  assert.equal(result.implementationCommit, f.bundle.binding.sourceCommit);
+  assert.equal(result.implementationTree, f.receipt.treeSha);
+  assert.equal(JSON.stringify(frozen), before, 'A bundle/gate-policy bytes remain untouched');
+  const differentOwner = copy(descriptor); differentOwner.sourceProof.qualification.authorId++;
+  await assert.rejects(createImplementationSourceVerifier({ descriptor: differentOwner, fetcher })(options), /owner differs/);
+  const weakerGate = copy(descriptor); weakerGate.gatePolicy.presetDigest = sha('different preset');
+  await assert.rejects(createImplementationSourceVerifier({ descriptor: weakerGate, fetcher })(options), /weakens/);
+  await assert.rejects(createImplementationSourceVerifier({ descriptor, fetcher })({ ...options,
+    implementationCommit: '2'.repeat(40) }), /actual different image/);
+  f.documents.get(f.root + '/branches/main').commit.sha = frozen.binding.sourceCommit;
+  await assert.rejects(createImplementationSourceVerifier({ descriptor, fetcher })(options), /current main/);
+});
+
+test('owner continuation authorization binds exact new qualification, retained proof and explicit remainder scope', async () => {
+  const owner = { id: 123, login: 'test-owner' }, binding = { ownerId: 'test-owner', experimentId: 'test-experiment',
+    sourceCommit: 'a'.repeat(40), configDigest: sha('TEST-ONLY original config') };
+  const qualificationEnvelope = { body: { implementationCommit: 'b'.repeat(40), implementationTree: 'c'.repeat(40) },
+    signature: 'TEST-ONLY already verified at the authority composition seam' };
+  const preparedEnvelope = { body: { retained: { operationId: 'TEST-ONLY-original-base', maxCalls: 14 },
+    preparedAt: '2026-11-06T04:00:00Z' }, signature: 'TEST-ONLY already verified' };
+  const value = { schema: 'gk-learning-owner-base-continuation-v1', purpose: CONTINUATION_PURPOSE, binding,
+    implementationCommit: 'b'.repeat(40), implementationTree: 'c'.repeat(40),
+    qualificationDigest: digest(qualificationEnvelope), preparedProofDigest: digest(preparedEnvelope),
+    retainedDigest: digest(preparedEnvelope.body.retained), allowCorrectedReaderRemainder: true };
+  const run = async (mutateValue = () => {}, mutateComment = () => {}, mutatePin = () => {}) => {
+    const payload = copy(value); mutateValue(payload);
+    const comment = { id: 9, user: copy(owner), body: 'GK_BASE_CONTINUATION_AUTHORIZATION\n' + JSON.stringify(payload),
+      created_at: '2026-11-06T04:01:00Z', issue_url: 'https://api.github.com/repos/appliedai-au/gate_keeper/issues/58' };
+    const descriptor = { commentId: 9, bodySha256: sha(comment.body) }; mutateComment(comment); mutatePin(descriptor);
+    return verifyOwnerContinuationAuthorization({ descriptor, preparedEnvelope, qualificationEnvelope,
+      qualificationEvidence: { owner, qualificationPullRequest: 58 }, bundle: { binding },
+      fetcher: async () => Response.json(comment) });
+  };
+  assert.deepEqual((await run()).authorization, value);
+  await assert.rejects(run(v => { v.allowCorrectedReaderRemainder = false; }), /did not authorize/);
+  await assert.rejects(run(v => { v.retainedDigest = sha('different-operation'); }), /retained state/);
+  await assert.rejects(run(v => { v.qualificationDigest = sha('different qualification'); }), /substitutes/);
+  await assert.rejects(run(() => {}, c => { c.user.id++; }), /owner, bytes or PR/);
+  await assert.rejects(run(() => {}, c => { c.body += '\nchanged'; }), /owner, bytes or PR/);
+  await assert.rejects(run(() => {}, c => { c.issue_url = c.issue_url.replace('/58', '/44'); }), /owner, bytes or PR/);
+  await assert.rejects(run(() => {}, c => { c.created_at = '2026-11-06T03:00:00Z'; }), /must follow/);
 });
 
 test('source gate accepts actual zero-finding Gitar dashboard wording only with its exact-head acknowledgement', async () => {

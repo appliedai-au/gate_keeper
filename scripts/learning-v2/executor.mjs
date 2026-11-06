@@ -10,6 +10,7 @@ import { POLICY, canonical, copy, digest, hash, identifier, procedure, procedure
   record, requireThat, text } from './contracts.mjs';
 import { LEGACY_BAG_BLOB, LEGACY_RENDERER_ID, mergeReviews, parseRawReview, parseReview, renderReview } from './legacy-renderer.mjs';
 import { runTrueForgeTurn, TURN_CONFIG, turnInputDigest } from './trueforge-turn.mjs';
+import { baselineContinuationArchive, replayOriginalBaselineResult } from './baseline-continuation.mjs';
 
 const bytesDigest = bytes => createHash('sha256').update(bytes).digest('hex');
 const references = state => [...state.history, ...state.attempts.filter(item => item.candidate).map(item =>
@@ -70,7 +71,8 @@ function passEvidence(result, pass, originReceiptId = null) {
  * provider artifacts before issuing a receipt. No authority endpoint defaults
  * or self-signing fallback are supplied.
  */
-export function createLearningExecutor({ controller, client, runtime, caseInputs, archiveFactory, authorities, timing = {} }) {
+export function createLearningExecutor({ controller, client, runtime, caseInputs, archiveFactory, authorities,
+  timing = {}, baselineContinuation = null }) {
   requireThat(controller && typeof controller.state === 'function' && typeof archiveFactory === 'function',
     'controller and private archive factory required');
   requireThat(timing && typeof timing === 'object' && !Array.isArray(timing), 'timing options');
@@ -133,7 +135,10 @@ export function createLearningExecutor({ controller, client, runtime, caseInputs
       'original first-pass instruction bytes drift');
     requireThat(frozenInputs.length === state.config.cases.length &&
       state.config.cases.every(item => inputs.has(item.caseId)), 'case-input coverage differs from experiment');
-    const archive = await archiveFactory({ operation: copy(held), request: copy(request) });
+    requireThat(baselineContinuation === null || held.kind === 'baseline' && held.maxCalls === 14 && held.attemptId === null,
+      'verified continuation capability is restricted to original BASE');
+    const archive = baselineContinuation === null ? await archiveFactory({ operation: copy(held), request: copy(request) }) :
+      baselineContinuationArchive(baselineContinuation);
     requireThat(archive && ['claimOperation', 'claimCall', 'recordCall', 'recordArtifact', 'read']
       .every(method => typeof archive[method] === 'function'), 'private operation archive unavailable');
     await archive.claimOperation(held, request);
@@ -146,7 +151,9 @@ export function createLearningExecutor({ controller, client, runtime, caseInputs
     });
     const invoke = async (slot, rendered) => {
       const call = callFor(slot, rendered);
-      const result = await runTrueForgeTurn({ client, call, archive, ...frozenTiming });
+      const replay = baselineContinuation === null ? null : await replayOriginalBaselineResult(baselineContinuation, call);
+      // The first original result bypasses runTrueForgeTurn and the SDK entirely.
+      const result = replay ?? await runTrueForgeTurn({ client, call, archive, ...frozenTiming });
       requireThat(result.callId === call.callId && result.inputDigest === turnInputDigest(call) &&
         result.outputDigest === bytesDigest(result.text), 'captured turn identity drift');
       passEvidence(result, 1); // Completion only; the actual pass is set below.

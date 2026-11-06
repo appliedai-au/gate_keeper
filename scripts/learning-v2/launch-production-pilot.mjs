@@ -4,27 +4,35 @@ import { fileURLToPath } from 'node:url';
 import { identifier, requireThat } from './contracts.mjs';
 import { openProductionPilot } from './production-driver.mjs';
 import { PRODUCTION_DIRECTORY, PRODUCTION_REPOSITORY_ROOT, publishProductionStatus,
-  readProductionConfig } from './production-config.mjs';
+  readProductionConfig, verifyProductionImplementationForCommand } from './production-config.mjs';
 
 export async function productionCommand({ command, operationId = null, sourceCommit }) {
-  requireThat(['init', 'run', 'resume-review', 'reconcile-usage', 'reconcile-operation', 'status'].includes(command), 'production command');
+  requireThat(['init', 'run', 'resume-review', 'reconcile-usage', 'reconcile-operation', 'status',
+    'prepare-baseline', 'continue-baseline'].includes(command), 'production command');
   requireThat(['resume-review', 'reconcile-usage', 'reconcile-operation'].includes(command) ? operationId !== null : operationId === null,
     'production operation argument');
   if (operationId !== null) identifier(operationId, 'production operationId');
   const config = readProductionConfig(sourceCommit);
+  verifyProductionImplementationForCommand({ bundle: config.bundle, sourceCommit, command,
+    status: config.implementation?.status ?? null });
   const driver = await openProductionPilot({ directory: PRODUCTION_DIRECTORY,
     repositoryRoot: PRODUCTION_REPOSITORY_ROOT, bundle: config.bundle, authority: config.authority,
-    initialize: command === 'init' });
+    initialize: command === 'init', implementation: config.implementation ?? null });
   await publishProductionStatus(config, driver);
   if (command === 'init') return { status: 'initialized', learning: await driver.status() };
   if (command === 'run') return driver.run();
+  if (command === 'prepare-baseline') return driver.prepareBaselineContinuation();
+  if (command === 'continue-baseline') return driver.continueBaseline();
   if (command === 'resume-review') {
     const result = await driver.resumeProposalReview({ operationId });
     return result.status === 'advanced' ? driver.run() : result;
   }
   if (command === 'reconcile-usage') return driver.reconcileUsage({ operationId });
   if (command === 'reconcile-operation') return driver.reconcileOperation({ operationId });
-  return { status: 'observed', learning: await driver.status() };
+  return { status: 'observed', learning: await driver.status(), implementation: {
+    frozenExperimentCommit: config.bundle.binding.sourceCommit, actualPlatformCommit: sourceCommit,
+    qualificationReceiptId: config.implementation?.status.qualificationEnvelope.body.receiptId ?? null,
+    continuationReceiptId: config.implementation?.status.authorizationEnvelope?.body.receiptId ?? null } };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
