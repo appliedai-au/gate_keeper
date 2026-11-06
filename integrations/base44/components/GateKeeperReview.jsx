@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { validCommand, validReviewReply } from "../shared/review-contract.js";
+import { parsePendingRequest, pendingAfterReply } from "../shared/review-pending.js";
 import "./GateKeeperReview.css";
 
 const COPY = {
@@ -25,9 +26,8 @@ const PROBLEMS = {
   not_found: "This review is not available to your account.",
 };
 const PENDING_KEY = "gatekeeper-review-pending-v1";
-const terminal = job => ["complete", "failed"].includes(job?.state);
 function readPending() {
-  try { return JSON.parse(sessionStorage.getItem(PENDING_KEY)) || null; } catch { return null; }
+  try { return parsePendingRequest(sessionStorage.getItem(PENDING_KEY)); } catch { return null; }
 }
 function savePending(value) {
   try { if (value) sessionStorage.setItem(PENDING_KEY, JSON.stringify(value)); else sessionStorage.removeItem(PENDING_KEY); }
@@ -73,8 +73,7 @@ export default function GateKeeperReview() {
       if (!current()) return;
       sourceRef.current = body.sourceCommit; setSource(body.sourceCommit);
       setJob(body.job); setHistory(body.jobs);
-      if (body.job && !terminal(body.job)) remember({ key: pendingRef.current?.key ?? null, jobId: body.job.id });
-      else if (body.job && pendingRef.current?.jobId === body.job.id) remember(null);
+      remember(pendingAfterReply(pendingRef.current, body));
     } catch (error) {
       if (!active()) return;
       const code = error?.response?.data?.error || error?.message;
@@ -94,8 +93,8 @@ export default function GateKeeperReview() {
 
   async function submit(event) {
     event.preventDefault();
-    if (!consent || !source || busy || lock.current || pendingRef.current?.jobId) return;
-    const key = pendingRef.current?.key || crypto.randomUUID();
+    if (!consent || !source || busy || lock.current || pendingRef.current) return;
+    const key = crypto.randomUUID();
     const command = { action: "submit", idempotencyKey: key, input };
     if (!validCommand(command)) { setProblem(PROBLEMS.invalid_request); return; }
     // Only opaque identifiers are kept across page refresh. Code and findings
@@ -111,6 +110,17 @@ export default function GateKeeperReview() {
     });
   }
 
+  function newDraft() {
+    if (lock.current || !pendingRef.current || pendingRef.current.jobId) return;
+    // This is a local, explicit transition, not cancellation or replay. Server
+    // jobs/keys remain intact and still block a second unresolved review.
+    requestVersion.current++;
+    remember(null); setJob(null); setProblem(null); setConsent(false);
+  }
+  const resultCopy = job?.state === "failed" && job.code === "runtime_changed"
+    ? ["Review not started", "The review service version changed before this request was sent. You can submit a new review."]
+    : job ? COPY[job.state] : null;
+
   return <section className="gk-review" aria-labelledby="gk-review-heading">
     <div className="gk-section-heading"><div className="gk-review-kicker">PRIVATE CODE REVIEW</div>
       <h1 id="gk-review-heading">Review your change.</h1>
@@ -120,11 +130,14 @@ export default function GateKeeperReview() {
       <span>{source ? "Review connection available" : "Review connection not confirmed"}</span>
       <button type="button" disabled={busy} onClick={() => action(() => call({ action: "info" }, null))}>Check connection</button>
       <button type="button" disabled={busy} onClick={() => action(() => call({ action: "list" }, null))}>Recent reviews</button>
+      {pending && !pending.jobId && <button type="button" disabled={busy} onClick={() => action(() => call({ action: "list" }, null))}>Find saved submission</button>}
+      {pending && !pending.jobId && <button type="button" disabled={busy} onClick={newDraft}>Prepare a new review</button>}
       {pending?.jobId && <button type="button" disabled={busy} onClick={() => action(() => call({ action: "get", jobId: pending.jobId }, null))}>Check saved request</button>}
     </div>
     {problem && <p className="gk-review-alert" role="alert">{problem}</p>}
     {busy && <p role="status">Checking the saved review service…</p>}
     {pending && !job && <p className="gk-review-note">A submission may already be saved. Use recent reviews or check its saved request before starting another.</p>}
+    {pending && !pending.jobId && <p className="gk-review-note">Preparing a new review resets this tab's recovery reference. Saved requests remain in history, and an unresolved review still prevents another from starting.</p>}
 
     <form onSubmit={submit} className="gk-review-form">
       <label>Filename<input value={input.file} maxLength={160} required placeholder="src/api/invoices.ts"
@@ -139,7 +152,7 @@ export default function GateKeeperReview() {
         onChange={event => setInput({ ...input, code: event.target.value })} /></label>
       <label className="gk-review-consent gk-review-wide"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} />
         Send this code to the configured model for one read-only review. This uses inference and may incur a charge.</label>
-      <div className="gk-review-wide"><button type="submit" disabled={!source || busy || !consent || Boolean(pending?.jobId)}>{pending ? "Recover submission" : "Start review"}</button>
+      <div className="gk-review-wide"><button type="submit" disabled={!source || busy || !consent || Boolean(pending)}>Start review</button>
         <p className="gk-review-note">No repository access or code execution is included. Findings do not authorize repairs, merges or deployments.</p></div>
     </form>
 
@@ -148,8 +161,8 @@ export default function GateKeeperReview() {
         {item.file} · {COPY[item.state][0]} · {new Date(item.createdAt).toLocaleString()}</button></li>)}</ul>
     </section>}
     {job && <section className="gk-review-card" aria-labelledby="gk-review-result-heading">
-      <div className="gk-review-kicker">{job.file} · {job.lineCount} lines</div><h2 id="gk-review-result-heading">{COPY[job.state][0]}</h2>
-      <p>{COPY[job.state][1]}</p>
+      <div className="gk-review-kicker">{job.file} · {job.lineCount} lines</div><h2 id="gk-review-result-heading">{resultCopy[0]}</h2>
+      <p>{resultCopy[1]}</p>
       <p className="gk-review-note">Saved request: <code>{job.id}</code></p>
       <div className="gk-review-toolbar">
         <button disabled={busy} onClick={() => action(() => call({ action: "get", jobId: job.id }, null))}>Check status</button>

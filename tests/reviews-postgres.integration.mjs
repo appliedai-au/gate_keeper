@@ -237,3 +237,90 @@ test('wrong capability, owner, app or source is denied before database/provider 
   ]) assert.equal((await invoke(service, owner.ownerId, { action: 'list' }, headers)).status, status);
   assert.equal(reads, 0); assert.equal(upstream.calls.sessions, 0); assert.equal(upstream.calls.turns, 0);
 });
+
+test('runtime drift fails only an untouched queued job and retains its idempotency custody', async t => {
+  const [store, other] = await setup(t);
+  for (const moved of [
+    { ...runtime, sourceCommit: 'b'.repeat(40) },
+    { ...runtime, runtimeDigest: 'c'.repeat(64) },
+  ]) {
+    const owner = scope(), key = randomUUID();
+    const saved = await store.admit(owner, key, input, runtime);
+    const result = await other.claim(owner, saved.id, moved, () => assert.fail('drift cannot dispatch'));
+    assert.equal(result.claim, null); assert.equal(result.row.state, 'failed');
+    assert.equal(result.row.code, 'runtime_changed');
+    assert.equal(result.row.session_id, null); assert.equal(result.row.turn_id, null);
+    const observations = await store.pool.query('SELECT stage FROM gatekeeper_reviews.observations WHERE job_id=$1', [saved.id]);
+    assert.deepEqual(observations.rows, []);
+    const original = await store.admit(owner, key, input, moved);
+    assert.equal(original.id, saved.id); assert.equal(original.state, 'failed');
+    assert.equal(original.input_digest, saved.input_digest); assert.equal(original.source_commit, saved.source_commit);
+    const fresh = await other.admit(owner, randomUUID(), input, moved);
+    assert.notEqual(fresh.id, saved.id); assert.equal(fresh.state, 'queued');
+  }
+});
+
+test('queued labels with any persisted observation or upstream identity cannot release the owner slot', async t => {
+  const [store, other] = await setup(t), moved = { ...runtime, sourceCommit: 'b'.repeat(40) };
+  for (const evidence of ['intent', 'receipt', 'session-id']) {
+    const owner = scope(), saved = await store.admit(owner, randomUUID(), input, runtime);
+    if (evidence === 'session-id') {
+      await store.pool.query('UPDATE gatekeeper_reviews.jobs SET session_id=$2 WHERE id=$1', [saved.id, 'possible-session']);
+    } else {
+      await store.pool.query('INSERT INTO gatekeeper_reviews.observations(job_id,stage,payload) VALUES ($1,$2,$3)',
+        [saved.id, evidence === 'intent' ? 'session_intent' : 'session_receipt', { synthetic: evidence }]);
+    }
+    const result = await other.claim(owner, saved.id, moved, () => assert.fail('uncertain evidence cannot dispatch'));
+    assert.equal(result.claim, null); assert.equal(result.row.state, 'held');
+    await assert.rejects(store.admit(owner, randomUUID(), input, moved), { code: 'review_in_progress' });
+  }
+});
+
+test('source drift keeps every claimed or dispatched phase held, never failed or reissued', async t => {
+  const [store, other] = await setup(t), moved = { ...runtime, sourceCommit: 'b'.repeat(40) };
+  for (const phase of ['session_dispatch', 'session_created', 'turn_dispatch', 'running']) {
+    const owner = scope(), saved = await store.admit(owner, randomUUID(), input, runtime);
+    await store.claim(owner, saved.id, runtime, runtime.request);
+    if (phase !== 'session_dispatch') await store.receipt(owner, saved.id, 'session', { id: 'session-existing' }, 'session-existing');
+    if (['turn_dispatch', 'running'].includes(phase)) await store.claim(owner, saved.id, runtime, runtime.request);
+    if (phase === 'running') await store.receipt(owner, saved.id, 'turn', { id: 'turn-existing' }, 'turn-existing');
+    assert.equal((await store.get(owner, saved.id)).state, phase);
+    const result = await other.claim(owner, saved.id, moved, () => assert.fail('prior dispatch cannot restart'));
+    assert.equal(result.claim, null); assert.equal(result.row.state, 'held');
+    assert.equal(result.row.code, 'runtime_changed');
+    assert.equal((await store.claim(owner, saved.id, runtime, runtime.request)).claim, null);
+    await assert.rejects(other.admit(owner, randomUUID(), input, moved), { code: 'review_in_progress' });
+  }
+});
+
+test('a real PostgreSQL race cannot mark queued work failed after another pool commits its dispatch intent', async t => {
+  const [store, other] = await setup(t), moved = { ...runtime, sourceCommit: 'b'.repeat(40) };
+  const owner = scope(), saved = await store.admit(owner, randomUUID(), input, runtime);
+  const [original, changed] = await Promise.all([
+    store.claim(owner, saved.id, runtime, runtime.request),
+    other.claim(owner, saved.id, moved, () => assert.fail('new runtime must not dispatch')),
+  ]);
+  const final = await store.get(owner, saved.id);
+  const observations = await other.pool.query('SELECT stage FROM gatekeeper_reviews.observations WHERE job_id=$1', [saved.id]);
+  assert.equal(changed.claim, null);
+  if (original.claim === null) {
+    assert.equal(final.state, 'failed'); assert.deepEqual(observations.rows, []);
+  } else {
+    assert.equal(original.claim.phase, 'session'); assert.equal(final.state, 'held');
+    assert.deepEqual(observations.rows.map(row => row.stage), ['session_intent']);
+    await assert.rejects(other.admit(owner, randomUUID(), input, moved), { code: 'review_in_progress' });
+  }
+});
+
+test('scoped history identifies the saved key without accepting an owner or replaying a submission', async t => {
+  const [store] = await setup(t), owner = scope(), upstream = provider(), key = randomUUID();
+  const service = createReviewService({ store, ...upstream, runtime, ownerId: owner.ownerId, tokenHash });
+  const saved = await invoke(service, owner.ownerId, { action: 'submit', idempotencyKey: key, input });
+  assert.equal(saved.body.job.requestKey, key);
+  const history = await invoke(service, owner.ownerId, { action: 'list' });
+  assert.equal(history.body.jobs[0].requestKey, key); assert.equal(history.body.jobs[0].id, saved.body.job.id);
+  assert.equal(upstream.calls.sessions, 0); assert.equal(upstream.calls.turns, 0);
+  const denied = await invoke(service, owner.ownerId, { action: 'list' }, { 'x-gatekeeper-review-owner': 'other-owner' });
+  assert.equal(denied.status, 403); assert.equal(JSON.stringify(denied.body).includes(key), false);
+  service.stop();
+});

@@ -50,13 +50,13 @@ export function validFindings(value, lineCount) {
     new TextEncoder().encode(x.comment).length <= 1000);
 }
 
-const SUMMARY_FIELDS = ["id", "file", "language", "lineCount", "state", "code", "sourceCommit",
+const SUMMARY_FIELDS = ["id", "requestKey", "file", "language", "lineCount", "state", "code", "sourceCommit",
   "createdAt", "updatedAt", "estimatedCostUsd", "billingStatus"];
 const timestamp = x => typeof x === "string" && /^\d{4}-\d{2}-\d{2}T[0-9:.]+Z$/u.test(x) &&
   Number.isFinite(Date.parse(x));
 export function validJob(x, detail = true) {
   return keysAre(x, detail ? [...SUMMARY_FIELDS, "findings"] : SUMMARY_FIELDS) &&
-    validId(x.id) && bounded(x.file, 160) && bounded(x.language, 20) &&
+    validId(x.id) && validId(x.requestKey) && bounded(x.file, 160) && bounded(x.language, 20) &&
     Number.isSafeInteger(x.lineCount) && x.lineCount >= 1 && x.lineCount <= 1000 &&
     REVIEW_STATES.includes(x.state) && (x.code === null || REVIEW_CODES.includes(x.code)) &&
     validSource(x.sourceCommit) && timestamp(x.createdAt) && timestamp(x.updatedAt) &&

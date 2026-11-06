@@ -53,6 +53,17 @@ identifiers. Findings render as escaped React text. Private code, model observat
 and receipts stay in server-side storage. TrueForge session responses must report
 `shared: false` and the expected inline agent before any turn is sent.
 
+Job summaries and details include the authenticated owner's opaque `requestKey`.
+It is a recovery identifier, not an access credential. After a lost submission
+acknowledgement, the app reads history to match that exact key rather than reposting
+the ambiguous submission or guessing that any terminal history row is its result.
+A matching terminal row clears the local pending reference. An explicit **Prepare
+a new review** action can clear a job-ID-less tab reference without any network
+request; it retains the edited draft and resets inference acknowledgement. It does
+not cancel/delete a server job or release the PostgreSQL unresolved slot. A later
+submission gets a fresh key and is still blocked while any saved review is unresolved.
+Late acknowledgements cannot restore expired references or start the old review.
+
 The existing TrueForge API is called only through the SDK:
 
 1. `sessions.create({ agent: { spec }, metadata })` → `POST /api/v1/sessions`.
@@ -97,6 +108,13 @@ A claimed write is never leased back to queued or automatically reissued. A time
 lost acknowledgement, invalid receipt or persistence uncertainty holds the request.
 A dispatch abandoned by a crash becomes held when checked after two minutes. A late
 receipt is preserved privately and does not reopen the job.
+
+A source/runtime change fails a queued request as `runtime_changed` only when, under
+its PostgreSQL row lock, there are no upstream session/turn IDs and no observations
+of any kind. That proves no application dispatch intent exists, so the owner slot
+can be released without erasing the job or its unique idempotency key. A queued label
+with evidence, or any claimed/dispatched phase, remains held. Concurrent old/new
+runtime claims cannot both dispatch or release a row after a dispatch intent wins.
 
 This provides durable at-most-once application dispatch for each claimed operation.
 It does not claim upstream exactly-once execution: a request can be accepted before
@@ -181,6 +199,13 @@ transaction, uncertain session/turn POSTs, receipt-store failure before dispatch
 late receipts, terminal result durability and GET-only polling. Synthetic SDK peers
 count calls; they cannot reach a provider. Caddy tests verify the exact route, token,
 owner, app, source, no-store behavior and unchanged ordinary Basic Auth.
+
+The PR59 recovery regressions also exercise exact request-key history matching and
+the actual compiled JSX through a lost acknowledgement, edited code, explicit local
+new-draft transition and late response. Real PostgreSQL cases distinguish untouched
+queued work from queued rows with evidence, all claimed phases, and a concurrent
+old-runtime claim versus a new-runtime failure decision. These are authored source
+regressions, not a claim that this revised packet has executed or passed.
 
 Qualification acceptance requires the exact-source complete log, zero failures and
 zero skips for the PostgreSQL suite, installed package versions, and the final

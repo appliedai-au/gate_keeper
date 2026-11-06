@@ -11,7 +11,7 @@ const normalizeInput = input => ({ file: input.file, language: input.language,
 
 export function projectJob(row, detail = true) {
   const job = {
-    id: row.id, file: row.input.file, language: row.input.language,
+    id: row.id, requestKey: row.idempotency_key, file: row.input.file, language: row.input.language,
     lineCount: row.input.code.split('\n').length, state: row.state, code: row.code,
     sourceCommit: row.source_commit, createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
@@ -79,13 +79,25 @@ export class ReviewStore {
         WHERE app_id=$1 AND owner_id=$2 AND id=$3 FOR UPDATE`, [...scoped(scope), id]);
       const row = result.rows[0];
       if (!row) throw new ReviewError('not_found', 404);
-      if (!['queued', 'session_created'].includes(row.state)) return { row, claim: null };
-      if (row.source_commit !== binding.sourceCommit || row.runtime_digest !== binding.runtimeDigest) {
-        const held = await client.query(`UPDATE gatekeeper_reviews.jobs SET state='held',
-          code='runtime_changed', updated_at=now() WHERE app_id=$1 AND owner_id=$2 AND id=$3 RETURNING *`,
-        [...scoped(scope), id]);
-        return { row: held.rows[0], claim: null };
+      const drift = row.source_commit !== binding.sourceCommit || row.runtime_digest !== binding.runtimeDigest;
+      if (drift && !['complete', 'failed', 'held'].includes(row.state)) {
+        let nextState = 'held';
+        // A queued label alone is insufficient. Under the same row lock, prove
+        // there are neither upstream IDs nor any durable intent/receipt before
+        // releasing the owner's slot. Every application observation writer takes
+        // this row lock, so a concurrent claim cannot appear between these steps.
+        if (row.state === 'queued' && row.session_id === null && row.turn_id === null) {
+          const evidence = await client.query(`SELECT stage FROM gatekeeper_reviews.observations
+            WHERE job_id=$1 LIMIT 1`, [id]);
+          if (evidence.rows.length === 0) nextState = 'failed';
+        }
+        const changed = await client.query(`UPDATE gatekeeper_reviews.jobs SET state=$4,
+          code='runtime_changed', updated_at=now() WHERE app_id=$1 AND owner_id=$2 AND id=$3
+          AND state=$5 RETURNING *`, [...scoped(scope), id, nextState, row.state]);
+        if (changed.rows.length !== 1) throw new ReviewError('review_unavailable');
+        return { row: changed.rows[0], claim: null };
       }
+      if (!['queued', 'session_created'].includes(row.state)) return { row, claim: null };
       const phase = row.state === 'queued' ? 'session' : 'turn';
       const request = makeRequest(row, phase);
       await client.query(`INSERT INTO gatekeeper_reviews.observations(job_id,stage,payload)
