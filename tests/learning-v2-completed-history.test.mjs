@@ -214,15 +214,26 @@ test('private numbered capsule transport rejects omitted, duplicated, reordered 
 test('ten-attempt v2 rejects an authentic consume-only D authorization and altered historical D facts', async t => {
   const f = await completedPilotFixture(t), options = { binding: f.bundle.binding, trust: f.trust,
     config: f.bundle.config, history: f.bundle.history };
+  const originalStatusBytes = JSON.stringify(f.implementation.status);
+  const statusOptions = { binding: f.bundle.binding, trust: f.trust,
+    implementationCommit: f.capsule.finalExecutionSourceCommit, requireAuthorization: true };
+  assert.equal(verifyProposalObservationStatus(f.implementation.status, { ...statusOptions,
+    requireRemainder: true }).authorizationEnvelope.body.allowRemainingExperiment, true,
+  'the original signed status authorizes the completed remainder');
   const value = copy(f.capsule), envelope = JSON.parse(value.proposalObservation.authorization);
   envelope.body.allowRemainingExperiment = false;
   const signed = f.keys.evaluation.issue(envelope.body);
   value.proposalObservation.authorization = JSON.stringify(signed);
-  const status = copy(f.implementation.status); status.authorizationEnvelope = signed;
-  assert.equal(verifyProposalObservationStatus(status, { binding: f.bundle.binding, trust: f.trust,
-    implementationCommit: value.finalExecutionSourceCommit, requireAuthorization: true }).authorizationEnvelope.body.allowRemainingExperiment, false,
+  // These signatures authenticate original JSON bytes. contracts.copy sorts
+  // object keys, so it would corrupt the retained historical B envelopes.
+  const status = JSON.parse(originalStatusBytes); status.authorizationEnvelope = signed;
+  assert.equal(JSON.stringify({ ...status, authorizationEnvelope: f.implementation.status.authorizationEnvelope }), originalStatusBytes,
+    'only the deliberately re-signed authorization envelope differs');
+  assert.equal(verifyProposalObservationStatus(status, statusOptions).authorizationEnvelope.body.allowRemainingExperiment, false,
   'the signed proof is sufficient only for bounded original-fourth consumption');
-  assert.throws(() => verifyAuthorityCapsule(value, options), /remainder|remaining/i);
+  const remainderRefusal = { message: 'LEARNING_V2_REJECTED: D observation does not authorize remaining experiment execution' };
+  assert.throws(() => verifyProposalObservationStatus(status, { ...statusOptions, requireRemainder: true }), remainderRefusal);
+  assert.throws(() => verifyAuthorityCapsule(value, options), remainderRefusal);
   const wrongFacts = copy(f.capsule); wrongFacts.proposalObservation.qualificationFacts.source.parents.reverse();
   assert.throws(() => verifyAuthorityCapsule(wrongFacts, options), /qualification|facts/);
   const changedOutput = copy(f.capsule), prepared = JSON.parse(changedOutput.proposalObservation.preparation);
@@ -237,6 +248,7 @@ test('ten-attempt v2 rejects an authentic consume-only D authorization and alter
   assert.equal(JSON.parse(f.capsule.operations[4].settlement).body.actualCalls, 1);
   assert.equal(JSON.parse(f.capsule.operations[4].settlement).body.actualMicros, null);
   assert.equal(f.controls.turns, 24);
+  assert.equal(JSON.stringify(f.implementation.status), originalStatusBytes, 'original signed status remains byte-identical');
 });
 
 test('v2 requires the exact completed D cut and original failure even with self-consistent replacement journal hashes', async t => {

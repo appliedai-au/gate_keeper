@@ -67,6 +67,16 @@ function checkSummary(value, label) {
     ['fail', 'skipped', 'cancelled', 'todo'].every(key => value[key] === 0), label + ' incomplete');
 }
 
+function hasFixedByContext(body, authorLogin, fixCommit) {
+  if (typeof body !== 'string') return false;
+  const commits = new Set([fixCommit, fixCommit.slice(0, 8), fixCommit.slice(0, 7)]);
+  // Gitar's authenticated inline artifact wraps the owner in paired Markdown
+  // backticks. Keep the earlier plain form, binding owner and fix in one clause.
+  const markers = body.matchAll(/\bFixed by (?:@([A-Za-z0-9-]+)|`@([A-Za-z0-9-]+)`) in ([a-f0-9]{40}|[a-f0-9]{8}|[a-f0-9]{7})(?![A-Za-z0-9_])/gu);
+  for (const match of markers) if ((match[1] ?? match[2]) === authorLogin && commits.has(match[3])) return true;
+  return false;
+}
+
 async function nativeReviewInventory(fetcher, pullRequest) {
   const values = [], seen = new Set();
   for (let page = 1; page <= 10; page++) {
@@ -231,8 +241,7 @@ export function createCompletedSourceVerifier({ descriptor: supplied, fetcher = 
       record(pin, ['id', 'bodySha256', 'commitId', 'fixCommit'], 'historical fixed finding pin');
       hash(pin.commitId, 'original finding commit', 40); hash(pin.fixCommit, 'actual fix commit', 40);
       const finding = await loadComment({ id: pin.id, bodySha256: pin.bodySha256 }, 'inline', { id: BOT_ID, login: BOT_LOGIN });
-      requireThat(finding.commit_id === pin.commitId && finding.body.includes('Fixed by @' + q.authorLogin + ' in ') &&
-        [pin.fixCommit, pin.fixCommit.slice(0, 8), pin.fixCommit.slice(0, 7)].some(value => finding.body.includes(value)),
+      requireThat(finding.commit_id === pin.commitId && hasFixedByContext(finding.body, q.authorLogin, pin.fixCommit),
       'historical finding lacks its actual authenticated fix context');
       if (pin.fixCommit !== proof.qualifiedCommit) {
         const comparison = await completedGithub(fetcher, '/compare/' + pin.fixCommit + '...' + proof.qualifiedCommit + '?per_page=100');

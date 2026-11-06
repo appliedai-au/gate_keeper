@@ -193,3 +193,102 @@ test('completed source dashboard approval keeps bot, pinned-byte, acknowledgemen
   const noHead = dashboardFixture('✅ Approved\nNo open findings remain.', 'Queued current head ' + 'a'.repeat(40));
   await assert.rejects(verify(noHead.f), /lacks exact-head bot acknowledgement/);
 });
+
+// Public marker tails and original/fix identities below were read from the
+// authenticated PR59 inline artifacts. The surrounding source/qualification
+// graph and owner ID remain TEST-ONLY; no live qualification is represented.
+const authenticatedFixedShapes = [
+  { id: 4488884153, old: '22cf97d3f4a3608f193e1e2f92b2c2e2a5dcc0e6',
+    fix: 'e346b34dac0751643645574dd1ad615b41d7487d',
+    marker: '<kbd>✅ Fixed by `@appliedai-au` in e346b34</kbd>' },
+  { id: 4488884204, old: '22cf97d3f4a3608f193e1e2f92b2c2e2a5dcc0e6',
+    fix: 'e346b34dac0751643645574dd1ad615b41d7487d',
+    marker: '<kbd>✅ Fixed by `@appliedai-au` in e346b34</kbd>' },
+  { id: 4489421387, old: '0f127944d20a47907e4e0a21a6d4d56352c988d7',
+    fix: '2776c09b8c45fa44e28f494732b052f139434513',
+    marker: '<kbd>✅ Fixed by `@appliedai-au` in 2776c09</kbd>' },
+];
+function fixedByFixture(shapes = [authenticatedFixedShapes[0]]) {
+  const f = completedSourceFixture(NOW), reads = [], findings = [];
+  f.owner.login = 'appliedai-au'; f.descriptor.qualification.authorLogin = f.owner.login;
+  for (const shape of shapes) {
+    const finding = { id: shape.id, user: copy(BOT), pull_request_url: DASH_ROOT + '/pulls/59',
+      commit_id: shape.old, line: null, body: '<details>\n' +
+        '<summary>⚠️ <b>Bug:</b> TEST-ONLY retained finding</summary>\n\n' + shape.marker + '\n\n</details>' };
+    const pin = { id: finding.id, bodySha256: sha(finding.body), commitId: shape.old, fixCommit: shape.fix };
+    const comparison = { status: 'ahead', base_commit: { sha: shape.fix }, merge_base_commit: { sha: shape.fix },
+      total_commits: 1, commits: [{ sha: HEAD }] };
+    f.routes.set('/pulls/comments/' + finding.id, finding); f.proof.review.resolvedComments.push(pin);
+    f.routes.set('/compare/' + shape.fix + '...' + HEAD + '?per_page=100', comparison);
+    findings.push({ finding, pin, comparison, shape });
+  }
+  f.refresh();
+  const fetcher = f.fetcher;
+  f.fetcher = async (url, options) => { reads.push(url); return fetcher(url, options); };
+  const ownerPin = { ...original.qualification, authorLogin: f.owner.login };
+  return { f, reads, findings,
+    check() { return createCompletedSourceVerifier({ descriptor: f.descriptor, fetcher: f.fetcher })({
+      actualSourceCommit: C, originalQualification: { ...original, qualification: ownerPin },
+      finalQualification: { ...final, qualification: ownerPin }, binding }); },
+  };
+}
+
+test('actual C verifier accepts all three authenticated Markdown fixed-by shapes without relabelling their old commits', async () => {
+  const fixture = fixedByFixture(authenticatedFixedShapes), result = await fixture.check();
+  assert.equal(result.sourceCommit, C);
+  assert.equal(result.evidence.qualification.review.resolvedComments.length, 3);
+  for (const { finding, pin, shape } of fixture.findings) {
+    const retained = result.evidence.reviewArtifacts.find(item => item.id === shape.id);
+    assert.equal(retained.commit_id, shape.old); assert.equal(retained.body, finding.body);
+    assert.equal(sha(retained.body), pin.bodySha256); assert.equal(pin.fixCommit, shape.fix);
+    assert.notEqual(retained.commit_id, HEAD);
+  }
+  assert.equal(fixture.reads.filter(url => url.includes('/compare/')).length, 3,
+    'each actual fix still requires its independent containment comparison');
+});
+
+test('actual C verifier preserves plain markers and accepts only the existing full, eight or seven hex fix forms', async () => {
+  const shape = authenticatedFixedShapes[0];
+  for (const owner of ['@appliedai-au', '`@appliedai-au`']) for (const length of [40, 8, 7]) {
+    const fixture = fixedByFixture([{ ...shape, marker: 'Fixed by ' + owner + ' in ' + shape.fix.slice(0, length) }]);
+    assert.equal((await fixture.check()).sourceCommit, C);
+  }
+});
+
+test('a re-pinned fixed-by body must bind the original owner and actual fix in the same complete clause', async t => {
+  const shape = authenticatedFixedShapes[0], fix = shape.fix, other = '4'.repeat(40);
+  const markers = [
+    ['wrong owner', '<kbd>✅ Fixed by `@another-owner` in ' + fix.slice(0, 7) + '</kbd>'],
+    ['owner prefix only', 'Fixed by @appliedai-au-other in ' + fix],
+    ['wrong fix plus correct hash elsewhere', 'Fixed by @appliedai-au in ' + other + '\nUnrelated reference: ' + fix],
+    ['two mismatched clauses', 'Fixed by @another-owner in ' + fix + '\nFixed by `@appliedai-au` in ' + other],
+    ['unpaired opening backtick', 'Fixed by `@appliedai-au in ' + fix],
+    ['unpaired closing backtick', 'Fixed by @appliedai-au` in ' + fix],
+    ['different full hash sharing the prefix', 'Fixed by `@appliedai-au` in ' + fix.slice(0, -1) + '0'],
+    ['unsupported nine-character prefix', 'Fixed by @appliedai-au in ' + fix.slice(0, 9)],
+    ['short hash embedded in a word', 'Fixed by @appliedai-au in ' + fix.slice(0, 7) + 'g'],
+    ['full hash with an extra hex character', 'Fixed by @appliedai-au in ' + fix + '0'],
+  ];
+  for (const [name, marker] of markers) await t.test(name, async () => {
+    const fixture = fixedByFixture([{ ...shape, marker }]);
+    await assert.rejects(fixture.check(), /historical finding lacks its actual authenticated fix context/);
+    assert.equal(fixture.reads.some(url => url.includes('/compare/')), false,
+      'the authenticated body fails its fix context before ancestry lookup');
+  });
+});
+
+test('Markdown marker support retains pinned bot, body, PR, original commit and actual ancestry guards', async t => {
+  const changes = [
+    ['bot ID', item => { item.finding.user.id = 456; }, /independent review author or payload changed/],
+    ['bot login', item => { item.finding.user.login = 'another-bot'; }, /independent review author or payload changed/],
+    ['unpinned body byte', item => { item.finding.body += '\n'; }, /independent review author or payload changed/],
+    ['another PR', item => { item.finding.pull_request_url = DASH_ROOT + '/pulls/60'; }, /historical finding belongs to another PR/],
+    ['rewritten original commit', item => { item.finding.commit_id = HEAD; }, /authenticated fix context/],
+    ['wrong merge base', item => { item.comparison.merge_base_commit.sha = '4'.repeat(40); }, /fix is not proven/],
+    ['wrong final comparison head', item => { item.comparison.commits[0].sha = '4'.repeat(40); }, /fix is not proven/],
+  ];
+  for (const [name, mutate, expected] of changes) await t.test(name, async () => {
+    const fixture = fixedByFixture(); mutate(fixture.findings[0]);
+    await assert.rejects(fixture.check(), expected);
+  });
+});
