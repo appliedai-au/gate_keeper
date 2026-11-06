@@ -4,7 +4,7 @@
 **Owner:** Owen Tyas  
 **Repository:** `appliedai-au/gate_keeper`  
 **Primary delivery record:** [issue #44](https://github.com/appliedai-au/gate_keeper/issues/44)  
-**Working status:** P0 and P1 complete; bootstrap/source gate, host initialization and scoped HTTP access are verified. BASE remains held after its first real completed model turn. Draft PR #58 contains the accepted pagination correction and is being extended with a separately qualified, bounded continuation that preserves that first call and the original failed host record. The existing Base44 owner session is available; the qualified three-file bridge update and all four scoped bindings are installed, but the actual owner function still returns unavailable. Redacted runtime diagnostics are being prepared for qualification. P6 source is implemented and independently reviewed in draft PR #59; remote qualification and live product acceptance remain pending. The frozen experiment and journals remain unchanged, with 0/10 proposal attempts.
+**Working status:** P0 and P1 complete. PR #58 is merged as actual implementation B `45ed2b6ef74f53a0940329066d0fe126ad87a7fa`, after independent/Gitar review, 670/670 full tests, 9/9 canary, typecheck, five scorer checks and observed disposable-service cleanup. The authority is serving B and has returned its signed implementation qualification; continuation authorization remains absent, so model dispatch is held. The host is deploying B with `prepare-baseline` to inspect the original archive without dispatch. Frozen definition A, the original first paid BASE result, keys, bank and journals remain preserved; proposal attempts are still 0/10. The qualified Base44 diagnostic adapter is being installed to investigate the existing owner-function 503. PR #59 recovery changes are independently accepted and Gitar approved; the separately qualified completed-history/product composition is being implemented before P6 deployment.
 
 ## 1. Intended outcome and scope
 
@@ -23,7 +23,7 @@ Two settled owner decisions remain in force:
 
 ## 2. Starting evidence and immutable identities
 
-The starting record is the [verified execution update on #44](https://github.com/appliedai-au/gate_keeper/issues/44#issuecomment-6664862988), published at 17:35 UTC on 5 November / 04:35 AEDT on 6 November. The lead completed P0's fresh `main` and deployment reconciliation on 6 November before the cleanup below. The frozen source remains unchanged. Recheck the affected live records before subsequent mutations.
+The starting record is the [verified execution update on #44](https://github.com/appliedai-au/gate_keeper/issues/44#issuecomment-6664862988), published at 17:35 UTC on 5 November / 04:35 AEDT on 6 November. The table below retains those original identities. Frozen definition A remains unchanged; current main and the qualified implementation are now B under the separately reviewed PR #58 transition described below. Recheck affected live records before subsequent mutations.
 
 | Item | Verified starting identity or state |
 | --- | --- |
@@ -54,7 +54,7 @@ The starting record is the [verified execution update on #44](https://github.com
 | First real BASE call | Turn completed at `2026-11-06T03:27:31.390Z` / 14:27:31.390 AEDT; 2,550 input + 644 output = 3,194 tokens; SDK estimate US$0.0004338, actual billed charge unknown; full BASE evaluation is not complete |
 | New-pilot result | **0/10 genuine learning attempts**; one completed BASE model turn does not count as a proposal attempt or a qualified baseline |
 | Existing Base44 app | App ID `6ae577c8f34f21f5eebe75d9`; [secure-authentic-gate-flow.base44.app](https://secure-authentic-gate-flow.base44.app/) |
-| Plan publication | [Draft PR #57](https://github.com/appliedai-au/gate_keeper/pull/57), isolated branch `work/gatekeeper-closeout-phase-plan-20261106`; `main` remains the frozen source |
+| Plan publication | [Draft PR #57](https://github.com/appliedai-au/gate_keeper/pull/57), isolated branch `work/gatekeeper-closeout-phase-plan-20261106`; current main B must remain unchanged through the original pilot |
 
 The two raw qualification captures are separate retained artifacts. Preserve the original byte count/digest as historical provenance; identify the actual capture used by the new receipt rather than relabeling either artifact as the other.
 
@@ -62,7 +62,7 @@ The imported legacy bank is an immutable historical input: revision 65; original
 
 ### Preserve the frozen source while publishing this plan
 
-The authority's source proof checks current `main`, the deployed source, two ordered merge parents and the qualified tree. This plan is published through [draft PR #57](https://github.com/appliedai-au/gate_keeper/pull/57) on `work/gatekeeper-closeout-phase-plan-20261106`. **Keep that documentation branch isolated; do not merge it into `main` before the frozen pilot is complete.** Do not deploy the documentation branch, modify the existing frozen bundle, or rebind the experiment to a later commit to accommodate documentation changes. The execution ledger can be updated in #44 and on that documentation branch.
+The authority’s implementation source proof checks current `main`, the actual deployed B source, two ordered merge parents and the qualified tree, while preserving frozen A. This plan is published through [draft PR #57](https://github.com/appliedai-au/gate_keeper/pull/57) on `work/gatekeeper-closeout-phase-plan-20261106`. **Keep that documentation branch isolated; do not merge it or the P6 candidate into `main` before the original pilot is durably complete.** B authority restarts and protected decisions still require current main B. Do not deploy the documentation branch, modify the frozen bundle, or relabel actual C as B. Update the ledger in #44 and on this documentation branch.
 
 Keep the existing production host, authority service, volumes, app and controller ownership. Do not create a second learning coordinator or copy provider credentials into the host or Base44 app.
 
@@ -74,20 +74,20 @@ The existing closeout lead owns reconciliation, operational changes and the evid
 | --- | --- | --- | --- |
 | P0 | Current-state reconciliation and complete evidence inventory | Complete; fresh `main`/deployment reads reconciled | Existing access |
 | P1 | Verified disposable cleanup and authentic source-qualification receipt | Complete; immutable PR #56 receipt accepted by actual source-gate RPC | P0 |
-| P2 | Updated Base44 bridge, scoped bindings and real access acceptance | Owner signed in; qualified three-file update and four bindings installed; owner function returns 503 | Qualify redacted runtime diagnostic adapter, resolve actual failure, then finish app-session acceptance |
-| P3 | Serving authority, registered provider, initialized host and genuine BASE execution | Bootstrap/gate/init verified; HTTP transport 7/7; BASE held on turn-pagination HTTP 400 after one completed call | Narrow source repair, independent review and remote qualification; preserve pending operation |
+| P2 | Updated Base44 bridge, scoped bindings and real access acceptance | Owner signed in; three-file bridge and four bindings installed; qualified diagnostic adapter installation in progress | Observe safe runtime events, resolve evidenced 503, then finish app-session acceptance |
+| P3 | Serving authority, registered provider, initialized host and genuine BASE execution | B repair qualified and merged; authority B qualification observed; host nondispatching prepare in progress | Actual retained-state proof, digest-only owner authorization, then original BASE remainder |
 | P4 | Exactly ten genuine proposal attempts with retained outcomes and qualified promotions, if any | 0/10 | P3 and protected status/control observability |
 | P5 | Restart, accounting, privacy, final evidence and #44 disposition | Pending | P2, P4 |
-| P6 | Authenticated live-review submission, real results and private run history | 21-file source implementation independently accepted and published in draft PR #59; Gitar requested | Integrate accepted repair source, repeat final review, pass full real-PostgreSQL remote gate, then commission after pilot |
+| P6 | Authenticated live-review submission, real results and private run history | PR #59 recovery head e346b34 independently accepted and Gitar approved; hosted adapter accepted; completed-history composition in progress | Final combined C review and full real-PostgreSQL/Caddy qualification, original pilot closure, then exact-C commissioning |
 
 P2's final app-session checks can now use the initialized host. The seven successful scoped HTTP checks establish transport authorization, not Base44 owner/non-owner session behavior. If browser access is unavailable, advance independent backend work; full #44 closure still requires actual app acceptance.
 
 ### Current next actions
 
-1. Preserve the held BASE operation and its actual first-call evidence. Finish independent review, Gitar and full isolated qualification of PR #58: turns page size 25, events page size 100, full ownership/pagination validation, explicit actual implementation B qualification alongside frozen definition A, and nondispatching preparation of the actual retained archive. Only the separately authorized continuation may reuse the verified first result with zero SDK mutations and dispatch the remaining thirteen logical slots; original evidence and failed records remain intact.
+1. Observe the actual B `prepare-baseline` result and independently verify the preserved original archive, first paid result and authority proof of no second intent. Publish only the exact digest-bound owner continuation authorization after this evidence exists. Continue one original result replay with zero repeat SDK calls plus the thirteen remaining slots, and verify fourteen-call settlement before running any proposal.
 2. Finish the Base44 runtime diagnosis using the reviewed, qualified redacted adapter. Owner authentication and owner/body checks pass; a fresh direct upstream GET is 200 and satisfies the contract, while the actual function returns 503. Do not infer an exact cause from latency or a silent catch. After correcting the evidenced failure, verify actual anonymous, non-owner and owner app sessions and publish the accepted app revision.
 3. After a separately reviewed recovery/source-transition decision and genuine BASE qualification, continue through original operations and independent review pauses. No proposal attempt has yet been accepted; do not turn the completed BASE call into attempt 1 or fabricate a complete baseline.
-4. Keep P6 in [draft PR #59](https://github.com/appliedai-au/gate_keeper/pull/59) on its separate release path. Its source checkpoint does not authorize deploying it into the frozen pilot. Integrate the accepted repair source and repeat the final exact-source gates before post-pilot commissioning.
+4. Keep P6 in [draft PR #59](https://github.com/appliedai-au/gate_keeper/pull/59) on its separate release path. Its e346b34 recovery head has Gitar approval with both findings closed. Compose it with actual B, the accepted hosted adapter and reviewed completed-history profile, then qualify the exact C tree with mandatory real PostgreSQL/Caddy gates. Keep main B until the ten genuine attempts and all protected decisions are durably closed. Only then merge C, use its read-only archive export, pin the actual closure capsule and enable the separately verified serving profile.
 
 ## P0 — Reconcile before dispatch
 
@@ -256,6 +256,18 @@ Plan and source preparation may proceed separately while P0–P5 run, but do not
 **Exit evidence.** Exact frontend/backend release identities, deployed submission function/API and persistence bindings, actual product run/provider receipt, authenticated cross-user access checks, idempotency/restart behavior, actual usage state and independent acceptance. Only then describe authenticated live code review as operational. P6 does not retroactively turn the ten-attempt pilot into public-review acceptance, and optional PR #42 remains separately assessed.
 
 **Rollback.** Disable new submissions and restore the last qualified app/backend release while retaining existing job records and any ambiguous operations for reconciliation. Keep a clear status for pending users and preserve the completed pilot, historical bank and Learning view. Do not discard submitted work or rerun it to make the interface appear healthy.
+
+### Qualified B implementation checkpoint
+
+[PR #58](https://github.com/appliedai-au/gate_keeper/pull/58) qualified head `9bea70c29ca037c9c14810c64b5a10fdfefbb0bf`, tree `39060d5df53d3741bc1ee936c1910d96a3d74e43`, was merged as actual B `45ed2b6ef74f53a0940329066d0fe126ad87a7fa`. Fresh GitHub reads verified the exact qualified tree and ordered parents `[A, qualified head]`, with main B. The original frozen A binding is unchanged.
+
+Remote deployment `c3039e16-a26b-4390-abe8-c87572d5af13` succeeded at `2026-11-06T04:35:01.631Z` / 15:35:01.631 AEDT. Actual logs show 670/670 full Node tests, 9/9 privacy canary, typecheck and five scorer checks; no failure, cancellation, skip or TODO. The independently inspected 335,602-byte capture has SHA-256 `6d77d781f848586452ce74fa1ffc97520dae48d5b2ae1bdda0729e4b94167770`. Its empty-service preflight had no configured variables, volumes, domains or TCP proxy. Actual disposable-service absence and `staged: null` were separately observed at `2026-11-06T04:54:13Z` / 15:54:13 AEDT.
+
+The immutable [qualification receipt](https://github.com/appliedai-au/gate_keeper/pull/58#issuecomment-6677263803) has exact body SHA-256 `4c9a82e307aee8b4129b89daadbf0637dfe7e4f3f014c13b70e83b14aa1fdce0`. Gitar’s exact-head request/acknowledgement/final dashboard are `6676942614` / `6676949170` / `6676885297`; the dashboard approved with 1/1 finding closed. Its earlier native review remains honestly recorded as COMMENTED.
+
+Actual B authority deployment `fb06a41a-a780-4a1e-9965-2b8f86c36a06` succeeded at `2026-11-06T04:56:37.863Z`. The authenticated implementation-status RPC returned the signed B qualification and a null continuation authorization. This establishes qualification-only serving, not BASE completion. The production host has been instructed to deploy B with `prepare-baseline`; its resulting retained-state proof must still be inspected before authorization or dispatch.
+
+P6’s updated head is `e346b34dac0751643645574dd1ad615b41d7487d`, tree `62cdd8c13a21cfb549d262bcff27000e7631f9ff`. The seven-file recovery delta was independently accepted; all supplied published blobs match. Gitar dashboard `6677000221`, updated `2026-11-06T04:36:35Z`, approved with both findings closed after exact-head acknowledgement `6677010522`. The separate four-file hosted Review adapter is source accepted (patch SHA-256 `337b5e6f7529707f846e5d5c15431d4eb65cc2b8a7e581f160cbfb70f376c223`), but neither it nor the completed-history composition has yet passed the combined C qualification or live acceptance.
 
 ## 4. Failure and source-repair rule
 
