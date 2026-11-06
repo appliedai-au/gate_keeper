@@ -4,6 +4,8 @@ import { canonical, POLICY, record, requireThat } from './contracts.mjs';
 import { createDetachedAuthorityClient } from './authority-client.mjs';
 import { initializeLearningHost, openLearningHost } from './host.mjs';
 import { verifyProductionBundle } from './production-bundle.mjs';
+import { verifyPreparedContinuation } from './implementation-proof.mjs';
+import { validateOriginalBaselinePacket } from './baseline-continuation.mjs';
 
 const OPEN = new Set(['reserved', 'ready', 'screenPlanned', 'provisional', 'confirmationPlanned']);
 const MAX_TRANSITIONS = 3 + POLICY.attempts * 5; // Include the final read after ten activations.
@@ -16,7 +18,7 @@ function reviewPending(error) {
 }
 
 export async function openProductionPilot({ directory, repositoryRoot, bundle: supplied,
-  authority, initialize = false, fetcher, timing } = {}) {
+  authority, initialize = false, fetcher, timing, implementation = null } = {}) {
   const bundle = verifyProductionBundle(supplied);
   record(authority, ['baseUrl', 'token'], 'detached authority connection');
   requireThat(typeof initialize === 'boolean', 'explicit initialization choice required');
@@ -24,13 +26,14 @@ export async function openProductionPilot({ directory, repositoryRoot, bundle: s
     ...(fetcher ? { fetcher } : {}) });
   const options = { directory, repositoryRoot, config: bundle.config, trust: bundle.trust,
     runtime: bundle.runtime, caseInputs: bundle.caseInputs, client: remote.client,
-    authorities: remote.authorities, gateway: remote.gateway, ...(timing ? { timing } : {}) };
+    authorities: remote.authorities, gateway: remote.gateway, ...(timing ? { timing } : {}),
+    ...(implementation ? { implementation } : {}) };
   const host = initialize ? await initializeLearningHost(options, { history: bundle.history }) : await openLearningHost(options);
-  return createProductionDriver({ host, remote, bundle });
+  return createProductionDriver({ host, remote, bundle, implementation });
 }
 
 /** Trusted host composition seam; useful for the isolated qualification suite. */
-export function createProductionDriver({ host, remote, bundle: supplied }) {
+export function createProductionDriver({ host, remote, bundle: supplied, implementation = null }) {
   const bundle = verifyProductionBundle(supplied);
   let busy = false;
   async function inspect() {
@@ -39,7 +42,11 @@ export function createProductionDriver({ host, remote, bundle: supplied }) {
       canonical(snapshot.state.history) === canonical(bundle.history), 'production journal differs from frozen bundle');
     return snapshot;
   }
-  async function outcome(status, details = {}) { return { status, ...details, learning: await host.status() }; }
+  async function outcome(status, details = {}) { return { status, ...details, learning: await host.status(),
+    ...(implementation ? { implementation: { frozenExperimentCommit: bundle.binding.sourceCommit,
+      actualPlatformCommit: implementation.sourceCommit,
+      qualificationReceiptId: implementation.status.qualificationEnvelope.body.receiptId,
+      continuationReceiptId: implementation.status.authorizationEnvelope?.body.receiptId ?? null } } : {}) }; }
   async function exclusive(work) {
     requireThat(!busy, 'another production driver action is in progress'); busy = true;
     try { return await work(); } finally { busy = false; }
@@ -101,6 +108,24 @@ export function createProductionDriver({ host, remote, bundle: supplied }) {
   return Object.freeze({
     status: () => host.status(),
     inspect,
+    async prepareBaselineContinuation() {
+      return exclusive(async () => {
+        requireThat(implementation, 'separately qualified implementation required for BASE prepare');
+        const checkpoint = await host.prepareBaselineContinuation();
+        const checked = validateOriginalBaselinePacket(checkpoint, { runtime: bundle.runtime,
+          caseInputs: bundle.caseInputs, originalBase: bundle.config.baseInstructions });
+        const preparedProof = verifyPreparedContinuation(await remote.prepareBaselineContinuation(checkpoint), {
+          binding: bundle.binding, trust: bundle.trust, implementationCommit: implementation.sourceCommit,
+          qualificationEnvelope: implementation.status.qualificationEnvelope, retained: checked.retained });
+        return outcome('prepared', { action: 'original-base-independently-prepared-without-dispatch', preparedProof });
+      });
+    },
+    async continueBaseline() {
+      return exclusive(async () => {
+        await host.continueBaseline();
+        return outcome('advanced', { action: 'original-base-fourteen-calls-consumed-and-settled' });
+      });
+    },
     async step() { return exclusive(step); },
     async run() {
       return exclusive(async () => {

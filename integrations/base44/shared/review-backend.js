@@ -15,14 +15,21 @@ export function createReviewBridge({ authenticate, readEnv, fetchImpl = fetch })
     catch { return json({ error: "unauthorized" }, 401); }
     if (!validOwner(user?.id)) return json({ error: "unauthorized" }, 401);
     if (user.role !== "admin") return json({ error: "forbidden" }, 403);
-    // Identity is checked before reading the inference capability or sending any request.
-    const owner = readEnv("GATEKEEPER_REVIEW_OWNER_ID");
-    if (!validOwner(owner)) return json({ error: "review_unavailable" }, 503);
-    if (user.id !== owner) return json({ error: "forbidden" }, 403);
-    if (readEnv("GATEKEEPER_REVIEW_ENABLED") !== "enabled")
+    // The legacy readEnv injection accepts either a value or a promise. Keep
+    // reads ordered: authenticate, confirm the owner, then read the capability.
+    let source, token;
+    try {
+      const owner = await readEnv("GATEKEEPER_REVIEW_OWNER_ID");
+      if (!validOwner(owner)) return json({ error: "review_unavailable" }, 503);
+      if (user.id !== owner) return json({ error: "forbidden" }, 403);
+      if (await readEnv("GATEKEEPER_REVIEW_ENABLED") !== "enabled")
+        return json({ error: "review_unavailable" }, 503);
+      source = await readEnv("GATEKEEPER_REVIEW_SOURCE_COMMIT");
+      token = await readEnv("GATEKEEPER_REVIEW_TOKEN");
+    } catch {
+      // A hosted secret read can reject. Its value/error never becomes public.
       return json({ error: "review_unavailable" }, 503);
-    const source = readEnv("GATEKEEPER_REVIEW_SOURCE_COMMIT");
-    const token = readEnv("GATEKEEPER_REVIEW_TOKEN");
+    }
     if (!validSource(source) || typeof token !== "string" || !/^[A-Za-z0-9_-]{43,128}$/u.test(token))
       return json({ error: "review_unavailable" }, 503);
     let command;

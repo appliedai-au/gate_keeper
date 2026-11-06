@@ -57,11 +57,11 @@ export function assertInlineSession(session, entry) {
   }
 }
 
-async function pages(read, label) {
+async function pages(read, label, limit) {
   const values = [], cursors = new Set(), bodies = [];
   let pageToken;
   for (let index = 0; index < 100; index++) {
-    const page = await read({ order: 'asc', limit: 100, ...(pageToken ? { pageToken } : {}) });
+    const page = await read({ order: 'asc', limit, ...(pageToken ? { pageToken } : {}) });
     const body = providerJson(page.response);
     requireThat(Array.isArray(body?.data) && body.pagination &&
       typeof body.pagination === 'object', label + ' pagination shape');
@@ -97,7 +97,9 @@ export async function inspectProviderCall(provider, entry, { requireComplete = f
     typeof provider?.sessions?.[name] === 'function'), 'provider read capabilities absent');
   const session = providerJson((await provider.sessions.get(entry.sessionId, sdkOptions)).data);
   assertInlineSession(session, entry);
-  const allTurns = await pages(input => provider.sessions.listTurns(entry.sessionId, input, sdkOptions), 'turns');
+  // The 0.182 turn index caps pages at 25; turn events retain their 100-item limit.
+  const allTurns = await pages(input =>
+    provider.sessions.listTurns(entry.sessionId, input, sdkOptions), 'turns', 25);
   requireThat(allTurns.values.length === 1 && allTurns.values[0].id === entry.turnId,
     'session contains additional or unowned turns');
   const turn = providerJson((await provider.sessions.getTurn(entry.sessionId, entry.turnId, sdkOptions)).data);
@@ -107,7 +109,7 @@ export async function inspectProviderCall(provider, entry, { requireComplete = f
   requireThat(canonical(turn.input) === canonical(entry.turnRequest.input),
     'provider root turn input differs from frozen dispatch');
   const eventPages = await pages(input =>
-    provider.sessions.listTurnEvents(entry.sessionId, entry.turnId, input, sdkOptions), 'events');
+    provider.sessions.listTurnEvents(entry.sessionId, entry.turnId, input, sdkOptions), 'events', 100);
   const after = providerJson((await provider.sessions.getTurn(entry.sessionId, entry.turnId, sdkOptions)).data);
   requireThat(canonical(after) === canonical(turn), 'provider turn changed while reading evidence');
   const events = eventPages.values;

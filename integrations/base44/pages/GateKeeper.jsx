@@ -3,7 +3,7 @@ import GateKeeperConnectionPanel from "../components/GateKeeperConnectionPanel";
 import AdversarialLab from "../components/AdversarialLab";
 import GateKeeperBenchmark from "../components/GateKeeperBenchmark";
 import GateKeeperControlSettings from "../components/GateKeeperControlSettings";
-import GateKeeperLearningStatus from "../components/GateKeeperLearningStatus";
+import GateKeeperLearningHistory from "../components/GateKeeperLearningHistory";
 import GateKeeperReview from "../components/GateKeeperReview";
 import "./GateKeeper.css";
 
@@ -207,9 +207,9 @@ export default function GateKeeper() {
             </nav>
           </div>
           <div className="gk-sidebar-bottom">
-            <span className="gk-label-small">{page === "Learning" ? "STATUS VIEW" : "RELEASE MODE"}</span>
+            <span className="gk-label-small">{page === "Learning" ? "PILOT ARCHIVE" : "RELEASE MODE"}</span>
             <div className="gk-mode"><span className="gk-mode-dot" /> {page === "Learning" ? "READ ONLY" : page === "Review" ? "OWNER REVIEW" : "DEMONSTRATION"}</div>
-            <p>{page === "Learning" ? "Learning records are scoped to the configured owner. This view provides no learning or promotion controls." : page === "Review" ? "Private review availability is checked against the configured owner's service." : "This section displays sample content. Use Review for authenticated submissions."}</p>
+            <p>{page === "Learning" ? "Completed pilot records are scoped to the configured owner. This view provides no learning or promotion controls." : page === "Review" ? "Private review availability is checked against the configured owner's service." : "This section displays sample content. Use Review for authenticated submissions."}</p>
           </div>
         </aside>
         <main id="gk-main-content" className="gk-content">
@@ -217,9 +217,9 @@ export default function GateKeeper() {
           {page === "Review" && <GateKeeperReview />}
           {page === "Walkthrough" && <Review onControls={() => navigate("Settings")} />}
           {(page === "Runs" || page === "Evidence") && <GateKeeperBenchmark key={page} section={page} />}
-          {page === "Learning" && <GateKeeperLearningStatus />}
+          {page === "Learning" && <GateKeeperLearningHistory />}
           {page === "Settings" && <Settings />}
-          <footer className="gk-footer"><span>GATE / KEEPER</span><span>REVIEW WITH EVIDENCE. SHIP WITH INTENT.</span><span>{page === "Learning" ? "READ-ONLY LEARNING STATUS · NO EXECUTION CONTROLS" : page === "Review" ? "PRIVATE REVIEW REQUESTS · HUMAN DECISIONS" : "SAMPLE UI · NOT LIVE AI OUTPUT"}</span></footer>
+          <footer className="gk-footer"><span>GATE / KEEPER</span><span>REVIEW WITH EVIDENCE. SHIP WITH INTENT.</span><span>{page === "Learning" ? "COMPLETED PILOT HISTORY · NO EXECUTION CONTROLS" : page === "Review" ? "PRIVATE REVIEW REQUESTS · HUMAN DECISIONS" : "SAMPLE UI · NOT LIVE AI OUTPUT"}</span></footer>
         </main>
       </div>
     </div>

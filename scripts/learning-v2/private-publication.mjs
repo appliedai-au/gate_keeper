@@ -8,7 +8,8 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { canonical, requireThat } from './contracts.mjs';
 
 const MAX_BYTES = 4 * 1024 * 1024;
-const FILES = new Set(['production-config.json', 'status-config.json']);
+const FILES = new Set(['production-config.json', 'status-config.json',
+  'implementation-qualification.json', 'baseline-continuation-authorization.json']);
 
 function context(path, { directory, uid = 1000, fs = nodeFs } = {}) {
   requireThat(typeof directory === 'string' && resolve(directory) === directory &&

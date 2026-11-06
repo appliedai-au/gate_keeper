@@ -3,13 +3,16 @@ import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hash, identifier, requireThat } from './contracts.mjs';
-import { installProductionConfig, readProductionConfig, PRODUCTION_REPOSITORY_ROOT } from './production-config.mjs';
+import { installProductionConfig, readProductionConfig, readOriginalProductionConfig, installProductionImplementation,
+  verifyProductionImplementationForCommand, PRODUCTION_REPOSITORY_ROOT } from './production-config.mjs';
 import { bindBootstrapConfig, fetchProductionConfig, validateBootstrapDescriptor } from './production-bootstrap-config.mjs';
+import { createDetachedAuthorityClient } from './authority-client.mjs';
 
 export function productionChildSpec(env) {
   const command = env.GK_PRODUCTION_COMMAND;
   if (command === undefined || command === '') return null;
-  requireThat(['init', 'run', 'resume-review', 'reconcile-usage', 'reconcile-operation', 'status'].includes(command), 'production bootstrap command');
+  requireThat(['init', 'run', 'resume-review', 'reconcile-usage', 'reconcile-operation', 'status',
+    'prepare-baseline', 'continue-baseline'].includes(command), 'production bootstrap command');
   const sourceCommit = hash(env.RAILWAY_GIT_COMMIT_SHA, 'Railway image source commit', 40);
   const operationId = env.GK_PRODUCTION_OPERATION_ID;
   requireThat(['resume-review', 'reconcile-usage', 'reconcile-operation'].includes(command) ? typeof operationId === 'string' :
@@ -60,13 +63,21 @@ export async function startProductionPilot({ env = process.env, spawnChild = spa
     const encoded = env.GK_PRODUCTION_BOOTSTRAP_B64;
     requireThat(typeof encoded === 'string' && encoded.length <= 32768 &&
       /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded), 'bootstrap descriptor encoding');
-    const descriptor = validateBootstrapDescriptor(JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')), spec.sourceCommit);
+    const supplied = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+    // The descriptor continues to describe A. A separate signed implementation
+    // receipt below must authorize the real platform B; no SHA is substituted.
+    const descriptor = validateBootstrapDescriptor(supplied, supplied.binding?.sourceCommit);
+    if (descriptor.binding.sourceCommit !== spec.sourceCommit) {
+      requireThat(spec.command !== 'init', 'different implementation cannot initialize a replacement experiment');
+      bindBootstrapConfig(descriptor, readOriginalProductionConfig());
+    } else {
     let existing;
     try { existing = readProductionConfig(spec.sourceCommit); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (existing) bindBootstrapConfig(descriptor, existing);
     else installProductionConfig(await fetchProductionConfig(descriptor,
       { fetcher, sourceCommit: spec.sourceCommit, signal: abortSignal }), spec.sourceCommit);
+    }
   }
   if (env.GK_PRODUCTION_CONFIG_B64) {
     const encoded = env.GK_PRODUCTION_CONFIG_B64;
@@ -74,7 +85,18 @@ export async function startProductionPilot({ env = process.env, spawnChild = spa
       /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(encoded), 'commissioning seed encoding');
     installProductionConfig(JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')), spec.sourceCommit);
   }
-  readProductionConfig(spec.sourceCommit);
+  const original = readOriginalProductionConfig();
+  if (original.bundle.binding.sourceCommit !== spec.sourceCommit) {
+    requireThat(spec.command !== 'init', 'separate implementation must retain the already initialized experiment');
+    const remote = createDetachedAuthorityClient({ ...original.authority, binding: original.bundle.binding,
+      trust: original.bundle.trust, fetcher });
+    const status = verifyProductionImplementationForCommand({ bundle: original.bundle,
+      status: await remote.implementationStatus(), sourceCommit: spec.sourceCommit, command: spec.command });
+    installProductionImplementation(status, spec.sourceCommit);
+  }
+  const configured = readProductionConfig(spec.sourceCommit);
+  verifyProductionImplementationForCommand({ bundle: configured.bundle, sourceCommit: spec.sourceCommit,
+    command: spec.command, status: configured.implementation?.status ?? null });
   // Never copy process.env into this child. TRUEFORGE_API_KEY, provider PATs,
   // database credentials and historical bootstrap commands are not admitted.
   requireThat(!abortSignal?.aborted, 'production startup stopped before driver dispatch');
