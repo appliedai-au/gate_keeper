@@ -3,6 +3,12 @@ import { startTrueForgeStatusGateway } from './trueforge-status-gateway.mjs';
 import { startProductionPilot } from './production-bootstrap.mjs';
 import { createOperationalDiagnostic } from './operational-diagnostics.mjs';
 
+// Observation-mode commands reopen existing A/B commissioning files. Their
+// own bootstrap still qualifies the actual source in BOTH parent and child.
+// A separate status bootstrap would repeat that full work without publishing
+// any status configuration in this mode, exhausting the public evidence quota.
+const OBSERVATION_COMMANDS = new Set(['run', 'resume-review', 'reconcile-usage',
+  'reconcile-operation', 'prepare-proposal-observation', 'consume-proposal-observation']);
 const stopped = new AbortController();
 const stop = () => stopped.abort();
 process.on('SIGTERM', stop); process.on('SIGINT', stop);
@@ -13,14 +19,21 @@ let stage = 'startup';
 diagnostic(stage, 'started', { command: process.env.GK_PRODUCTION_COMMAND });
 try {
   const command = process.env.GK_PRODUCTION_COMMAND;
+  const observationProof = process.env.GK_PRODUCTION_PROPOSAL_OBSERVATION_PROOF;
+  // This is a routing hint, NOT proof acceptance or execution permission.
+  // The single requested startProductionPilot call validates the descriptor,
+  // actual image, signed command permission, installed custody and all source
+  // evidence before any child is spawned. Missing/malformed proof still holds.
+  const directObservation = OBSERVATION_COMMANDS.has(command) &&
+    typeof observationProof === 'string' && observationProof.trim() !== '';
   let prepared = false;
-  if (command) {
+  if (command && !directObservation) {
     stage = 'preflight-status';
     diagnostic(stage, 'started', { command: command === 'init' ? 'init' : 'status' });
     try {
-      // The gateway captures its status handler once. Publish/recover the real
-      // journal-bound status file before constructing that read-only handler.
-      // Neither init nor status performs paid work.
+      // A/B commissioning must still publish/recover the real status file
+      // before the gateway captures its read-only handler. D retains that
+      // existing file and never publishes it from a status bootstrap.
       const env = command === 'init' ? process.env : { ...process.env,
         GK_PRODUCTION_COMMAND: 'status', GK_PRODUCTION_OPERATION_ID: '' };
       const result = await startProductionPilot({ env, abortSignal: stopped.signal });
@@ -38,7 +51,7 @@ try {
     if (gateway.child.exitCode !== null || gateway.child.signalCode !== null) stop();
     diagnostic(stage, stopped.signal.aborted ? 'held' : 'finished',
       stopped.signal.aborted ? { reason: 'child-held' } : {});
-    if (prepared && !['init', 'status'].includes(command) && !stopped.signal.aborted) {
+    if ((prepared || directObservation) && !['init', 'status'].includes(command) && !stopped.signal.aborted) {
       stage = 'requested-command'; diagnostic(stage, 'started', { command });
       try {
         const result = await startProductionPilot({ abortSignal: stopped.signal }); report(result);
