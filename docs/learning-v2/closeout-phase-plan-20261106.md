@@ -4,13 +4,15 @@
 **Owner:** Owen Tyas  
 **Repository:** `appliedai-au/gate_keeper`  
 **Primary delivery record:** [issue #44](https://github.com/appliedai-au/gate_keeper/issues/44)  
-**Working status:** Approved direction; execution and acceptance are recorded separately below. This document is a plan, not a declaration that its remaining checks have passed.
+**Working status:** P0 reconciliation complete; P1 cleanup complete and immutable source receipt published, with source-gate verification pending. The authority serving deployment reached SUCCESS; authenticated bootstrap, host initialization, BASE and pilot acceptance remain pending. This document does not declare its remaining checks passed.
 
 ## 1. Intended outcome and scope
 
-Finish commissioning the existing Gate Keeper app and protected learning system. The existing host must execute a genuine, bounded ten-attempt experiment on the concurrency/atomicity fault family; retain successful, unsuccessful and unresolved outcomes; carry retained learning into later proposals; and expose truthful, owner-only status in the existing Base44 app. Any promoted rule must pass the existing independent evaluation, three fresh confirmation pairs and separate activation boundary. An honestly measured all-negative result is an acceptable experimental outcome.
+Finish the owner Learning view and protected learning pilot in the existing Gate Keeper app. The existing host must execute a genuine, bounded ten-attempt experiment on the concurrency/atomicity fault family; retain successful, unsuccessful and unresolved outcomes; carry retained learning into later proposals; and expose truthful, owner-only status in the existing Base44 app. Any promoted rule must pass the existing independent evaluation, three fresh confirmation pairs and separate activation boundary. An honestly measured all-negative result is an acceptable experimental outcome.
 
-This closes the operational work in #44. It does not promise that the model will improve, establish generalization from development fixtures, or commission a general autonomous code-writing service. [Draft PR #42](https://github.com/appliedai-au/gate_keeper/pull/42), “Gate Keeper rule bag, heuristics, fingerprints and response cache,” is a separate backlog item. Do not merge it or introduce its experimental arms, cache changes or heuristics into the frozen pilot to achieve this closeout.
+**Product boundary:** P0–P5 commission owner-only Learning and the protected pilot. The public live-review submission flow is still a demonstration: no qualified submission backend function exists. Completing the pilot and connecting its status does not make the public review workflow operational. P6 below specifies the separate implementation and live acceptance needed before that claim can be made.
+
+P0–P5 close the protected-learning operational work in #44. They do not promise that the model will improve, establish generalization from development fixtures, or commission a general autonomous code-writing service. [Draft PR #42](https://github.com/appliedai-au/gate_keeper/pull/42), “Gate Keeper rule bag, heuristics, fingerprints and response cache,” is a separate optional backlog item. Do not merge it or introduce its experimental arms, cache changes or heuristics into the frozen pilot to achieve this closeout. That PR is also not a substitute for P6's missing authenticated submission workflow.
 
 Owen's current instruction is to prepare the phase plan and implement it. Existing closeout authorization covers the necessary Gate Keeper-scoped configuration, reversible deployments, protected identities, qualified source repairs, app integration, real inference and final reporting. Do not introduce another approval checkpoint for those already-authorized actions. If an actual platform authentication or automatic approval restriction prevents a specific operation, report that exact restriction and continue independent authorized work. The old request for renewed deletion confirmation is not a new requirement under the current instruction.
 
@@ -21,7 +23,7 @@ Two settled owner decisions remain in force:
 
 ## 2. Starting evidence and immutable identities
 
-The starting record is the [verified execution update on #44](https://github.com/appliedai-au/gate_keeper/issues/44#issuecomment-6664862988), published at 17:35 UTC on 5 November / 04:35 AEDT on 6 November. P0 refreshes the live records before any mutation.
+The starting record is the [verified execution update on #44](https://github.com/appliedai-au/gate_keeper/issues/44#issuecomment-6664862988), published at 17:35 UTC on 5 November / 04:35 AEDT on 6 November. The lead completed P0's fresh `main` and deployment reconciliation on 6 November before the cleanup below. The frozen source remains unchanged. Recheck the affected live records before subsequent mutations.
 
 | Item | Verified starting identity or state |
 | --- | --- |
@@ -34,18 +36,26 @@ The starting record is the [verified execution update on #44](https://github.com
 | Live backend version observed at authority initialization | TrueForge `0.182.0` |
 | Configured model route | `gk-v4-authority/glm-5-3-flash` → `tfy-managed/glm-5.3-flash` |
 | Complete source qualification | Deployment `fdd57133-47dc-424b-845a-27be553c8c9b`: SUCCESS; 641/641 Node tests, 9/9 privacy canary, TypeScript and five scorer self-tests; no failures, skips, cancellations or TODOs |
-| Complete qualification log digest | SHA-256 `b5e40d7f6667297d076a2cf78a7f1b233032d2f58f9ca9bb27e8a80f8351be85`, 347,334 retained bytes |
+| Original qualification capture | Historical record: SHA-256 `b5e40d7f6667297d076a2cf78a7f1b233032d2f58f9ca9bb27e8a80f8351be85`, 347,334 retained bytes |
+| Fresh qualification evidence capture | Retained on 6 November: 242,625 bytes, SHA-256 `bd2cb592a51081796ad894af9b53fe5af5b153715b30c76ba84b5d4d9abbe7c3` |
+| Disposable qualifier cleanup | Service `730fa701-cc2e-4246-9c86-c55586e3dde1` observed absent at `2026-11-06T02:55:55Z` / 13:55:55 AEDT; exact readback `services: []`, `staged: null` |
+| Immutable source-qualification receipt | [PR #56 comment 6675649613](https://github.com/appliedai-au/gate_keeper/pull/56#issuecomment-6675649613), published `2026-11-06T02:58:59Z` / 13:58:59 AEDT; exact body SHA-256 `63bab68f35ae5b035beb32a9db2f775f9db41fdde703109bb92d257488f6cdf1`; source-gate verification pending |
 | Production host deployment | `62f11d3b-f002-45e1-85e6-7d040770e4a1`, reported SUCCESS on the frozen source |
 | Scoped status Proxy deployment | `d396f37f-dbd6-45ed-8510-3406ce1b38cc`, reported SUCCESS on the same source |
 | Protected authority initialization | `da34ef0d-6ed8-44fc-b4eb-b7a1bd40d34c`, successful one-shot initialization; this does not establish a serving authority |
+| Authority serving deployment | `e4bd438e-89d5-405c-832f-1d607f11e0da`, frozen `a35c83c…`, terminal SUCCESS at `2026-11-06T02:59:39.535Z` / 13:59:39.535 AEDT; bootstrap/source-gate/BASE acceptance not yet established |
+| Authority HTTPS endpoint | `https://gk-native-runner-qualification.up.railway.app`; authenticated authority API, only `/healthz` public |
 | New-pilot result | **0/10 genuine attempts**, no new-pilot scores or actual charge result |
 | Existing Base44 app | App ID `6ae577c8f34f21f5eebe75d9`; [secure-authentic-gate-flow.base44.app](https://secure-authentic-gate-flow.base44.app/) |
+| Plan publication | [Draft PR #57](https://github.com/appliedai-au/gate_keeper/pull/57), isolated branch `work/gatekeeper-closeout-phase-plan-20261106`; `main` remains the frozen source |
+
+The two raw qualification captures are separate retained artifacts. Preserve the original byte count/digest as historical provenance; identify the actual capture used by the new receipt rather than relabeling either artifact as the other.
 
 The imported legacy bank is an immutable historical input: revision 65; original groups **0 accepted / 35 harmful / 18 unproven / 47 history**. Its source-file digest is `2f679a49712b9dbefc992c03a1437ec9dff7e2f989b90bcb130aa3a4dc42b7ab`; its complete projection digest is `549a00b379e7819cd6b0ea1141f58d4ded306cb1a41c7909de186ee531f568f2`. The normalized view contains 100 procedure references, 66 rejected and 34 unproven, plus one non-procedure historical record. These are different representations of the same history, not contradictory counts. They are not new signed promotions or new-pilot attempts.
 
 ### Preserve the frozen source while publishing this plan
 
-The authority's source proof checks current `main`, the deployed source, two ordered merge parents and the qualified tree. **Commit this plan to an isolated documentation branch/PR; do not merge it into `main` before the frozen pilot is complete.** Do not deploy the documentation branch, modify the existing frozen bundle, or rebind the experiment to a later commit to accommodate documentation changes. The execution ledger can be updated in #44 and on that documentation branch.
+The authority's source proof checks current `main`, the deployed source, two ordered merge parents and the qualified tree. This plan is published through [draft PR #57](https://github.com/appliedai-au/gate_keeper/pull/57) on `work/gatekeeper-closeout-phase-plan-20261106`. **Keep that documentation branch isolated; do not merge it into `main` before the frozen pilot is complete.** Do not deploy the documentation branch, modify the existing frozen bundle, or rebind the experiment to a later commit to accommodate documentation changes. The execution ledger can be updated in #44 and on that documentation branch.
 
 Keep the existing production host, authority service, volumes, app and controller ownership. Do not create a second learning coordinator or copy provider credentials into the host or Base44 app.
 
@@ -55,16 +65,19 @@ The existing closeout lead owns reconciliation, operational changes and the evid
 
 | Phase | Deliverable | Initial status | Depends on |
 | --- | --- | --- | --- |
-| P0 | Current-state reconciliation and complete evidence inventory | Refresh required | Existing access |
-| P1 | Verified disposable cleanup and authentic source-qualification receipt | Pending | P0 |
+| P0 | Current-state reconciliation and complete evidence inventory | Complete; fresh `main`/deployment reads reconciled | Existing access |
+| P1 | Verified disposable cleanup and authentic source-qualification receipt | Cleanup complete; immutable PR #56 receipt published; source-gate verification pending | P0 |
 | P2 | Updated Base44 bridge, scoped bindings and real access acceptance | Pending; earlier UI exists | P0; final owner success also needs P3 |
-| P3 | Serving authority, registered provider, initialized host and genuine BASE execution | Authority initialized; serving and host execution pending | P1; P2 preparation may run in parallel |
+| P3 | Serving authority, registered provider, initialized host and genuine BASE execution | Authority serve deployment SUCCESS; bootstrap/gate/host/BASE acceptance pending | P1 verification before model admission; P2 preparation may run in parallel |
 | P4 | Exactly ten genuine proposal attempts with retained outcomes and qualified promotions, if any | 0/10 | P3 and protected status/control observability |
 | P5 | Restart, accounting, privacy, final evidence and #44 disposition | Pending | P2, P4 |
+| P6 | Authenticated live-review submission, real results and private run history | Separate product implementation; current public flow remains demo | Preserve P0–P5's frozen runtime; qualify P6's own source and release |
 
 P2 has a preparation checkpoint before P3 and a final owner-success checkpoint after host initialization. A pre-initialization 503 is expected fail-closed behavior, not evidence that a live owner read passed. Do not make P3 wait for an impossible pre-initialization owner-200 response. If browser access is unavailable, advance independent backend commissioning; full #44 closure still requires actual app acceptance.
 
 ## P0 — Reconcile before dispatch
+
+**Observed status.** The lead completed fresh `main` and current-deployment reconciliation on 6 November 2026. The source remains `a35c83c…`; existing operations and resource scopes were reconciled before the P1 removal. Preserve that evidence and repeat only the affected readbacks before later changes.
 
 **Action.** Read current GitHub `main`, #44, PR #56 and its exact-head Gitar records. Read current Railway deployment/configuration state for the existing host, Proxy and authority, including any in-flight or staged changes. Inspect protected operation status before starting, restarting or replacing a process. Reconcile work already dispatched by another active owner; do not start a duplicate run.
 
@@ -89,17 +102,19 @@ Record the actual current public fingerprints and frozen binding without exposin
 
 **Action.** Preserve and verify the complete existing successful qualification evidence. Do not rerun the full suite merely because time passed when the exact source and receipt still match.
 
-Resolve the disposable qualifier recorded in the handoff:
+**Cleanup completed.** The named disposable qualifier was removed and observed absent at `2026-11-06T02:55:55Z` (13:55:55 AEDT); the actual readback returned `services: []` and `staged: null`. The fresh raw qualification capture was retained before cleanup: 242,625 bytes, SHA-256 `bd2cb592a51081796ad894af9b53fe5af5b153715b30c76ba84b5d4d9abbe7c3`. The original 347,334-byte capture/digest remains a separate historical record.
+
+Completed cleanup scope:
 
 - Project `963f87a2-3e3c-4cc0-a92a-f96f010ac73e`.
 - Environment `eb286452-9989-451b-9254-0832cb803957`.
 - Service `730fa701-cc2e-4246-9c86-c55586e3dde1`.
 
-If already absent, retain that readback and do not recreate it. If present, confirm its retained evidence and lack of credentials, volumes, public domains, TCP proxies or active useful work, then remove this disposable service under the existing authorization. Verify actual absence. Do not delete its project, an unrelated service or any production journal. A queued, canceled or failed delete is not cleanup evidence.
+Retain the actual absence readback and do not recreate this service. No additional project, unrelated service or production journal deletion is part of this cleanup. A queued, canceled or failed delete would not have been sufficient; the observed absence is the accepted evidence.
 
-Create the exact `GK_AUTHORITY_QUALIFICATION` owner receipt only after real cleanup, using the schema in the [commissioning document](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/docs/learning-v2/detached-authority-commissioning.md). Include actual PR/head/base/tree, Railway IDs, terminal timestamp, complete test counts, log digest, observed cleanup time and exact Gitar request/acknowledgement/approved-dashboard identities. Preserve native review states accurately; `COMMENTED` is not `APPROVED`.
+**Receipt published; verification pending.** The exact `GK_AUTHORITY_QUALIFICATION` owner receipt is now [immutable PR #56 comment 6675649613](https://github.com/appliedai-au/gate_keeper/pull/56#issuecomment-6675649613), published at `2026-11-06T02:58:59Z` (13:58:59 AEDT). Its exact body SHA-256 is `63bab68f35ae5b035beb32a9db2f775f9db41fdde703109bb92d257488f6cdf1`. It uses the schema in the [commissioning document](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/docs/learning-v2/detached-authority-commissioning.md). The authoritative receipt belongs on PR #56, not issue #44; #44 can link it as progress evidence. Never edit the pinned comment. Keep its actual PR/head/base/tree, Railway IDs, terminal timestamp, complete test counts, identified retained capture, observed cleanup time and Gitar artifact identities distinct from subsequent operational results. Preserve native review states accurately; `COMMENTED` is not `APPROVED`.
 
-Read the posted receipt back and compute its exact body digest. Configure `GK_AUTHORITY_SOURCE_PROOF` with its real positive comment/author IDs and digest. Independently read back the ordered merge parents `[a546ad56321b2080f7b0a6dfbebe00667259173b, 7b99341226a06388276fd540b98d6db4891dec4b]` and tested/merged tree equality. Keep `main` at `a35c83c…` while this proof is required.
+Confirm the read-back body still matches the pinned digest and that `GK_AUTHORITY_SOURCE_PROOF` binds its real positive comment/author IDs. Independently verify the ordered merge parents `[a546ad56321b2080f7b0a6dfbebe00667259173b, 7b99341226a06388276fd540b98d6db4891dec4b]`, tested/merged tree equality and the authority's actual source-gate result before admitting model execution. Keep `main` at `a35c83c…` while this proof is required. Publishing the receipt and starting a healthy authority process do not establish that this gate has passed.
 
 **Exit evidence.** Cleanup is observed, the complete qualification receipt is authentic and retrievable, and all proof fields bind the existing qualified source. Synthetic receipts, placeholder IDs, unverified cleanup or an old review of a different head do not qualify.
 
@@ -135,6 +150,8 @@ Use real authenticated app sessions for owner and non-owner acceptance. A unit f
 **Rollback.** Restore the prior bridge/published app revision and prior scoped settings from the checkpoint. Preserve app entities, existing history, Railway volumes and the experiment. If necessary restore the prior Proxy image/start configuration without weakening ordinary-route authentication.
 
 ## P3 — Serve the authority, initialize the host and prove real BASE execution
+
+**Observed infrastructure progress.** Authority serve deployment `e4bd438e-89d5-405c-832f-1d607f11e0da` on the frozen source reached terminal SUCCESS at `2026-11-06T02:59:39.535Z` (13:59:39.535 AEDT). Its authenticated endpoint is `https://gk-native-runner-qualification.up.railway.app`, with only `/healthz` public. This is serving-infrastructure evidence only: authenticated bootstrap/pin acceptance, source-gate verification, host initialization and real BASE execution have not yet been accepted. Reconcile the live deployment and pending operation state before changing or restarting it.
 
 **Authority.** Reuse the existing initialized custody, identities, relay prefix, bank projection and frozen bundle. Set the existing authority service to `Dockerfile.authority`, explicit start command `node /app/scripts/learning-v2/authority-service.mjs`, and `GK_AUTHORITY_MODE=serve` with the verified source proof. Do not execute the old legacy boot or reinitialize custody.
 
@@ -196,7 +213,27 @@ Update the working phase ledger and closeout report with:
 
 Reconcile stale roadmap and handoff statements only as a documented update. Preserve old manifests and historical records as dated snapshots. Keep the documentation branch unmerged while `main` equality is still required for this frozen run. Before a later documentation merge, verify deployment source pinning and source-proof behavior so it cannot silently deploy new code or invalidate a required restart. If that binding still applies, publish the completed ledger on its branch and #44 and track the documentation merge separately.
 
-**Exit evidence.** Independent final review accepts the real execution, live app access, persistence, accounting truthfulness and source/deployment bindings. Close #44 only when its mandatory operational criteria are met. If a criterion remains blocked, leave it open and name the exact remaining action, affected resource and evidence; do not substitute another plan or claim source tests prove live acceptance. Keep optional PR #42 outside this completion decision.
+**Exit evidence.** Independent final review accepts the real protected-pilot execution, owner Learning access, persistence, accounting truthfulness and source/deployment bindings. Close #44 only when its mandatory protected-learning operational criteria are met. If a criterion remains blocked, leave it open and name the exact remaining action, affected resource and evidence; do not substitute another plan or claim source tests prove live acceptance. Keep optional PR #42 outside this completion decision. Report P6 separately: P0–P5 completion alone does not mean the public app accepts live reviews.
+
+## P6 — Implement the authenticated live-review product workflow
+
+**Starting boundary.** The current public review interaction is a sample demonstration. There is no qualified submission backend function to connect merely by enabling a flag. This phase requires new application source, its own reviewed and qualified release, and actual user-facing acceptance. Keep sample content labeled and keep any nonfunctional live-submit action disabled with an accurate explanation until this phase passes.
+
+**Specification.** Preserve the existing app and implement an authenticated, read-only review path:
+
+1. An authenticated user submits a supported code change through a bounded form. The server derives user/tenant identity from the authenticated session, validates input size/type and authorizes that request. The browser cannot choose an arbitrary upstream URL, provider credential, account or session owner.
+2. The backend creates a durable user-owned job with an idempotency key before dispatch. It uses an explicitly configured Gate Keeper model/agent route and a separate product request identity; it must not insert arbitrary public code into the frozen learning experiment or use its evaluation/activation authority as a general model proxy.
+3. A single owned provider operation produces actual structured findings with file/line, severity and explanation. Submission acknowledgement, queued/running state, completed result and failure are distinguished in the UI. Unknown dispatch remains a reconciliation case, not an automatic duplicate paid request.
+4. The authenticated user can reopen their own run and its results after refresh. Ownership checks protect submission, polling, result retrieval and history. Provider credentials, protected pilot records, unrelated user code and raw internal sessions remain server-side.
+5. Record actual usage for the product run, with unknown prices and estimates labeled separately. Apply practical input/concurrency/abuse limits without silently restoring the removed aggregate programme ceiling. This phase submits reviews; it does not acquire automatic fix, merge, deploy or learning-promotion powers.
+
+Plan and source preparation may proceed separately while P0–P5 run, but do not change the frozen runtime/main binding or deploy P6 source into its services midway. Qualify new source through independent review, Gitar and complete isolated Railway qualification before the separate deployment. Reuse established infrastructure where suitable; introducing another coordinator is not required.
+
+**Live acceptance.** Verify one real authenticated submission from form to retained findings, using actual provider evidence. Verify a repeated submission with the same idempotency identity does not create another provider operation; refresh preserves the same job/result. Verify a second authenticated user cannot read, poll or alter the first user's job; anonymous access is refused. Verify malformed/oversized input, provider failure, timeout, pending reconciliation, empty findings and reconnect states behave truthfully. Inspect desktop/mobile usability and confirm sample results are never presented as live output.
+
+**Exit evidence.** Exact frontend/backend release identities, deployed submission function/API and persistence bindings, actual product run/provider receipt, authenticated cross-user access checks, idempotency/restart behavior, actual usage state and independent acceptance. Only then describe authenticated live code review as operational. P6 does not retroactively turn the ten-attempt pilot into public-review acceptance, and optional PR #42 remains separately assessed.
+
+**Rollback.** Disable new submissions and restore the last qualified app/backend release while retaining existing job records and any ambiguous operations for reconciliation. Keep a clear status for pending users and preserve the completed pilot, historical bank and Learning view. Do not discard submitted work or rerun it to make the interface appear healthy.
 
 ## 4. Failure and source-repair rule
 
@@ -208,16 +245,21 @@ Use one entry per observed phase exit or blocking event; update this table from 
 
 | Phase | Observation time (AEDT, with UTC in receipt) | Exact source/deployment/operation | Evidence | Disposition |
 | --- | --- | --- | --- | --- |
-| P0 | Pending current readback | Existing frozen identities above | Current GitHub/Railway/app reads | Not yet accepted by this plan |
-| P1 | Pending | Existing successful qualification and named disposable service | Actual cleanup + authenticated source receipt | Pending |
+| P0 | 6 November 2026, before the P1 cleanup | `main` remains `a35c83c…`; existing deployments reconciled | Fresh lead GitHub/Railway readbacks | Complete |
+| P1 cleanup | 6 November 2026, 13:55:55 AEDT (`2026-11-06T02:55:55Z`) | Service `730fa701-cc2e-4246-9c86-c55586e3dde1` absent | Actual `services: []`, `staged: null`; new 242,625-byte capture with SHA-256 `bd2cb592…` retained | Cleanup complete |
+| P1 receipt | 6 November 2026, 13:58:59 AEDT (`2026-11-06T02:58:59Z`) | PR #56 comment `6675649613` | Exact body SHA-256 `63bab68f35ae5b035beb32a9db2f775f9db41fdde703109bb92d257488f6cdf1` | Published; source-gate verification pending |
 | P2 | Pending | Existing Base44 app/published revision | Anonymous/non-owner/owner observations | Pending |
-| P3 | Pending | Existing authority and `gk-v4-concurrency-20261105` | Serving/bootstrap/host/BASE evidence | Pending |
+| P3 serve deployment | 6 November 2026, 13:59:39.535 AEDT (`2026-11-06T02:59:39.535Z`) | `e4bd438e-89d5-405c-832f-1d607f11e0da`, source `a35c83c…` | Terminal SUCCESS; authenticated authority domain configured | Serving infrastructure complete; bootstrap/gate/host/BASE acceptance pending |
 | P4 | Starting record: 0/10 | Same experiment | Ten actual proposal receipts and outcome table | Pending |
 | P5 | Pending | Same retained journal and source | Restart, usage, privacy and independent acceptance | Pending |
+| P6 | Not implemented | Separate qualified product release required | Real authenticated submission, private results/history and end-to-end acceptance | Public review flow remains demo |
+| Plan publication | 6 November 2026 | Draft PR #57; `work/gatekeeper-closeout-phase-plan-20261106` | Isolated documentation branch; `main` unchanged | Published as draft; preserve frozen source |
 
 ## 6. Primary references
 
 - [Current #44 execution record](https://github.com/appliedai-au/gate_keeper/issues/44#issuecomment-6664862988).
+- [Immutable source-qualification receipt on PR #56](https://github.com/appliedai-au/gate_keeper/pull/56#issuecomment-6675649613).
+- [Isolated phase-plan draft PR #57](https://github.com/appliedai-au/gate_keeper/pull/57).
 - [Retained-history recovery](https://github.com/appliedai-au/gate_keeper/issues/44#issuecomment-6649714244).
 - [Production pilot composition at the frozen source](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/docs/learning-v2/production-pilot-v4.md).
 - [Detached-authority commissioning and recovery](https://github.com/appliedai-au/gate_keeper/blob/a35c83ccb2e3743c4d4f3b9ae13406507dfd297a/docs/learning-v2/detached-authority-commissioning.md).
