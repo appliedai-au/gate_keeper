@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { copy } from '../scripts/learning-v2/contracts.mjs';
 import { hasCompleteReviewDashboard } from '../scripts/learning-v2/review-dashboard.mjs';
 import { createProposalObservationSourceVerifier } from '../scripts/learning-v2/proposal-observation-proof.mjs';
+import { createSourceGateVerifier } from '../scripts/learning-v2/authority-source-proof.mjs';
 import { originalFourthFixture, D } from './helpers/proposal-observation-fixture.mjs';
 import { proposalObservationSourceFixture, D_HEAD } from './helpers/proposal-observation-source-fixture.mjs';
 
@@ -17,6 +19,11 @@ const positive = [
   ['ten all closed', plain('<kbd>10 closed / 10 findings</kbd>')],
   ['structured real dashboard shape', dashboard('<kbd>🔴 High risk</kbd> · TEST-ONLY risk description.\n\nTEST-ONLY recovery description. No issues found.')],
   ['closed count with explicit zero open', dashboard('<kbd>12 closed / 12 findings</kbd>\n0 open')],
+  ['closed count with zero open findings', dashboard('<kbd>12 closed / 12 findings</kbd>\n0 open findings')],
+  ['closed count with zero open issues', dashboard('<kbd>12 closed / 12 findings</kbd>\n0 open issues')],
+  ['singular all closed', plain('<kbd>1 closed / 1 finding</kbd>')],
+  ['issues all closed', plain('<kbd>3 closed / 3 issues</kbd>')],
+  ['zero issues', plain('0 issues')],
 ];
 const negative = [
   ['ten findings is not zero', plain('<kbd>0 closed / 10 findings</kbd>')],
@@ -30,6 +37,13 @@ const negative = [
   ['oversized counts', plain('<kbd>9007199254740992 closed / 9007199254740992 findings</kbd>')],
   ['malformed count with clean prose', plain('No issues found.\n<kbd>x closed / y findings</kbd>')],
   ['more closed than total', plain('<kbd>5 closed / 3 findings</kbd>')],
+  ['singular finding contradicts clean prose', plain('No issues found.\n1 finding')],
+  ['plural issues contradict clean prose', plain('No open findings remain\n3 issues')],
+  ['singular issue contradicts clean prose', plain('No issues found.\n1 issue')],
+  ['singular open finding contradicts clean prose', plain('No issues found.\n1 open finding')],
+  ['open issues contradict closed total', dashboard('<kbd>3 closed / 3 findings</kbd>\n2 open issues')],
+  ['unclosed singular summary contradicts clean prose', plain('No issues found.\n<kbd>0 closed / 1 finding</kbd>')],
+  ['extra issue count contradicts closed total', plain('<kbd>3 closed / 3 findings</kbd>\n1 issue')],
   ['negated zero', plain('There are not 0 findings')],
   ['negated clean statement', plain('Not No issues found.')],
   ['quoted clean statement', plain('> No issues found.')],
@@ -55,7 +69,7 @@ test('dashboard refuses nontext and oversized bodies', () => {
   }
 });
 
-test('actual D source verifier rejects contradictory authenticated dashboards without weakening other gates', async t => {
+test('both actual source verifiers reject contradictory authenticated dashboards without weakening other gates', async t => {
   const f = await originalFourthFixture(t);
   const root = 'https://api.github.com/repos/appliedai-au/gate_keeper';
   const make = body => {
@@ -71,27 +85,41 @@ test('actual D source verifier rejects contradictory authenticated dashboards wi
     g.proof.review.approval = { id: 807, bodySha256: g.sha(approval.body) }; g.refresh();
     return { ...g, dashboard: approval, acknowledgement };
   };
-  const verify = g => createProposalObservationSourceVerifier({ descriptor: g.descriptor, fetcher: g.fetcher })(g.input);
-  for (const [name, body] of positive) await t.test('accepts authenticated ' + name, async () => {
-    assert.equal((await verify(make(body))).implementationCommit, D);
-  });
-  for (const [name, body] of negative) await t.test('refuses authenticated ' + name, async () => {
-    await assert.rejects(verify(make(body)), /no complete approval evidence/);
-  });
-  await t.test('clean wording cannot override wrong bot identity', async () => {
-    const g = make(dashboard('No issues found.'));
-    g.dashboard.user = { id: 999, login: 'TEST-ONLY-wrong-reviewer' };
-    await assert.rejects(verify(g), /review author or payload changed/);
-  });
-  await t.test('clean wording cannot override changed pinned bytes', async () => {
-    const g = make(dashboard('No issues found.'));
-    g.dashboard.body += '\nTEST-ONLY later unpinned edit';
-    await assert.rejects(verify(g), /review author or payload changed/);
-  });
-  await t.test('clean wording cannot override stale approval', async () => {
-    const g = make(dashboard('No issues found.'));
-    g.dashboard.updated_at = new Date(f.controls.now - 116000).toISOString();
-    await assert.rejects(verify(g), /predates exact-head/);
-  });
+  const verifiers = {
+    recovery: async g => (await createProposalObservationSourceVerifier({ descriptor: g.descriptor, fetcher: g.fetcher })(g.input)).implementationCommit,
+    authority: async g => {
+      const descriptor = copy(g.descriptor.sourceProof);
+      descriptor.schema = 'gk-learning-source-proof-v1';
+      g.proof.schema = 'gk-learning-source-qualification-v1';
+      g.comment.body = 'GK_AUTHORITY_QUALIFICATION\n' + JSON.stringify(g.proof);
+      descriptor.qualification.bodySha256 = g.sha(g.comment.body);
+      const result = await createSourceGateVerifier({ descriptor, fetcher: g.fetcher })({
+        binding: { sourceCommit: D }, config: { gatePolicy: g.descriptor.gatePolicy } });
+      return result.evidence.source.sha;
+    },
+  };
+  for (const [entrypoint, verify] of Object.entries(verifiers)) {
+    for (const [name, body] of positive) await t.test(entrypoint + ' accepts authenticated ' + name, async () => {
+      assert.equal(await verify(make(body)), D);
+    });
+    for (const [name, body] of negative) await t.test(entrypoint + ' refuses authenticated ' + name, async () => {
+      await assert.rejects(verify(make(body)), /no complete approval evidence/);
+    });
+    await t.test(entrypoint + ' clean wording cannot override wrong bot identity', async () => {
+      const g = make(dashboard('No issues found.'));
+      g.dashboard.user = { id: 999, login: 'TEST-ONLY-wrong-reviewer' };
+      await assert.rejects(verify(g), /review author or payload changed/);
+    });
+    await t.test(entrypoint + ' clean wording cannot override changed pinned bytes', async () => {
+      const g = make(dashboard('No issues found.'));
+      g.dashboard.body += '\nTEST-ONLY later unpinned edit';
+      await assert.rejects(verify(g), /review author or payload changed/);
+    });
+    await t.test(entrypoint + ' clean wording cannot override stale approval', async () => {
+      const g = make(dashboard('No issues found.'));
+      g.dashboard.updated_at = new Date(f.controls.now - 116000).toISOString();
+      await assert.rejects(verify(g), /predates exact-head/);
+    });
+  }
   await f.assertNoNewCalls();
 });
