@@ -96,7 +96,7 @@ test('secret wrapper passes exact name/result and emits only known binding plus 
   ]);
 });
 
-test('direct fetch preserves input/options/signal/header identities and response body untouched', async () => {
+test('direct fetch changes only redirect mode, preserving input/signal/headers and response body', async () => {
   const response = new Response(secretMarker, { status: 200 });
   const host = fixture({ fetchResult: async () => response });
   const adapter = await host.handle({});
@@ -106,7 +106,9 @@ test('direct fetch preserves input/options/signal/header identities and response
     headers: { 'X-Private': secretMarker } };
   assert.equal(await adapter.fetchImpl(input, init), response);
   assert.equal(host.fetches.length, 1);
-  assert.equal(host.fetches[0].input, input); assert.equal(host.fetches[0].init, init);
+  assert.equal(host.fetches[0].input, input); assert.notEqual(host.fetches[0].init, init);
+  assert.deepEqual({ ...host.fetches[0].init }, { ...init, redirect: 'manual' });
+  assert.equal(init.redirect, 'error', 'the caller options are not mutated');
   assert.equal(host.fetches[0].init.signal, controller.signal);
   assert.equal(host.fetches[0].init.headers, init.headers);
   assert.equal(response.bodyUsed, false);
@@ -130,7 +132,7 @@ test('secret and fetch errors preserve original identity, classify boundedly, an
     const host = fixture({ getSecret: () => { throw error; }, fetchResult: () => { throw error; } });
     const adapter = await host.handle({});
     await assert.rejects(adapter.readSecret(names[3]), caught => caught === error);
-    await assert.rejects(adapter.fetchImpl('https://private.invalid/' + secretMarker, {}), caught => caught === error);
+    await assert.rejects(adapter.fetchImpl('https://private.invalid/' + secretMarker, { redirect: 'error' }), caught => caught === error);
     assert.equal(host.secretReads.length, 1); assert.equal(host.fetches.length, 1);
     const logs = safeLogs(host.logs);
     assert.deepEqual(logs[1], { event: 'GK_LS_SECRET_ERROR', binding: names[3], kind });
@@ -138,24 +140,26 @@ test('secret and fetch errors preserve original identity, classify boundedly, an
   }
 });
 
-test('status diagnostics omit invalid status and cannot replace returned response or original error', async () => {
+test('status diagnostics stay bounded while policy access and logging preserve error identity', async () => {
   for (const status of [NaN, Infinity, -1, 0, 600, 200.5, secretMarker]) {
     const response = { status };
     const host = fixture({ fetchResult: () => response }); const adapter = await host.handle({});
-    assert.equal(await adapter.fetchImpl('https://private.invalid', {}), response);
+    assert.equal(await adapter.fetchImpl('https://private.invalid', { redirect: 'error' }), response);
     assert.deepEqual(safeLogs(host.logs)[1], { event: 'GK_LS_FETCH_RESULT' });
   }
-  const response = Object.defineProperty({}, 'status', { get() { throw new Error(secretMarker); } });
+  const getterError = new Error(secretMarker);
+  const response = Object.defineProperty({}, 'status', { get() { throw getterError; } });
   const badStatus = fixture({ fetchResult: () => response }); const statusAdapter = await badStatus.handle({});
-  assert.equal(await statusAdapter.fetchImpl('https://private.invalid', {}), response);
-  assert.deepEqual(safeLogs(badStatus.logs)[1], { event: 'GK_LS_FETCH_RESULT' });
+  await assert.rejects(statusAdapter.fetchImpl('https://private.invalid', { redirect: 'error' }), error => error === getterError);
+  assert.deepEqual(safeLogs(badStatus.logs)[1], { event: 'GK_LS_FETCH_ERROR', kind: 'other' });
   const original = new Error(secretMarker);
   const noisy = fixture({ throwLog: true, getSecret: () => { throw original; }, fetchResult: () => { throw original; } });
   const adapter = await noisy.handle({});
   await assert.rejects(adapter.readSecret(names[0]), error => error === original);
-  await assert.rejects(adapter.fetchImpl('https://private.invalid', {}), error => error === original);
-  const silent = fixture({ throwLog: true, fetchResult: () => response });
+  await assert.rejects(adapter.fetchImpl('https://private.invalid', { redirect: 'error' }), error => error === original);
+  const accepted = new Response(secretMarker);
+  const silent = fixture({ throwLog: true, fetchResult: () => accepted });
   const successful = await silent.handle({});
   assert.equal(await successful.readSecret(names[0]), secretMarker);
-  assert.equal(await successful.fetchImpl('https://private.invalid', {}), response);
+  assert.equal(await successful.fetchImpl('https://private.invalid', { redirect: 'error' }), accepted);
 });

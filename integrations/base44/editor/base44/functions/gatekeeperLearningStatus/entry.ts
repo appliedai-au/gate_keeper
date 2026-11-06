@@ -63,12 +63,15 @@ export default async function gatekeeperLearningStatus(request: Request) {
     fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
       observe({ event: 'GK_LS_FETCH_BEGIN' });
       try {
-        // Keep direct invocation and the exact original input/options references.
-        const response = await fetch(input, init);
+        // workerd lacks redirect:error. Preserve that policy with manual + reject.
+        if (init?.redirect !== 'error') throw new TypeError('Unexpected upstream redirect policy');
+        const response = await fetch(input, { ...init, redirect: 'manual' });
+        const responseStatus = response.status;
+        if ((responseStatus >= 300 && responseStatus <= 399) || response.redirected)
+          throw new TypeError('Upstream redirect rejected');
         let status: number | undefined;
         try {
-          const candidate = response.status;
-          if (Number.isSafeInteger(candidate) && candidate >= 100 && candidate <= 599) status = candidate;
+          if (Number.isSafeInteger(responseStatus) && responseStatus >= 100 && responseStatus <= 599) status = responseStatus;
         } catch { /* A diagnostic read cannot replace a returned response. */ }
         observe({ event: 'GK_LS_FETCH_RESULT', ...(status === undefined ? {} : { status }) });
         return response;

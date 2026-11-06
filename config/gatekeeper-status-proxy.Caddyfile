@@ -15,6 +15,12 @@
 		reverse_proxy http://{$UPSTREAM_HOST}:{$UPSTREAM_PORT}
 	}
 
+	# This exact new route performs its own independently scoped review auth.
+	# A Learning read token never authorizes inference. Disabled inner feature = 503.
+	handle /gatekeeper/reviews-v1 {
+		reverse_proxy http://{$UPSTREAM_HOST}:{$UPSTREAM_PORT}
+	}
+
 	# All original TrueForge routes retain the existing Basic Auth credentials.
 	handle {
 		basic_auth {
