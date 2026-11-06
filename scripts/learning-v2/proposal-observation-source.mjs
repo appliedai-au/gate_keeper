@@ -17,7 +17,10 @@ const sha = value => createHash('sha256').update(value).digest('hex');
 const equal = (a, b, why) => requireThat(canonical(a) === canonical(b), why);
 
 async function github(fetcher, path) {
-  requireThat(path.startsWith('/') && !path.includes('..'), 'source evidence path');
+  // GitHub's comparison separator is not a parent-directory segment. Admit
+  // only this exact, already hash-bound route; retain refusal for every other '..'.
+  const pinnedComparison = /^\/compare\/[a-f0-9]{40}\.\.\.[a-f0-9]{40}\?per_page=100$/u.test(path);
+  requireThat(path.startsWith('/') && (!path.includes('..') || pinnedComparison), 'source evidence path');
   const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 30_000);
   try {
     const response = await fetcher(ROOT + path, { redirect: 'error', signal: abort.signal,
