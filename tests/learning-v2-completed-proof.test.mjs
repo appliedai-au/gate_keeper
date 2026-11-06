@@ -97,58 +97,36 @@ test('public closure authorization pins digests only and requires original GitHu
 // the actual completed-source verifier and the actual hasCompleteReviewDashboard.
 const DASH_ROOT = 'https://api.github.com/repos/appliedai-au/gate_keeper';
 const BOT = { id: 159877585, login: 'gitar-bot[bot]' };
-const closedEntries = count => Array.from({ length: count }, (_, index) => '<details>
-<summary>✅ <b>Bug:</b> TEST-ONLY resolved finding ' +
-  index + '</summary>
-
-> TEST-ONLY retained example: 10 open, 100 findings.
-
-</details>').join('
-
-');
-const allClosed = count => '<details>
-<summary><b>Code Review</b> <kbd>✅ Approved</kbd> <kbd>' + count + ' closed / ' + count +
-  ' findings</kbd></summary>
-
-<kbd>🟢 Low risk</kbd> · TEST-ONLY. No open findings remain.
-
-<details>
-<summary><kbd>✅ ' +
-  count + ' closed</kbd></summary>
-
-' + closedEntries(count) + '
-
-</details>
-
-</details>';
+const closedEntries = count => Array.from({ length: count }, (_, index) => '<details>\n' +
+  '<summary>✅ <b>Bug:</b> TEST-ONLY resolved finding ' + index + '</summary>\n\n' +
+  '> TEST-ONLY retained example: 10 open, 100 findings.\n\n' +
+  '</details>').join('\n\n');
+const allClosed = count => '<details>\n' +
+  '<summary><b>Code Review</b> <kbd>✅ Approved</kbd> <kbd>' + count + ' closed / ' + count +
+  ' findings</kbd></summary>\n\n' +
+  '<kbd>🟢 Low risk</kbd> · TEST-ONLY. No open findings remain.\n\n' +
+  '<details>\n' +
+  '<summary><kbd>✅ ' + count + ' closed</kbd></summary>\n\n' +
+  closedEntries(count) + '\n\n' +
+  '</details>\n\n' +
+  '</details>';
 const dashboardCases = [
-  ['actual zero-findings form', '✅ Approved
-No open findings remain.', true],
+  ['actual zero-findings form', '✅ Approved\nNo open findings remain.', true],
   ['actual compact zero form', '<kbd>✅ Approved</kbd> <kbd>0 open</kbd>', true],
   ['actual all-closed form', allClosed(2), true],
-  ['10 findings', '✅ Approved
-10 findings', false],
-  ['100 open', '✅ Approved
-100 open', false],
-  ['10 open', '✅ Approved
-10 open', false],
-  ['singular 1 finding', '✅ Approved
-1 finding', false],
-  ['singular 1 issue', '✅ Approved
-1 issue', false],
-  ['contradictory clean prose', '✅ Approved
-3 open
-No open findings remain.', false],
-  ['malformed numerical count', '<details>
-<summary><b>Code Review</b> <kbd>✅ Approved</kbd> <kbd>04 closed / 04 findings</kbd></summary>
-No open findings remain.
-</details>', false],
+  ['10 findings', '✅ Approved\n10 findings', false],
+  ['100 open', '✅ Approved\n100 open', false],
+  ['10 open', '✅ Approved\n10 open', false],
+  ['singular 1 finding', '✅ Approved\n1 finding', false],
+  ['singular 1 issue', '✅ Approved\n1 issue', false],
+  ['contradictory clean prose', '✅ Approved\n3 open\nNo open findings remain.', false],
+  ['malformed numerical count', '<details>\n' +
+    '<summary><b>Code Review</b> <kbd>✅ Approved</kbd> <kbd>04 closed / 04 findings</kbd></summary>\n' +
+    'No open findings remain.\n' +
+    '</details>', false],
   ['unequal closed count', allClosed(2).replace('2 closed / 2 findings', '2 closed / 3 findings'), false],
-  ['quoted examples only', '> ✅ Approved
-> No open findings remain.
-`0 open`', false],
-  ['unanchored zero text', '✅ Approved
-Still 10 findings, previously 0 findings.', false],
+  ['quoted examples only', '> ✅ Approved\n> No open findings remain.\n`0 open`', false],
+  ['unanchored zero text', '✅ Approved\nStill 10 findings, previously 0 findings.', false],
 ];
 function dashboardFixture(body, acknowledgementBody) {
   const f = completedSourceFixture(NOW);
@@ -173,24 +151,18 @@ for (const [name, body, expected] of dashboardCases) test('completed source dash
 });
 
 test('completed source dashboard approval keeps bot, pinned-byte, acknowledgement and freshness guards', async () => {
-  const wrongBot = dashboardFixture('✅ Approved
-No open findings remain.');
+  const wrongBot = dashboardFixture('✅ Approved\nNo open findings remain.');
   wrongBot.approval.user = { id: 456, login: 'other-authenticated-reviewer' };
   await assert.rejects(verify(wrongBot.f), /author or payload changed/);
 
-  const altered = dashboardFixture('✅ Approved
-No open findings remain.');
-  altered.approval.body = '✅ Approved
-No open findings remain.
-';
+  const altered = dashboardFixture('✅ Approved\nNo open findings remain.');
+  altered.approval.body = '✅ Approved\nNo open findings remain.\n';
   await assert.rejects(verify(altered.f), /author or payload changed/);
 
-  const stale = dashboardFixture('✅ Approved
-No open findings remain.');
+  const stale = dashboardFixture('✅ Approved\nNo open findings remain.');
   stale.approval.updated_at = new Date(NOW - 120000).toISOString();
   await assert.rejects(verify(stale.f), /predates exact-head bot acknowledgement/);
 
-  const noHead = dashboardFixture('✅ Approved
-No open findings remain.', 'Queued current head ' + 'a'.repeat(40));
+  const noHead = dashboardFixture('✅ Approved\nNo open findings remain.', 'Queued current head ' + 'a'.repeat(40));
   await assert.rejects(verify(noHead.f), /lacks exact-head bot acknowledgement/);
 });
