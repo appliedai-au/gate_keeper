@@ -64,7 +64,9 @@ function successorFixture(f) {
 test('explicit successor verifies exactly two qualified releases while retaining original B', async t => {
   const f = await originalFourthFixture(t);
   const fresh = () => successorFixture(f);
-  const verify = g => createProposalObservationSourceVerifier({ descriptor: g.descriptor, fetcher: g.fetcher })(g.input);
+  // Both constructor-time shape refusal and later evidence refusal must reach
+  // assert.rejects; do not let a correct synchronous refusal escape the test.
+  const verify = async g => createProposalObservationSourceVerifier({ descriptor: g.descriptor, fetcher: g.fetcher })(g.input);
   const commit = value => ({ sha: value.sha, tree: value.tree.sha, parents: value.parents.map(item => item.sha) });
   await t.test('actual successor is current main; the prior leg never pretends old D is current', async () => {
     const g = fresh(), result = await verify(g);
