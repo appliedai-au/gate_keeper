@@ -39,12 +39,14 @@ export function validateLearningHistoryBinding(value) {
     closureDigest: hash(value.closureDigest, 64) };
 }
 
-/** Copy only verified public fields. The private reader proves actual closure. */
-export function projectLearningHistoryResponse(value, binding, nowMs = Date.now()) {
+/** Structural/provenance projection only, for display of the fixed authenticated
+ * backend response. This does not authenticate an input or establish freshness.
+ * Trusted owner pins, when supplied, still match exactly; closure is proved by
+ * the private reader. Device wall clocks are not part of display validation. */
+export function projectLearningHistoryForDisplay(value, binding) {
   record(value, ['schema', 'checkedAt', 'serving', 'archive', 'status']);
   check(value.schema === LEARNING_HISTORY_SCHEMA);
   const checked = timestamp(value.checkedAt);
-  check(Number.isFinite(nowMs) && nowMs - checked >= -5000 && nowMs - checked <= 60_000);
   record(value.serving, ['mode', 'sourceCommit']);
   check(value.serving.mode === 'completed-history');
   const servingSourceCommit = hash(value.serving.sourceCommit, 40);
@@ -75,4 +77,13 @@ export function projectLearningHistoryResponse(value, binding, nowMs = Date.now(
     serving: { mode: 'completed-history', sourceCommit: servingSourceCommit },
     archive: { experimentSourceCommit, executionSourceCommit, closureDigest, archivedAt: value.archive.archivedAt },
     status };
+}
+
+/** Server boundary: exact structure/provenance plus freshness on its own clock.
+ * There is no null/flag bypass; browser callers use the explicit display API. */
+export function projectLearningHistoryResponse(value, binding, nowMs = Date.now()) {
+  const response = projectLearningHistoryForDisplay(value, binding);
+  const age = nowMs - Date.parse(response.checkedAt);
+  check(Number.isFinite(nowMs) && age >= -5000 && age <= 60_000);
+  return response;
 }

@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-import { validateLearningHistoryBinding, projectLearningHistoryResponse } from '../integrations/base44/shared/learning-history-contract.js';
+import { validateLearningHistoryBinding, projectLearningHistoryForDisplay,
+  projectLearningHistoryResponse } from '../integrations/base44/shared/learning-history-contract.js';
 import { projectLearningStatus } from '../integrations/base44/shared/learning-status-contract.js';
 import { createLearningHistoryBackend } from '../integrations/base44/shared/learning-history-backend.js';
 import { binding, nowMs, completedResponse } from './base44-completed-learning-fixture.mjs';
@@ -39,6 +40,7 @@ async function fixedError(response, status, error) {
 test('completed public projection retains A exactly and accepts negative outcomes with unknown prices', () => {
   const original = completedResponse();
   const result = projectLearningHistoryResponse(original, binding, nowMs);
+  assert.deepEqual(projectLearningHistoryForDisplay(original, binding), result);
   assert.deepEqual(result.status, projectLearningStatus(original.status, {
     ownerId: binding.ownerId, experimentId: binding.experimentId, sourceCommit: binding.sourceCommit,
   }));
@@ -64,14 +66,18 @@ test('history contract refuses source/closure substitution, private fields and l
   ]) {
     const value = completedResponse(); mutate(value);
     assert.throws(() => projectLearningHistoryResponse(value, binding, nowMs));
+    assert.throws(() => projectLearningHistoryForDisplay(value, binding));
   }
   assert.throws(() => projectLearningHistoryResponse({ schema: 'gk-learning-v2-status-response',
     checkedAt: new Date(nowMs).toISOString(), status: completedResponse().status }, binding, nowMs));
+  assert.throws(() => projectLearningHistoryForDisplay({ schema: 'gk-learning-v2-status-response',
+    checkedAt: new Date(nowMs).toISOString(), status: completedResponse().status }, binding));
   assert.throws(() => validateLearningHistoryBinding({ ...binding, servingSourceCommit: binding.sourceCommit }));
   let accessed = false;
   const value = completedResponse();
   Object.defineProperty(value.archive, 'closureDigest', { enumerable: true, get() { accessed = true; return binding.closureDigest; } });
   assert.throws(() => projectLearningHistoryResponse(value, binding, nowMs)); assert.equal(accessed, false);
+  assert.throws(() => projectLearningHistoryForDisplay(value, binding)); assert.equal(accessed, false);
 });
 
 test('a completed label requires all ten terminal dispositions, BASE and public closure invariants', () => {
@@ -91,6 +97,7 @@ test('a completed label requires all ten terminal dispositions, BASE and public 
   ]) {
     const value = completedResponse(); mutate(value);
     assert.throws(() => projectLearningHistoryResponse(value, binding, nowMs));
+    assert.throws(() => projectLearningHistoryForDisplay(value, binding));
   }
 });
 
@@ -101,13 +108,41 @@ test('freshness belongs to checkedAt, while archive time stays strict and histor
   }
   for (const age of [-5001, 60_001]) {
     const value = completedResponse(); value.checkedAt = new Date(nowMs - age).toISOString();
+    assert.deepEqual(projectLearningHistoryForDisplay(value, binding), value,
+      'display projection has no wall-clock freshness authority');
     assert.throws(() => projectLearningHistoryResponse(value, binding, nowMs));
   }
   for (const archivedAt of ['2026-02-30T00:00:00.000Z', 'invalid', new Date(nowMs + 1).toISOString()]) {
     const value = completedResponse(); value.archive.archivedAt = archivedAt;
     assert.throws(() => projectLearningHistoryResponse(value, binding, nowMs));
+    assert.throws(() => projectLearningHistoryForDisplay(value, binding));
   }
   assert.throws(() => projectLearningHistoryResponse(completedResponse(), binding, NaN));
+  assert.throws(() => projectLearningHistoryResponse(completedResponse(), binding, null));
+});
+
+test('the server projector still uses its own clock by default without a freshness bypass', t => {
+  t.mock.method(Date, 'now', () => nowMs);
+  assert.deepEqual(projectLearningHistoryResponse(completedResponse(), binding), completedResponse());
+  for (const age of [-5001, 60_001]) {
+    const value = completedResponse(); value.checkedAt = new Date(nowMs - age).toISOString();
+    assert.deepEqual(projectLearningHistoryForDisplay(value, binding), value);
+    assert.throws(() => projectLearningHistoryResponse(value, binding));
+  }
+});
+
+test('actual backend enforces the exact stale/future boundaries even for structurally valid display data', async () => {
+  for (const [age, accepted] of [[-5001, false], [-5000, true], [0, true], [60_000, true], [60_001, false]]) {
+    const value = completedResponse(); value.checkedAt = new Date(nowMs - age).toISOString();
+    assert.deepEqual(projectLearningHistoryForDisplay(value, binding), value);
+    let fetches = 0;
+    const bridge = factory({ fetchImpl: async () => { fetches++; return Response.json(value); } });
+    const response = await bridge(request());
+    if (accepted) {
+      assert.equal(response.status, 200); assert.deepEqual(await response.json(), value);
+    } else await fixedError(response, 503, 'learning_history_unavailable');
+    assert.equal(fetches, 1, 'server freshness refusal does not trigger a second fetch');
+  }
 });
 
 test('authentication and configured owner precede read token and all C/B/closure pins', async () => {

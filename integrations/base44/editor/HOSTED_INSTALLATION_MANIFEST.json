@@ -227,8 +227,8 @@
       "hostedPath": "base44/shared/learningHistoryContract.ts",
       "mappingEvidence": "planned-new-function",
       "repository": {
-        "bytes": 4759,
-        "sha256": "eb1e3262a765d9720de2e88bb8e9324036a0b31ceeca528add763e111f818b37"
+        "bytes": 5351,
+        "sha256": "a7ad8f5268770d64d033c6d36a5e1f7e2db689cf124a53d2988f11b81189fd5b"
       },
       "importReplacements": [
         {
@@ -238,12 +238,12 @@
       ],
       "hosted": {
         "withFinalLf": {
-          "bytes": 4757,
-          "sha256": "447e409b99895a089c6c54b64f97f41579a1088806ff267bba76e9f06e8cba5e"
+          "bytes": 5349,
+          "sha256": "7b422d8d65ec955381a1e713a6bc75d21e96a9d4fe463fc894af389693435a86"
         },
         "withoutFinalLf": {
-          "bytes": 4756,
-          "sha256": "b1c459db0be6149755ec3c223aa4745155a40d0378a142bc75b79cf9a787b309"
+          "bytes": 5348,
+          "sha256": "ebbad0055abfa744152879681356f72e18b3396e145c92709382bbf4f8cffcda"
         }
       }
     }

@@ -12,9 +12,19 @@ const jsx = readFileSync(new URL('../integrations/base44/components/GateKeeperLe
 const compiled = ts.transpileModule(jsx, { fileName: 'GateKeeperLearningHistory.jsx', reportDiagnostics: true,
   compilerOptions: { jsx: ts.JsxEmit.React, allowJs: true, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
 assert.deepEqual((compiled.diagnostics || []).filter(item => item.category === ts.DiagnosticCategory.Error), []);
+function compileContract(path) {
+  const result = ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'), {
+    fileName: path.split('/').at(-1), reportDiagnostics: true,
+    compilerOptions: { allowJs: true, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  });
+  assert.deepEqual((result.diagnostics || []).filter(item => item.category === ts.DiagnosticCategory.Error), []);
+  return result.outputText;
+}
+const compiledStatus = compileContract('../integrations/base44/shared/learning-status-contract.js');
+const compiledHistory = compileContract('../integrations/base44/shared/learning-history-contract.js');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
-function ui(invoke) {
+function ui(invoke, { browserNowMs = nowMs } = {}) {
   const hooks = [], effects = [], cleanup = [], timers = [], requests = [];
   let index = 0;
   const react = {
@@ -43,23 +53,38 @@ function ui(invoke) {
     },
   };
   class FixedDate extends Date {
-    constructor(...args) { super(...(args.length ? args : [nowMs])); }
-    static now() { return nowMs; }
+    constructor(...args) { super(...(args.length ? args : [browserNowMs])); }
+    static now() { return browserNowMs; }
   }
   const module = { exports: {} };
+  let statusContract, historyContract, parseBrowserJSON;
   const context = vm.createContext({ module, exports: module.exports, Date: FixedDate,
     setTimeout(callback) { const timer = { callback, active: true }; timers.push(timer); return timer; },
     clearTimeout(timer) { if (timer) timer.active = false; },
     require(name) {
       if (name === 'react') return { default: react, ...react };
       if (name === '@/api/base44Client') return { base44: { functions: { async invoke(name, command) {
-        requests.push({ name, command }); return { data: await invoke() };
+        requests.push({ name, command }); return parseBrowserJSON(JSON.stringify({ data: await invoke() }));
       } } } };
-      if (name === '../shared/learning-history-contract.js') return contract;
+      if (name === './learning-status-contract.js') return statusContract;
+      if (name === '../shared/learning-history-contract.js') return historyContract;
       if (name === './GateKeeperLearningStatus.css') return {};
       throw new Error('Unexpected history UI dependency: ' + name);
     },
   });
+  // Evaluate the real contracts with the JSX on the browser's clock, including
+  // any projector's default Date.now. Synthetic SDK JSON is parsed in this same
+  // realm so strict plain-record validation matches actual browser objects.
+  function loadContract(source, filename) {
+    const loaded = { exports: {} };
+    const initialise = new vm.Script('(function(module, exports, require) {\n' + source + '\n})',
+      { filename }).runInContext(context);
+    initialise(loaded, loaded.exports, context.require);
+    return loaded.exports;
+  }
+  statusContract = loadContract(compiledStatus, 'learning-status-contract.cjs');
+  historyContract = loadContract(compiledHistory, 'learning-history-contract.cjs');
+  parseBrowserJSON = vm.runInContext('JSON.parse', context);
   new vm.Script(compiled.outputText, { filename: 'history-ui.cjs' }).runInContext(context);
   const render = () => { index = 0; return module.exports.default(); };
   const walk = value => Array.isArray(value) ? value.flatMap(walk) :
@@ -88,11 +113,28 @@ test('actual history UI distinguishes immutable archive, fresh read and A/B/C wi
   view.unmount();
 });
 
-test('partial, stale and legacy replies never produce completed labels or fallback requests', async () => {
+test('server-verified history renders identically with slow or fast browser clocks', async () => {
+  const verified = contract.projectLearningHistoryResponse(completedResponse(), binding, nowMs);
+  const reference = ui(async () => verified); await reference.mount();
+  const expected = reference.text(); reference.unmount();
+  for (const skew of [-86_400_000, -6000, 60_001, 86_400_000]) {
+    const view = ui(async () => verified, { browserNowMs: nowMs + skew });
+    await view.mount();
+    assert.equal(view.text(), expected, 'device time cannot reject or rewrite server-verified timestamps');
+    assert.match(view.text(), /Completed pilot/); assert.match(view.text(), /10 of 10 completed/);
+    assert.equal(view.text().includes(binding.closureDigest), true);
+    assert.deepEqual(view.requests.map(item => item.name), ['gatekeeperLearningHistory']);
+    assert.equal(JSON.stringify(view.requests[0].command), '{}');
+    view.unmount();
+  }
+});
+
+test('partial, malformed-time and legacy replies never produce completed labels or fallback requests', async () => {
   const partial = completedResponse(); partial.status.counts.provisional = 1;
-  const stale = completedResponse(); stale.checkedAt = new Date(nowMs - 60_001).toISOString();
+  const invalidTime = completedResponse(); invalidTime.checkedAt = '2026-02-30T00:00:00.000Z';
+  const invalidOrder = completedResponse(); invalidOrder.archive.archivedAt = new Date(nowMs + 1).toISOString();
   const legacy = { schema: 'gk-learning-v2-status-response', checkedAt: new Date(nowMs).toISOString(), status: completedResponse().status };
-  for (const body of [partial, stale, legacy]) {
+  for (const body of [partial, invalidTime, invalidOrder, legacy]) {
     const view = ui(async () => body); await view.mount();
     const text = view.text();
     assert.equal(text.includes('Completed pilot'), false); assert.equal(text.includes('10 of 10 completed'), false);
@@ -104,6 +146,18 @@ test('partial, stale and legacy replies never produce completed labels or fallba
   const denied = ui(async () => { throw Object.assign(new Error('synthetic-private-error'), { response: { status: 401 } }); });
   await denied.mount(); assert.match(denied.text(), /Sign in to view/);
   assert.equal(denied.text().includes('synthetic-private-error'), false); denied.unmount();
+});
+
+test('server freshness refusal remains unavailable on either skewed client clock', async () => {
+  for (const skew of [-86_400_000, 86_400_000]) {
+    const view = ui(async () => ({ error: 'learning_history_unavailable' }), { browserNowMs: nowMs + skew });
+    await view.mount();
+    assert.match(view.text(), /Pilot archive is unavailable/);
+    assert.equal(view.text().includes('Completed pilot'), false);
+    assert.equal(view.text().includes(binding.closureDigest), false);
+    assert.deepEqual(view.requests.map(item => item.name), ['gatekeeperLearningHistory']);
+    view.unmount();
+  }
 });
 
 test('refresh clears prior history and timeout/unmount prevent late replies restoring a completed snapshot', async () => {

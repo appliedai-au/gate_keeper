@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { base44 } from "@/api/base44Client";
-import { projectLearningHistoryResponse } from "../shared/learning-history-contract.js";
+import { projectLearningHistoryForDisplay } from "../shared/learning-history-contract.js";
 import "./GateKeeperLearningStatus.css";
 
 const FUNCTION = "gatekeeperLearningHistory";
@@ -107,7 +107,9 @@ export default function GateKeeperLearningHistory() {
         return;
       }
       let response;
-      try { response = projectLearningHistoryResponse(result?.data, undefined, Date.now()); }
+      // The fixed owner-only backend checks trusted pins and freshness. A skewed
+      // device clock must not reject that response during display projection.
+      try { response = projectLearningHistoryForDisplay(result?.data); }
       catch { setState({ phase: "unavailable", response: null, problem: "invalid" }); return; }
       setState({ phase: "ready", response, problem: null });
     } catch (error) {

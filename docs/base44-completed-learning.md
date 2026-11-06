@@ -17,6 +17,7 @@ validateLearningHistoryBinding({
   closureDigest,                     // exact owner-pinned completed checkpoint
 });
 projectLearningHistoryResponse(value, binding, nowMs = Date.now());
+projectLearningHistoryForDisplay(value, binding);
 ```
 
 The public response has exactly these fields:
@@ -49,12 +50,23 @@ proposal. Ten successful proposals and a learned promotion are not required.
 Unknown prices remain unknown. The original `budget.complete` may remain false
 when execution is closed but pricing is incomplete.
 
-`checkedAt` must be no more than sixty seconds old or five seconds ahead of the
-supplied clock. `archivedAt` must be a canonical finite ISO timestamp no later than
+At the server boundary, `projectLearningHistoryResponse` requires `checkedAt` to be
+no more than sixty seconds old or five seconds ahead of the server's supplied clock;
+its default remains the server's `Date.now()`. There is no null/flag freshness bypass.
+`archivedAt` must be a canonical finite ISO timestamp no later than
 `checkedAt`. The private core must supply the exact `archivedAt` fixed by its
 owner-pinned closure digest on every read; it must never replace it with the current
 clock. Reading an old immutable archive can produce a fresh `checkedAt` without
 claiming new pilot activity.
+
+The browser uses the explicit `projectLearningHistoryForDisplay` API only on the
+response from the fixed authenticated `gatekeeperLearningHistory` function. It
+retains exact shape, canonical timestamp/order, A/B/C/closure and completed-state
+checks, including exact matching whenever trusted bindings are supplied. It does
+not compare timestamps with the device clock or establish authentication/freshness
+itself. The unchanged private backend resolves the authenticated owner and trusted
+pins and applies the server freshness projector before returning any data. Neither
+client-selected bindings nor an arbitrary payload/source can replace that boundary.
 
 ## Hosted bridge and bindings
 
@@ -115,8 +127,9 @@ ordinary private reviews and provides no execution, promotion or repair action.
 
 Every refresh clears the prior snapshot before requesting a new read. The view has
 a bounded twenty-second wait; expired, superseded and unmounted responses cannot
-restore old data. Invalid, stale, unauthorized and unavailable replies show no
-counts or substituted demo history. A manual refresh repeats only the read function.
+restore old data. Invalid replies, server freshness refusals, unauthorized replies
+and unavailable replies show no counts or substituted demo history. A manual
+refresh repeats only the read function.
 
 ## Source qualification and integration
 
@@ -125,9 +138,13 @@ public closure invariants, genuine negative-outcome shapes, unknown pricing,
 timestamp bounds, no legacy fallback, private-field/accessor rejection, owner-first
 binding reads, fixed fetch options, body limits, secret/transport failures and the
 actual compiled hosted entrypoint. Separate actual-JSX tests cover provenance,
-truthful completed labels, unavailable/unauthorized states, stale/partial/legacy
-replies, clearing on refresh, late acknowledgements and unmount behavior. Fixtures
-are explicitly synthetic public projections, never production evidence.
+truthful completed labels, unavailable/unauthorized states, server freshness
+refusals, partial/legacy replies, clearing on refresh, late acknowledgements and
+unmount behavior. Device-clock regressions show the actual JSX renders the same
+server-verified response with slow
+and fast clocks. Backend regressions retain the exact future/age acceptance boundaries
+and reject the same out-of-window payload that is structurally valid for display.
+Fixtures are explicitly synthetic public projections, never production evidence.
 
 No candidate code was executed during authoring. This exact slice must receive
 independent source review, then be integrated with the independently reviewed
