@@ -1,5 +1,51 @@
 # Gate Keeper: operational closeout phase plan
 
+## Backend implementation and restart checkpoint — 2026-11-06 21:56:45 UTC
+
+**Actual C is serving verified completed history and the ordinary review backend. One genuine synthetic review completed and survived a native container restart. The Base44 hosted installation and native-session acceptance are still blocked by editor browser-control failures; issue #44 remains open.**
+
+### Current phase matrix
+
+| Phase | Current result |
+| --- | --- |
+| P0 — Reconciliation | Complete for the original pilot. Ten genuine attempts, 24 actual learning calls and eleven settlements are preserved. No pending learning operation is reported. |
+| P1 — Prerequisites, source qualification and cleanup | Complete for this release: exact d1 qualification passed 1,171 source tests, 15 real PostgreSQL checks, nine canaries, typecheck, five scorer self-tests and real Caddy checks. The qualifier workload was removed after evidence preservation; the empty service configuration and original unattached volume remain retained. |
+| P2 — Existing Base44 Learning view | Open. The exact reviewed seventeen-file assembly is prepared, including completed-history and fetch-compatibility repairs. The last verified clean draft was 6cc4981a94d54ee559ced7edb34466e0cfe5f111. The newer read-only guard response could not be inspected. Fresh live guards remain mandatory immediately before installation. |
+| P3 — Runtime and BASE execution | The original BASE execution is complete. Current host and proxy now serve actual C, with the completed-history driver unavailable and the ordinary review path separate. |
+| P4 — Ten learning attempts | Complete, unsuccessful: ten invalid attempts, zero scored/confirmed/activated proposals, original BASE unchanged. No learning improvement or promotion is claimed. |
+| P5 — Persistence, accounting, privacy and closeout | Backend archive, scoped access and restart checks pass. All 24 learning-call prices and eleven operation prices remain unknown. Hosted owner/non-owner, anonymous, desktop/mobile and publication acceptance remain open. |
+| P6 — Authenticated live-review workflow | Backend complete for one controlled synthetic case, including durable admission, single start, completed result, owner listing and restart persistence. Hosted source installation, native sign-in, secret bindings and browser flow remain open. |
+
+### Implemented and observed
+
+- Qualified source C is `f344f5f10207de33b75923da7edd5b367d4d5f83`, tree `6a9334d8ac1176447753479e90040c5e0f98bc55`, merged through PR #59. Host deployment `d93f85e8-69c9-4180-80e6-d27c694ffaa8` and proxy deployment `44a50c56-c079-47c2-a6ad-56626b644846` are successful.
+- The host's effective native deployment snapshot, rather than only desired service settings, matches Dockerfile.v3-integrated and the accepted V2 start command: 3,579 bytes, SHA-256 `4c61ea644fbe579a25e5996027d6ebead942738475ad0acbba094e1cc13d0e55`. Node 24.19.0, TrueForge server 0.182.0 and SDK 0.180.0 were observed in the running container. One TrueForge child listens only on loopback port 8790. Health returns 200.
+- Capture and owner activation remain valid. The three retained archive files match their expected bytes, hashes and custody. Closure digest `f62a7995299ed994afcf8bc4022572877217c4d81f4ec4886aef1e2a1240f5ae` and archive time 2026-11-06T20:29:39.078Z are unchanged. The authority remains on its guarded idle C deployment.
+- The ordinary provider was registered with one acknowledged create POST, followed by exact one-provider/one-model metadata readback. Model mapping is `truefoundry/glm-5-3-flash` to `tfy-managed/glm-5.3-flash`. Registration itself performed no inference.
+- All nine direct-route probes passed: history, review info/list, missing-capability denials, owner/app denials and source mismatch. Expected statuses were 200/401/403/409 with the exact JSON, source, cache and freshness contracts. History took 16,874 ms; review info 63 ms; initial list 21 ms. These are individual observations, not percentile or browser-performance claims.
+- The real backend review used an owned synthetic JavaScript authorization sample. Exactly one submit and one start were recorded, followed by explicit observations of the retained job. Submit returned 202 queued in 217 ms; start returned 202 session_dispatch in 128 ms; the first observation returned 200 complete in 303 ms with one finding on intended line 4. The finding was classified security/critical. Admission-to-observed completion was 115,497 ms, including manual observation timing; 303 ms is not generation time.
+- The engine's USD 0.0002784 estimate is recorded separately from actual cost and billing, which remain unknown/unsettled. One start request is not evidence of exactly one model call; the ordinary review's actual model-call count remains unknown.
+- Native Restart on the same verified deployment produced a fresh ready preflight at 21:43:59.626 UTC and loopback listener at 21:44:49.964 UTC. Available source capacity was 34 reads for a required 22; no rate-limit workaround was used. ON_FAILURE with five platform retries remains distinct from the operators' zero automatic retries.
+- After restart, health returned 200; provider metadata remained exact with zero create POSTs; the saved review remained complete in a 129 ms observation. Job, request key, findings and response bytes were unchanged. The scoped list returned one completed job and no queued, dispatching, running or held job. No submit or start was replayed.
+- The refreshed history returned 200 in 17,715 ms, with fresh checkedAt 2026-11-06T21:49:10.898Z and the same archive time, ten invalid attempts, unchanged BASE, eleven settlements and 24 unpriced calls. These post-restart checks were targeted positive probes; the full negative suite was not represented as repeated.
+- Private review recovery state was preserved and validated before restart and again afterward. The original nine files were unchanged within the eleven-file final state. Credential-containing recovery archives remain private and are excluded from the deliverable evidence bundle. Four temporary credential-bearing files were removed at 21:53:45.460 UTC after preservation; submit/start markers and both observation records remain. Continuing the operator requires restoration of the exact privately retained input.
+
+### Preserved failed rollout
+
+The first reported redeploy, `62f88ee3-dcbd-4fbc-9463-4fdd739224a6`, used a Railpack/Node 22.23.4 build and the older idle command despite the current desired Dockerfile/V2 settings. It failed resolving /usr/local/bin/node before the accepted serving wrapper ran. The incorrect SUCCESS badge was not accepted as readiness. A fresh connection to the same exact C built the qualified Dockerfile and produced the verified d93 deployment. No V3 command or application-source repair was needed. The failed rollout and its contradictory settings are preserved as evidence.
+
+### Remaining hosted sequence
+
+1. Restore control of the existing Base44 editor. The observed blockers are browser Page.getFrameTree, Runtime.evaluate, Page.enable and screenshot-metric timeouts; they do not establish a site-served bot block or a site-wide outage.
+2. Obtain fresh draft identity and all seventeen live file guards. Install only the accepted assembly, then read back every exact destination/variant. Preserve the established native auth helper, routes and protected preimages.
+3. Set the accepted completed-history source/closure bindings and the dedicated review capability through server-side secret settings. Keep provider credentials and the TrueForge API key outside Base44. Publish only after exact source and configuration verification.
+4. Complete native owner success, anonymous denial and a genuine authenticated non-owner denial, plus desktop/mobile, loading/error, privacy and ordinary-review browser-flow checks. No person invitations are authorized. Keep direct transport evidence separate from native-session acceptance.
+5. Update this checkpoint and close issue #44 only when those hosted acceptance gates pass. Do not report the whole Gate Keeper app finished while they remain open.
+
+The source and runtime audit records bind the qualification, actual capture/activation, effective deployment, provider operation, nine-probe suite, genuine review and post-restart evidence. The complete earlier checkpoints below are preserved as dated history.
+
+---
+
 ## Live implementation checkpoint — 2026-11-06T20:47:45Z
 
 **Completed-history capture and owner activation now pass on actual C. Final serving, provider commissioning and hosted app acceptance are still pending.**
