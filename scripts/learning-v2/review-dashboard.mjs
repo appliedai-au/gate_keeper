@@ -67,15 +67,19 @@ export function hasCompleteReviewDashboard(body) {
   // Strip only complete, whitespace-delimited quotes, not word apostrophes.
   const visible = section.replace(/<[^>]*>/gu, ' ')
     .replace(/(^|[\s(])(['"])[^'"\n]*\2(?=$|[\s.,;:)])/gmu, '$1').trim();
-  // Capture the entire numeric-looking token before canonical validation.
-  // Otherwise the trailing zero of '1.0 findings' recreates the original bug.
-  const countPattern = /(?<![\w.])([+-]?[0-9][^\s<>]*)[ \t]+closed\s*\/\s*([+-]?[0-9][^\s<>]*)[ \t]+(?:findings?|issues?)\b/giu;
+  // Capture the complete whitespace-delimited token containing a digit, not a
+  // suffix and not only tokens beginning in a digit. Prefixes such as Done.10
+  // must be rejected as noncanonical rather than making the count disappear.
+  const token = String.raw`(?<![^\s(])([^\s<>()]*[0-9][^\s<>]*)`;
+  const countPattern = new RegExp(token + String.raw`[ \t]+closed\s*\/\s*` + token +
+    String.raw`[ \t]+(?:findings?|issues?)\b`, 'giu');
   const counts = [...visible.matchAll(countPattern)];
-  const openCounts = [...visible.matchAll(/(?<![\w.])([+-]?[0-9][^\s<>]*)[ \t]+open\b/giu)];
+  const openCounts = [...visible.matchAll(new RegExp(token + String.raw`[ \t]+open\b`, 'giu'))];
   if (openCounts.some(item => !canonicalCount(item[1]) || item[1] !== '0')) return false;
   if (counts.length > 1 || /\bclosed\s*\//iu.test(visible) && counts.length !== 1) return false;
   const outsideSummary = visible.replace(countPattern, '');
-  const otherCounts = [...outsideSummary.matchAll(/(?<![\w.])([+-]?[0-9][^\s<>]*)[ \t]+(?:open[ \t]+)?(?:findings?|issues?)\b/giu)];
+  const otherCounts = [...outsideSummary.matchAll(new RegExp(token +
+    String.raw`[ \t]+(?:open[ \t]+)?(?:findings?|issues?)\b`, 'giu'))];
   if (otherCounts.some(item => !canonicalCount(item[1]) || item[1] !== '0')) return false;
   if (counts.length === 1) {
     const [, closed, total] = counts[0];
