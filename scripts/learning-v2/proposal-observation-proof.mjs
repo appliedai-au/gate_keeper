@@ -15,8 +15,6 @@ const same = (a, b, why) => requireThat(canonical(a) === canonical(b), why);
 const original = value => { canonical(value); return JSON.parse(JSON.stringify(value)); };
 
 export function createProposalObservationSourceVerifier({ descriptor, fetcher = fetch }) {
-  // The independently observed full Learning gate is reused as a recipe, not
-  // as B's authorization. This verifier checks D's actual source/tree/parents.
   record(descriptor, ['schema', 'sourceProof', 'gatePolicy'], 'D source descriptor');
   requireThat(descriptor.schema === 'gk-learning-proposal-observation-source-proof-v1', 'D source descriptor schema');
   const captured = copy(descriptor);
@@ -44,17 +42,25 @@ export function createProposalObservationSourceVerifier({ descriptor, fetcher = 
     for (const key of ['targetId', 'presetDigest', 'outputProfileDigest']) requireThat(
       captured.gatePolicy[key] === input.bundle.config.gatePolicy[key], 'D qualification weakens original full Learning recipe');
     const result = await verify({ binding: { sourceCommit: input.implementationCommit }, config: { gatePolicy: captured.gatePolicy } });
-    requireThat(result.evidence.base.sha === historical.qualificationEnvelope.body.implementationCommit,
-      'D qualified merge must retain historical B as its actual first parent');
-    // Stable authenticated facts only. Live PR metadata may change when the
-    // owner later posts authorization; every invocation still verifies the
-    // current source and full review inventory before deriving this projection.
+    const successor = captured.sourceProof.schema === 'gk-learning-proposal-observation-gate-proof-v2';
+    const predecessor = result.evidence.predecessor;
+    requireThat(successor === Boolean(predecessor), 'source proof version differs from verified predecessor evidence');
+    requireThat((predecessor || result.evidence).base.sha === historical.qualificationEnvelope.body.implementationCommit,
+      'D qualified merge chain must retain historical B as its exact anchor first parent');
+    // Preserve v1 fact bytes. v2 adds a distinct schema and the complete stable
+    // predecessor facts, so neither an old D signature nor another predecessor
+    // can stand in for the actual newly qualified successor.
     const commit = value => ({ sha: value.sha, tree: value.tree.sha, parents: value.parents.map(item => item.sha) });
-    const qualificationEvidenceDigest = digest({ schema: 'gk-learning-proposal-observation-qualified-facts-v1',
+    const facts = { schema: successor ? 'gk-learning-proposal-observation-qualified-facts-v2' :
+      'gk-learning-proposal-observation-qualified-facts-v1',
       descriptor: captured, qualificationReceipt: result.evidence.qualification,
       source: commit(result.evidence.source), qualified: commit(result.evidence.qualified), base: commit(result.evidence.base),
       historicalQualificationDigest: digest(historical.qualificationEnvelope),
-      historicalAuthorizationDigest: digest(historical.authorizationEnvelope) });
+      historicalAuthorizationDigest: digest(historical.authorizationEnvelope) };
+    if (predecessor) facts.predecessor = { descriptor: predecessor.descriptor,
+      qualificationReceipt: predecessor.qualification, source: commit(predecessor.source),
+      qualified: commit(predecessor.qualified), base: commit(predecessor.base) };
+    const qualificationEvidenceDigest = digest(facts);
     return { ...result, qualificationEvidenceDigest, implementationCommit: input.implementationCommit, implementationTree: result.evidence.source.tree.sha,
       qualification: copy(captured.sourceProof.qualification), qualificationPullRequest: result.evidence.qualification.pullRequest,
       owner: { id: owner.authorId, login: owner.authorLogin } };
