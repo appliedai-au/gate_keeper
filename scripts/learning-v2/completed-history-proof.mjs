@@ -7,6 +7,7 @@
  */
 import { createHash } from 'node:crypto';
 import { canonical, copy, digest, hash, integer, record, requireThat, text } from './contracts.mjs';
+import { hasCompleteReviewDashboard } from './review-dashboard.mjs';
 
 const REPOSITORY = 'appliedai-au/gate_keeper';
 const ROOT = 'https://api.github.com/repos/' + REPOSITORY;
@@ -209,10 +210,7 @@ export function createCompletedSourceVerifier({ descriptor: supplied, fetcher = 
       requireThat(acknowledgement && acknowledgement.body.includes(proof.qualifiedCommit) &&
         /(?:queued|current.head|reviewing|review.*(?:started|requested))/iu.test(acknowledgement.body),
       'dashboard review lacks exact-head bot acknowledgement');
-      const count = approval.body.match(/<kbd>(\d+) closed \/ (\d+) findings<\/kbd>/u);
-      requireThat(approval.body.includes('✅ Approved') &&
-        (/No open findings remain|No issues found\.|0 findings|0 open/iu.test(approval.body) || count && count[1] === count[2]),
-      'Gitar dashboard has no complete approval evidence');
+      requireThat(hasCompleteReviewDashboard(approval.body), 'Gitar dashboard has no complete approval evidence');
       requireThat(Date.parse(approval.updated_at || approval.created_at) >= Date.parse(acknowledgement.created_at),
         'dashboard approval predates exact-head bot acknowledgement');
     }

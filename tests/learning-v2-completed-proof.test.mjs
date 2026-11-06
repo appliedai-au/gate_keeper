@@ -92,3 +92,105 @@ test('public closure authorization pins digests only and requires original GitHu
   f.routes.get('/issues/comments/603').user = { id: 999, login: binding.ownerId };
   await assert.rejects(verifyCompletedOwnerPin({ pin, closure, closureDigest, sourceEvidence: source, fetcher: f.fetcher }), /author/);
 });
+
+// NOT executed locally: authored as source for remote qualification. These use
+// the actual completed-source verifier and the actual hasCompleteReviewDashboard.
+const DASH_ROOT = 'https://api.github.com/repos/appliedai-au/gate_keeper';
+const BOT = { id: 159877585, login: 'gitar-bot[bot]' };
+const closedEntries = count => Array.from({ length: count }, (_, index) => '<details>
+<summary>✅ <b>Bug:</b> TEST-ONLY resolved finding ' +
+  index + '</summary>
+
+> TEST-ONLY retained example: 10 open, 100 findings.
+
+</details>').join('
+
+');
+const allClosed = count => '<details>
+<summary><b>Code Review</b> <kbd>✅ Approved</kbd> <kbd>' + count + ' closed / ' + count +
+  ' findings</kbd></summary>
+
+<kbd>🟢 Low risk</kbd> · TEST-ONLY. No open findings remain.
+
+<details>
+<summary><kbd>✅ ' +
+  count + ' closed</kbd></summary>
+
+' + closedEntries(count) + '
+
+</details>
+
+</details>';
+const dashboardCases = [
+  ['actual zero-findings form', '✅ Approved
+No open findings remain.', true],
+  ['actual compact zero form', '<kbd>✅ Approved</kbd> <kbd>0 open</kbd>', true],
+  ['actual all-closed form', allClosed(2), true],
+  ['10 findings', '✅ Approved
+10 findings', false],
+  ['100 open', '✅ Approved
+100 open', false],
+  ['10 open', '✅ Approved
+10 open', false],
+  ['singular 1 finding', '✅ Approved
+1 finding', false],
+  ['singular 1 issue', '✅ Approved
+1 issue', false],
+  ['contradictory clean prose', '✅ Approved
+3 open
+No open findings remain.', false],
+  ['malformed numerical count', '<details>
+<summary><b>Code Review</b> <kbd>✅ Approved</kbd> <kbd>04 closed / 04 findings</kbd></summary>
+No open findings remain.
+</details>', false],
+  ['unequal closed count', allClosed(2).replace('2 closed / 2 findings', '2 closed / 3 findings'), false],
+  ['quoted examples only', '> ✅ Approved
+> No open findings remain.
+`0 open`', false],
+  ['unanchored zero text', '✅ Approved
+Still 10 findings, previously 0 findings.', false],
+];
+function dashboardFixture(body, acknowledgementBody) {
+  const f = completedSourceFixture(NOW);
+  const acknowledgement = { id: 810, user: BOT, issue_url: DASH_ROOT + '/issues/59',
+    body: acknowledgementBody ?? 'Queued current head ' + HEAD, created_at: new Date(NOW - 115000).toISOString() };
+  const approval = { id: 811, user: BOT, issue_url: DASH_ROOT + '/issues/59', body,
+    created_at: new Date(NOW - 130000).toISOString(), updated_at: new Date(NOW - 110000).toISOString() };
+  f.routes.set('/issues/comments/810', acknowledgement); f.routes.set('/issues/comments/811', approval);
+  // Dashboard approval is a COMMENTED native review, never a formal approval.
+  f.approval.state = 'COMMENTED'; f.proof.review.nativeReviews[0].state = 'COMMENTED';
+  f.proof.review.mode = 'dashboard';
+  f.proof.review.acknowledgement = { id: 810, bodySha256: sha(acknowledgement.body) };
+  f.proof.review.approval = { id: 811, bodySha256: sha(approval.body) };
+  f.refresh();
+  return { f, acknowledgement, approval };
+}
+
+for (const [name, body, expected] of dashboardCases) test('completed source dashboard approval: ' + name, async () => {
+  const { f } = dashboardFixture(body);
+  if (expected) assert.equal((await verify(f)).sourceCommit, C);
+  else await assert.rejects(verify(f), /no complete approval evidence/);
+});
+
+test('completed source dashboard approval keeps bot, pinned-byte, acknowledgement and freshness guards', async () => {
+  const wrongBot = dashboardFixture('✅ Approved
+No open findings remain.');
+  wrongBot.approval.user = { id: 456, login: 'other-authenticated-reviewer' };
+  await assert.rejects(verify(wrongBot.f), /author or payload changed/);
+
+  const altered = dashboardFixture('✅ Approved
+No open findings remain.');
+  altered.approval.body = '✅ Approved
+No open findings remain.
+';
+  await assert.rejects(verify(altered.f), /author or payload changed/);
+
+  const stale = dashboardFixture('✅ Approved
+No open findings remain.');
+  stale.approval.updated_at = new Date(NOW - 120000).toISOString();
+  await assert.rejects(verify(stale.f), /predates exact-head bot acknowledgement/);
+
+  const noHead = dashboardFixture('✅ Approved
+No open findings remain.', 'Queued current head ' + 'a'.repeat(40));
+  await assert.rejects(verify(noHead.f), /lacks exact-head bot acknowledgement/);
+});
