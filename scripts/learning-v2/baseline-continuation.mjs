@@ -142,12 +142,29 @@ export async function initializeBaselineContinuation({ originalJournal, continua
   const originalArchive = new OperationArchive({ journal: originalJournal }), original = await originalArchive.read();
   checkedOriginal(original, (await originalJournal.read()).head, authorization.body.retained);
   const continuation = new OperationArchive({ journal: continuationJournal });
-  const empty = await continuation.read();
-  requireThat(empty.operation === null, 'BASE continuation archive already exists; never initialize or dispatch twice');
-  await continuation.claimOperation(original.operation, original.request);
-  await continuation.recordArtifact(LINK, 'base-continuation-authorization', {
+  const saved = await continuation.read();
+  const expectedLink = { id: LINK, kind: 'base-continuation-authorization', payload: {
     qualificationSerialized: JSON.stringify(qualificationEnvelope), authorizationSerialized: JSON.stringify(authorization),
-  });
+  } };
+  // Only metadata-only initialization prefixes are resumable. A durable call
+  // claim or any STARTED/replay/evaluation/unknown artifact remains held, even
+  // if no provider response is present. Validate the entire prefix before any
+  // append; an existing LINK must preserve its exact signed-envelope strings.
+  requireThat(saved.calls.length === 0, 'BASE continuation initialization has a call intent; hold without retry');
+  if (saved.operation === null) {
+    requireThat(saved.request === null && saved.artifacts.length === 0,
+      'BASE continuation empty initialization prefix differs');
+  } else {
+    same(saved.operation, original.operation, 'BASE continuation initialization changed original operation or lease');
+    same(saved.request, original.request, 'BASE continuation initialization changed original request');
+    requireThat(saved.artifacts.length <= 1, 'BASE continuation initialization already started or has extra artifacts');
+    if (saved.artifacts.length === 1) same(saved.artifacts[0], expectedLink,
+      'BASE continuation initialization LINK differs or execution already started');
+  }
+  // Finish only a missing claim/LINK. The host separately checks its original
+  // controller head and CAS-links the dispatch journal before starting execution.
+  if (saved.operation === null) await continuation.claimOperation(original.operation, original.request);
+  if (saved.artifacts.length === 0) await continuation.recordArtifact(expectedLink.id, expectedLink.kind, expectedLink.payload);
   return continuationLink(authorization, qualificationEnvelope);
 }
 

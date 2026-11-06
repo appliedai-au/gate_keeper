@@ -109,6 +109,8 @@ The original lease may have expired since its first genuine call. This path does
 
 Before dispatch the host verifies that its actual original heads and archived bytes still equal the signed authorization, creates the additive archive, and appends a mandatory continuation link to the existing dispatch journal using the authorized original dispatch head. A durable started marker and original-result replay reference precede every new SDK mutation.
 
+An explicit continuation can finish an interrupted metadata-only initialization after its original operation claim or authorized LINK was written but before dispatch linkage. It first requires the exact original operation/request, zero call claims, and either no artifacts or exactly the accepted LINK with unchanged serialized qualification and authorization bytes. It appends only the missing claim/LINK/linkage steps; repeated metadata initialization adds nothing. Any differing, corrupt, started, replayed or evaluated prefix remains held. The original controller-head check and dispatch-head CAS still precede execution, and this path never retries an SDK call.
+
 Success requires all of the following:
 
 - The first original result is returned through the internal one-use verified replay capability, with **zero repeat SDK or model calls for that slot**.

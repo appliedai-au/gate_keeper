@@ -13,7 +13,7 @@ import { authorityProviderBody } from '../scripts/learning-v2/authority-wire.mjs
 import { initializeLearningHost, openLearningHost } from '../scripts/learning-v2/host.mjs';
 import { createReadOnlyLearningStatusReader } from '../scripts/learning-v2/status-reader.mjs';
 import { TURN_CONFIG } from '../scripts/learning-v2/trueforge-turn.mjs';
-import { readBaselineContinuation, replayOriginalBaselineResult } from '../scripts/learning-v2/baseline-continuation.mjs';
+import { initializeBaselineContinuation, readBaselineContinuation, replayOriginalBaselineResult } from '../scripts/learning-v2/baseline-continuation.mjs';
 import { CONTINUATION_PURPOSE, verifyImplementationStatus, verifyOwnerContinuationAuthorization } from '../scripts/learning-v2/implementation-proof.mjs';
 import { productionChildSpec } from '../scripts/learning-v2/production-bootstrap.mjs';
 import { verifyProductionImplementationForCommand } from '../scripts/learning-v2/production-config.mjs';
@@ -54,11 +54,14 @@ async function fixture(t, { ambiguousFirstRelay = false } = {}) {
   const artifactStore = { async put(value) { const id = digest(value); artifacts.set(id, copy(value)); return id; },
     async get(id) { assert.ok(artifacts.has(id)); return copy(artifacts.get(id)); } };
   const controls = { sessions: 0, turns: 0, dispatches: 0, failOriginalRead: true, extraTurn: false,
-    ambiguousNextRelay: false, ambiguousFirstRelay, dropSettlementOnce: false, ownerComment: null, now: NOW };
+    ambiguousNextRelay: false, ambiguousFirstRelay, dropSettlementOnce: false, requireContinuationLink: false,
+    ownerComment: null, now: NOW };
   const sessions = new Map(), turns = new Map(), events = new Map();
   let authority, host;
   const provider = { sessions: {
     async create(input) {
+      if (controls.requireContinuationLink) assert.ok((await host.inspect()).dispatch.pending?.baselineContinuation,
+        'a new SDK session must follow the durable dispatch continuation link');
       const id = 'session-' + (++controls.sessions);
       const session = { id, agent: { type: 'inline', spec: copy(input.agent.spec) }, metadata: copy(input.metadata),
         shared: false, createdBySubject: 'TEST-ONLY-protected-authority',
@@ -346,4 +349,98 @@ test('parent and child production proof gate reject absent/wrong B and qualifica
   assert.equal(spec.sourceCommit, B); assert.equal(spec.options.env.GK_PRODUCTION_SOURCE_COMMIT, B);
   assert.deepEqual(Object.keys(spec.options.env).sort(), ['GK_PRODUCTION_SOURCE_COMMIT', 'NODE_ENV', 'PATH']);
   assert.equal(spec.args.at(-1), 'continue-baseline'); assert.equal(f.controls.turns, 1);
+});
+
+for (const interruptedAfter of ['operation-claimed', 'artifact-recorded']) {
+  test('unstarted initialization resumes only missing metadata after durable ' + interruptedAfter + ' acknowledgement loss', async t => {
+    const f = await fixture(t); await f.qualify(); await f.authorize((await f.prepare()).prepared);
+    const status = await f.authority().implementationStatus();
+    const continuationJournal = new FileJournal({ directory: f.continuationPath, repositoryRoot: f.repositoryRoot, create: true });
+    const options = { originalJournal: f.originalJournal, continuationJournal, ...status,
+      binding: f.bundle.binding, trust: f.trust, implementationCommit: B };
+    const dispatchJournal = new FileJournal({ directory: join(f.directory, 'dispatch'), repositoryRoot: f.repositoryRoot });
+    const controllerJournal = new FileJournal({ directory: join(f.directory, 'controller'), repositoryRoot: f.repositoryRoot });
+    const dispatchBefore = canonical(await dispatchJournal.read()), controllerBefore = canonical(await controllerJournal.read());
+    const actualBefore = { sessions: f.controls.sessions, turns: f.controls.turns, dispatches: f.controls.dispatches };
+    const interrupted = { read: () => continuationJournal.read(), async append(head, event) {
+      const committed = await continuationJournal.append(head, event);
+      if (event.type === interruptedAfter) throw new Error('TEST-ONLY acknowledgement lost after durable initialization prefix');
+      return committed;
+    } };
+    await assert.rejects(initializeBaselineContinuation({ ...options, continuationJournal: interrupted }), /acknowledgement lost/);
+    const prefix = await new OperationArchive({ journal: continuationJournal }).read();
+    assert.deepEqual(prefix.operation, f.originalArchive.operation); assert.deepEqual(prefix.request, f.originalArchive.request);
+    assert.equal(prefix.calls.length, 0); assert.equal(prefix.artifacts.length, interruptedAfter === 'operation-claimed' ? 0 : 1);
+    assert.equal((await f.host().inspect()).dispatch.entries[0].baselineContinuation, undefined);
+    assert.equal(canonical(await dispatchJournal.read()), dispatchBefore);
+    assert.equal(canonical(await controllerJournal.read()), controllerBefore);
+    assert.deepEqual({ sessions: f.controls.sessions, turns: f.controls.turns, dispatches: f.controls.dispatches }, actualBefore);
+    // Explicitly finish metadata only, then prove an identical re-open appends
+    // nothing. The host still must perform its original-head CAS linkage before
+    // any resumed SDK mutation is permitted.
+    const link = await initializeBaselineContinuation(options);
+    const initialized = canonical(await continuationJournal.read());
+    assert.deepEqual(await initializeBaselineContinuation(options), link);
+    assert.equal(canonical(await continuationJournal.read()), initialized);
+    assert.equal(canonical(await dispatchJournal.read()), dispatchBefore);
+    assert.equal(canonical(await controllerJournal.read()), controllerBefore);
+    assert.deepEqual({ sessions: f.controls.sessions, turns: f.controls.turns, dispatches: f.controls.dispatches }, actualBefore);
+    f.controls.requireContinuationLink = true;
+    await f.reopenHost(); await f.host().continueBaseline();
+    const settled = await f.host().inspect(), continued = await f.continuation();
+    assert.equal(f.controls.sessions, 14); assert.equal(f.controls.turns, 14); assert.equal(f.controls.dispatches, 14);
+    assert.equal(settled.state.operations.length, 1); assert.equal(settled.state.operations[0].leaseId, f.originalArchive.operation.leaseId);
+    assert.equal(settled.state.operations[0].actualCalls, 14); assert.equal(settled.state.operations[0].settled, true);
+    assert.equal(settled.dispatch.entries[0].observations.filter(item => item.kind === 'admission').length, 1);
+    assert.equal(continued.saved.calls.length, 13);
+    const events = (await continuationJournal.read()).events;
+    assert.equal(events.filter(event => event.type === 'operation-claimed').length, 1);
+    assert.equal(events.filter(event => event.type === 'artifact-recorded' && event.id === 'baseline-continuation-link').length, 1);
+    await f.assertOriginal();
+  });
+}
+
+test('initialization refuses changed LINK bytes/shape, request/lease, unknown or execution artifacts, call intents and corrupt prefixes before any append', async t => {
+  const f = await fixture(t); await f.qualify(); await f.authorize((await f.prepare()).prepared);
+  const status = await f.authority().implementationStatus();
+  const payload = { qualificationSerialized: JSON.stringify(status.qualificationEnvelope),
+    authorizationSerialized: JSON.stringify(status.authorizationEnvelope) };
+  const link = archive => archive.recordArtifact('baseline-continuation-link', 'base-continuation-authorization', payload);
+  const cases = [
+    ['different LINK bytes', async archive => archive.recordArtifact('baseline-continuation-link', 'base-continuation-authorization',
+      { ...payload, authorizationSerialized: payload.authorizationSerialized + '\n' })],
+    ['different LINK kind', async archive => archive.recordArtifact('baseline-continuation-link', 'different-kind', payload)],
+    ['extra LINK payload field', async archive => archive.recordArtifact('baseline-continuation-link', 'base-continuation-authorization',
+      { ...payload, unaccepted: true })],
+    ['unknown sole artifact', async archive => archive.recordArtifact('unknown-initialization-artifact', 'unknown', {})],
+    ['started artifact', async archive => { await link(archive); await archive.recordArtifact('baseline-continuation-started', 'base-continuation-start', {}); }],
+    ['replay artifact', async archive => { await link(archive); await archive.recordArtifact('baseline-continuation-original-replay', 'base-continuation-original-result', {}); }],
+    ['evaluation artifact', async archive => { await link(archive); await archive.recordArtifact('unexpected-evaluation-receipt', 'evaluation', { serialized: '{}' }); }],
+    ['ambiguous call intent', async archive => archive.claimCall(f.originalArchive.calls[1].call)],
+  ];
+  for (const [name, append] of cases) {
+    const continuationJournal = new MemoryJournal(), archive = new OperationArchive({ journal: continuationJournal });
+    await archive.claimOperation(f.originalArchive.operation, f.originalArchive.request); await append(archive);
+    const before = canonical(await continuationJournal.read());
+    await assert.rejects(initializeBaselineContinuation({ originalJournal: f.originalJournal, continuationJournal,
+      ...status, binding: f.bundle.binding, trust: f.trust, implementationCommit: B }), undefined, name);
+    assert.equal(canonical(await continuationJournal.read()), before, name + ' must not append or repair');
+  }
+  for (const name of ['request', 'lease']) {
+    const continuationJournal = new MemoryJournal(), archive = new OperationArchive({ journal: continuationJournal });
+    const operation = copy(f.originalArchive.operation), request = copy(f.originalArchive.request);
+    if (name === 'request') { request.plan.pairId += ':different'; operation.requestDigest = digest(request); }
+    else operation.leaseId = 'different-lease';
+    await archive.claimOperation(operation, request);
+    const before = canonical(await continuationJournal.read());
+    await assert.rejects(initializeBaselineContinuation({ originalJournal: f.originalJournal, continuationJournal,
+      ...status, binding: f.bundle.binding, trust: f.trust, implementationCommit: B }), /original operation|original request/);
+    assert.equal(canonical(await continuationJournal.read()), before);
+  }
+  const corrupt = new MemoryJournal(); await corrupt.append(null, { schema: 'unknown-archive-schema', type: 'operation-claimed' });
+  const corruptBefore = canonical(await corrupt.read());
+  await assert.rejects(initializeBaselineContinuation({ originalJournal: f.originalJournal, continuationJournal: corrupt,
+    ...status, binding: f.bundle.binding, trust: f.trust, implementationCommit: B }), /archive record schema/);
+  assert.equal(canonical(await corrupt.read()), corruptBefore);
+  assert.equal(f.controls.turns, 1); assert.equal(f.controls.sessions, 1); await f.assertOriginal();
 });
