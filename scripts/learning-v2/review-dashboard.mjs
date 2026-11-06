@@ -55,9 +55,13 @@ export function hasCompleteReviewDashboard(body) {
     }
     if (headerCount) section = headerCount[0] + ' closed / ' + headerCount[1] + ' findings\n' + section;
   } else {
+    const compact = unquoted.match(/^<kbd>✅ Approved<\/kbd>[ \t]+<kbd>([^<>\n]+)<\/kbd>$/u);
     const review = unquoted.match(/^✅ Approved\r?\n([\s\S]*)$/u);
-    if (!review || /<\/?details\b/u.test(review[1])) return false;
-    section = review[1];
+    if (compact) section = compact[1];
+    else {
+      if (!review || /<\/?details\b/u.test(review[1])) return false;
+      section = review[1];
+    }
   }
   // Literal quoted examples in a descriptive sentence are not current counts.
   // Strip only complete, whitespace-delimited quotes, not word apostrophes.
