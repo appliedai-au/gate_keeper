@@ -21,7 +21,7 @@ if (process.env.GK3_GK_RULES) { const list = process.env.GK3_GK_RULES.split("\n"
   const runModel = process.env.GK3_MODEL_B || MODEL; // improve and pipe modes run Gate Keeper on GK3_MODEL_B when it is set
   if (!list.length) console.log("GK3_GK_RULES_EMPTY " + JSON.stringify({ file: process.env.GK3_GK_RULES_FILE || null, model: runModel }));
   else { const B = P.agents.gate_keeper.system, block = "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
-    P.agents.gate_keeper.system = B.includes("\n\nExtra field:") ? B.replace("\n\nExtra field:", block + "\n\nExtra field:") : B + block;
+    P.agents.gate_keeper.system = B.includes("\n\nExtra field:") ? B.replace("\n\nExtra field:", () => block + "\n\nExtra field:") : B + block;
     P.sha256 = { ...(P.sha256 || {}), gate_keeper: createHash("sha256").update(P.agents.gate_keeper.system).digest("hex") };
     console.log("GK3_GK_RULES " + JSON.stringify({ file: process.env.GK3_GK_RULES_FILE || null, model: runModel, rules: list.length, sha256: P.sha256.gate_keeper })); } }
 // GK3_GK_SYSTEM_B: a second Gate Keeper variant run as its own arm ("gate_keeper_b") on the same prompts, so two prompt versions
@@ -469,7 +469,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   const tally = (xs) => { const seen = new Map(); for (const x of xs) { const k = x.task + ":" + x.line; seen.set(k, { ...x, n: (seen.get(k)?.n || 0) + 1 }); } return [...seen.values()].sort((a, b) => b.n - a.n); };
   console.log("GK3_START " + JSON.stringify({ improve: true, model: GM, rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
   const BASE = P.agents.gate_keeper.system;
-  const withRules = (list) => BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n") + "\n\nExtra field:") : BASE + "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
+  const withRules = (list) => BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", () => "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n") + "\n\nExtra field:") : BASE + "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
   let rules = BASE, learned = [], rejected = [];
   let best = await evalRules(BAGMODE ? "round A (rule bag)" : (process.env.GK3_GK_FILE || "v12"), rules);
   // Paired sign-flip test on per-review net differences (same task, same trial), one split at a time.
