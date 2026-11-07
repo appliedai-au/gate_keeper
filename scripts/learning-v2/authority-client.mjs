@@ -3,6 +3,7 @@
  * This client contains no provider credential, signing key, oracle or retry.
  */
 import { copy, hash, identifier, record, requireThat, text } from './contracts.mjs';
+import { createOperationalDiagnostic } from './operational-diagnostics.mjs';
 
 export class DetachedAuthorityError extends Error {
   constructor(code, details = {}) {
@@ -17,7 +18,7 @@ export class DetachedAuthorityError extends Error {
   }
 }
 
-export function createDetachedAuthorityClient({ baseUrl, token, trust, binding, fetcher = fetch }) {
+export function createDetachedAuthorityClient({ baseUrl, token, trust, binding, fetcher = fetch, emitDiagnostic }) {
   const endpoint = new URL(baseUrl);
   const privateHost = endpoint.hostname === '127.0.0.1' || endpoint.hostname === 'localhost' ||
     endpoint.hostname.endsWith('.railway.internal');
@@ -46,19 +47,26 @@ export function createDetachedAuthorityClient({ baseUrl, token, trust, binding, 
     requireThat(Number.isFinite(seconds) && seconds > 0 && seconds <= 900,
       'authority request timeout');
     const timer = setTimeout(() => abort.abort(), seconds * 1000);
+    const diagnostic = createOperationalDiagnostic({ component: 'authority-client', emit: emitDiagnostic });
+    let stage = 'request', httpStatus, length = 0;
+    diagnostic(stage, 'started', { method });
     try {
       const response = await fetcher(endpoint.href, {
         method: 'POST', redirect: 'error', signal: abort.signal,
         headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
         body: JSON.stringify({ binding: frozenBinding, method, args: copy(args) }),
       });
+      httpStatus = response.status;
+      stage = 'response-read';
+      diagnostic(stage, 'started', { method, httpStatus });
       const chunks = [];
-      let length = 0;
       for await (const chunk of response.body) {
         length += chunk.byteLength;
         requireThat(length <= 16 * 1024 * 1024, 'authority response limit');
         chunks.push(Buffer.from(chunk));
       }
+      stage = 'response-decode';
+      diagnostic(stage, 'started', { method, httpStatus, responseBytes: length });
       let value;
       try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
       catch { throw new DetachedAuthorityError('GK_AUTHORITY_RESPONSE_INVALID'); }
@@ -67,11 +75,19 @@ export function createDetachedAuthorityClient({ baseUrl, token, trust, binding, 
           ? value.error : 'GK_AUTHORITY_REFUSED';
         throw new DetachedAuthorityError(code, value);
       }
+      stage = 'response-contract';
       record(value, ['result'], 'authority response');
       // Signature envelopes retain original property order: JSON-copy, not
       // canonical-copy. The legacy receipt verifier signs JSON.stringify(body).
-      return JSON.parse(JSON.stringify(value.result));
+      const result = JSON.parse(JSON.stringify(value.result));
+      diagnostic('complete', 'finished', { method, httpStatus, responseBytes: length });
+      return result;
     } catch (error) {
+      const reason = abort.signal.aborted ? 'aborted' : length > 16 * 1024 * 1024 ? 'response-too-large' :
+        error instanceof DetachedAuthorityError ?
+          (error.code === 'GK_AUTHORITY_RESPONSE_INVALID' ? 'response-invalid' : 'authority-refused') :
+          stage === 'response-contract' ? 'response-contract-invalid' : 'transport-unresolved';
+      diagnostic(stage, 'failed', { method, reason, httpStatus, responseBytes: length });
       if (error instanceof DetachedAuthorityError) throw error;
       // A lost response is ambiguous. Never retry a dispatch or mint a new ID.
       throw new DetachedAuthorityError('GK_AUTHORITY_TRANSPORT_UNRESOLVED');
