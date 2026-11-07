@@ -1,0 +1,251 @@
+{
+  "schema": "gatekeeper-base44-hosted-installation-v1",
+  "repository": "appliedai-au/gate_keeper",
+  "scope": "Exact server-only Base44 editor bridges and their shared dependencies. This manifest is source identity, not deployment authorization or successful hosted acceptance.",
+  "runtime": {
+    "sdk": "npm:@base44/sdk@0.8.54",
+    "secrets": "base44:runtime",
+    "entrypoint": "default export; factory inside invocation",
+    "observedImplementation": "@base44/vite-plugin 1.0.52 workerd compatibility plugin; builder read-only inspection"
+  },
+  "normalization": {
+    "encoding": "UTF-8",
+    "imports": "Only the listed exact quoted import literals, each replaced once. All other bytes remain unchanged.",
+    "terminalNewline": "Either preserve bytes exactly after the import replacements or remove exactly one final byte 0x0A. No trim, CRLF conversion, whitespace edits or additional replacements.",
+    "verification": "Accept only the listed whole-file SHA256 and byte count for the chosen hosted variant. Record the exact installed variant for each path; fail closed on every other value.",
+    "platformPolicy": "Use permitted editor write/read interfaces only. A denied terminal-newline write never authorizes shell, policy bypass or altered validation."
+  },
+  "observedLearningEntryBeforeCompatibilityChange": {
+    "hostedPath": "base44/functions/gatekeeperLearningStatus/entry.ts",
+    "withFinalLf": {
+      "bytes": 4281,
+      "sha256": "fd8fbaacd341967d495dfd3753b24ab1d3b0b4500544d3501f37b0945e755519"
+    },
+    "withoutFinalLf": {
+      "bytes": 4280,
+      "sha256": "c6d8c49cd2d716ff6e411cc1e11aa3c162ba9af6596acf3df78a694359ceb36c"
+    },
+    "meaning": "Observed original adapter with the documented import adaptation. These baseline bytes have unsupported redirect:error and are not the new compatibility candidate."
+  },
+  "files": [
+    {
+      "repositoryPath": "integrations/base44/editor/base44/functions/gatekeeperLearningStatus/entry.ts",
+      "hostedPath": "base44/functions/gatekeeperLearningStatus/entry.ts",
+      "mappingEvidence": "observed-existing-layout",
+      "repository": {
+        "bytes": 4586,
+        "sha256": "0872fd1fed8cd422e1784fce931e129495e3dddf31778f7cb26199d340ea8d47"
+      },
+      "importReplacements": [
+        {
+          "from": "'../../../../shared/learning-status-backend.js'",
+          "to": "'../../shared/learningStatusBackend.ts'"
+        }
+      ],
+      "hosted": {
+        "withFinalLf": {
+          "bytes": 4578,
+          "sha256": "3bfbabf28aa41e7f3edc7cbee9f3dfc895aa98e8a2f1d17e27a1a3d40f6c78a5"
+        },
+        "withoutFinalLf": {
+          "bytes": 4577,
+          "sha256": "31ab9fefb70aa731b3a4e321e0b4a3f82070e669b97d439b08e76e5e3e57d8b3"
+        }
+      }
+    },
+    {
+      "repositoryPath": "integrations/base44/shared/learning-status-backend.js",
+      "hostedPath": "base44/shared/learningStatusBackend.ts",
+      "mappingEvidence": "observed-existing-layout",
+      "repository": {
+        "bytes": 5530,
+        "sha256": "d45d92a73e0b270ff5439eeb7687ff6de2fe29eb217d0792312c68e4620be894"
+      },
+      "importReplacements": [
+        {
+          "from": "'./learning-status-contract.js'",
+          "to": "'./learningStatusContract.ts'"
+        }
+      ],
+      "hosted": {
+        "withFinalLf": {
+          "bytes": 5528,
+          "sha256": "1a1563329e7a449140fd9ba0f8cfa39259c48f89f57120b5b715f113a646ae67"
+        },
+        "withoutFinalLf": {
+          "bytes": 5527,
+          "sha256": "15f5135d274263c2ecdf350eab32de0fc21294442bdfa81d6c43203dee7db524"
+        }
+      }
+    },
+    {
+      "repositoryPath": "integrations/base44/shared/learning-status-contract.js",
+      "hostedPath": "base44/shared/learningStatusContract.ts",
+      "mappingEvidence": "observed-existing-layout",
+      "repository": {
+        "bytes": 7337,
+        "sha256": "6f0a89e7c1e6fbafc5f00d0ccfadbe1887e831dc8fd89d3a499c36735363a0a3"
+      },
+      "importReplacements": [],
+      "hosted": {
+        "withFinalLf": {
+          "bytes": 7337,
+          "sha256": "6f0a89e7c1e6fbafc5f00d0ccfadbe1887e831dc8fd89d3a499c36735363a0a3"
+        },
+        "withoutFinalLf": {
+          "bytes": 7336,
+          "sha256": "eafa42558241217a33c6e05469ca3fae42b785d342a8eea8e7ffce9834d4e347"
+        }
+      }
+    },
+    {
+      "repositoryPath": "integrations/base44/editor/base44/functions/gatekeeperReview/entry.ts",
+      "hostedPath": "base44/functions/gatekeeperReview/entry.ts",
+      "mappingEvidence": "planned-new-function",
+      "repository": {
+        "bytes": 1135,
+        "sha256": "0fdc2c0d175559f344c1489695bc74ceb670430675c1d7a3912e6886ced72725"
+      },
+      "importReplacements": [
+        {
+          "from": "'../../../../shared/review-backend.js'",
+          "to": "'../../shared/reviewBackend.ts'"
+        }
+      ],
+      "hosted": {
+        "withFinalLf": {
+          "bytes": 1128,
+          "sha256": "2043872267f32e20dd0c72b7ba8d4b1bce3ce1ed6a83b068c8a2c31670ec2fba"
+        },
+        "withoutFinalLf": {
+          "bytes": 1127,
+          "sha256": "6e0d4d5745bc658ca45ee2959fd5bcdfec3a9745a6210386182e3d811313717a"
+        }
+      }
+    },
+    {
+      "repositoryPath": "integrations/base44/shared/review-backend.js",
+      "hostedPath": "base44/shared/reviewBackend.ts",
+      "mappingEvidence": "planned-new-function",
+      "repository": {
+        "bytes": 3507,
+        "sha256": "6b774593450f47c6c9fea811d00a3772f095c72e375ad8baf621d6756d8a4749"
+      },
+      "importReplacements": [
+        {
+          "from": "\"./review-contract.js\"",
+          "to": "\"./reviewContract.ts\""
+        }
+      ],
+      "hosted": {
+        "withFinalLf": {
+          "bytes": 3506,
+          "sha256": "6f6089d11269aa586bb12d1a65f8774575e02f64bef2866ce4a091ab255f8c1f"
+        },
+        "withoutFinalLf": {
+          "bytes": 3505,
+          "sha256": "020265258cc7192e198c72d17ddc5b714a337cd49b9c6de491e8c4950037335b"
+        }
+      }
+    },
+    {
+      "repositoryPath": "integrations/base44/shared/review-contract.js",
+      "hostedPath": "base44/shared/reviewContract.ts",
+      "mappingEvidence": "planned-new-function",
+      "repository": {
+        "bytes": 5289,
+        "sha256": "be70367f85986114138f8b5ee5a98076760d9ebf87a19dc0c89be58a3c92cd26"
+      },
+      "importReplacements": [],
+      "hosted": {
+        "withFinalLf": {
+          "bytes": 5289,
+          "sha256": "be70367f85986114138f8b5ee5a98076760d9ebf87a19dc0c89be58a3c92cd26"
+        },
+        "withoutFinalLf": {
+          "bytes": 5288,
+          "sha256": "a84df18d4125317e064409a9cafeeed882f62567b21267edc61c3cac362159b9"
+        }
+      }
+    },
+    {
+      "repositoryPath": "integrations/base44/editor/base44/functions/gatekeeperLearningHistory/entry.ts",
+      "hostedPath": "base44/functions/gatekeeperLearningHistory/entry.ts",
+      "mappingEvidence": "planned-new-function",
+      "repository": {
+        "bytes": 1104,
+        "sha256": "4d3ad22f310075c0abd92f85d124e7e6ba1af1fdbf2c84984a235c63c5e0898a"
+      },
+      "importReplacements": [
+        {
+          "from": "'../../../../shared/learning-history-backend.js'",
+          "to": "'../../shared/learningHistoryBackend.ts'"
+        }
+      ],
+      "hosted": {
+        "withFinalLf": {
+          "bytes": 1096,
+          "sha256": "a8a57247f875cda56d7566ca96151046f75887ae98634ada44670ca8c4ae84c1"
+        },
+        "withoutFinalLf": {
+          "bytes": 1095,
+          "sha256": "ed9718b6fcd2cbb5f063d4c0557019dbad5c8a8f63ed301b992379cb536431a1"
+        }
+      }
+    },
+    {
+      "repositoryPath": "integrations/base44/shared/learning-history-backend.js",
+      "hostedPath": "base44/shared/learningHistoryBackend.ts",
+      "mappingEvidence": "planned-new-function",
+      "repository": {
+        "bytes": 5682,
+        "sha256": "18e961ea5bedfd9308bf65528c8d37d0b5f2a512172f81a82397535f41221035"
+      },
+      "importReplacements": [
+        {
+          "from": "'./learning-status-contract.js'",
+          "to": "'./learningStatusContract.ts'"
+        },
+        {
+          "from": "'./learning-history-contract.js'",
+          "to": "'./learningHistoryContract.ts'"
+        }
+      ],
+      "hosted": {
+        "withFinalLf": {
+          "bytes": 5678,
+          "sha256": "661d0f3aae206aa7d3052a48843abafb5aa59886dcde782de60c28f8cc1c5d8b"
+        },
+        "withoutFinalLf": {
+          "bytes": 5677,
+          "sha256": "f0ea497472370e8e31a91728c0743f1d1ac5209391477e8483f40f72fcb54a8c"
+        }
+      }
+    },
+    {
+      "repositoryPath": "integrations/base44/shared/learning-history-contract.js",
+      "hostedPath": "base44/shared/learningHistoryContract.ts",
+      "mappingEvidence": "planned-new-function",
+      "repository": {
+        "bytes": 6277,
+        "sha256": "35e59e5d7622fd2cdaa2c4c89ccc971bc6b05e1b32d56b560588c9668dc3293e"
+      },
+      "importReplacements": [
+        {
+          "from": "'./learning-status-contract.js'",
+          "to": "'./learningStatusContract.ts'"
+        }
+      ],
+      "hosted": {
+        "withFinalLf": {
+          "bytes": 6275,
+          "sha256": "40f9c66c0baec2461cddec72bd740c4df961b4e6645638a829812065454099d1"
+        },
+        "withoutFinalLf": {
+          "bytes": 6274,
+          "sha256": "6599408d470e156786df88ea6b16eab40b5eacfbd4f80fa50b195818e5152c54"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+# Explicit protected authority deployment only; never invokes the legacy boot.
+FROM node:24.19.0-bookworm-slim
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY . .
+ENV NODE_ENV=production PORT=8080
+USER root
+EXPOSE 8080
+CMD ["node", "/app/scripts/learning-v2/authority-service.mjs"]

@@ -1,0 +1,7 @@
+# Existing public Proxy, using the same Caddy image family and credentials.
+FROM caddy:2-alpine
+WORKDIR /app
+COPY config/gatekeeper-status-proxy.Caddyfile ./config/gatekeeper-status-proxy.Caddyfile
+COPY scripts/learning-v2/start-status-proxy.sh ./scripts/learning-v2/start-status-proxy.sh
+EXPOSE 8080
+CMD ["/bin/sh", "/app/scripts/learning-v2/start-status-proxy.sh"]

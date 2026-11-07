@@ -1,0 +1,377 @@
+{
+  "schema": "gk-learning-v2-source-increment-v1",
+  "repository": "appliedai-au/gate_keeper",
+  "created_date": "2026-11-04",
+  "parent_commit": "312a531315acee116e76356a2c1a86036d8a9c34",
+  "parent_tree": "10dd291ba52b2d2f65c5b6f8d0b52282b726c972",
+  "unchanged_main_base": "20dcea65a22e680398d017191b91d04e32b4f883",
+  "phase": "2a-adapter-source",
+  "qualification": {
+    "status": "unqualified-source",
+    "static_source_review": true,
+    "source_byte_hashing": true,
+    "local_candidate_execution": false,
+    "remote_managed_gate_run": false,
+    "paid_inference_dispatch": false,
+    "activation": false,
+    "deployment": false,
+    "merge": false,
+    "sealed_tranche_7_used": false
+  },
+  "tests": {
+    "source_files": 9,
+    "literal_test_declarations": 148,
+    "additional_declarations_since_parent": 65,
+    "count_method": "Text-only count of lines matching ^\\s*test\\( in learning-v2 test source.",
+    "discovered_count": null,
+    "passed_count": null,
+    "execution_status": "Not run; complete registered managed gate required."
+  },
+  "coverage": {
+    "current_files": "All current docs/learning-v2, scripts/learning-v2 and tests/learning-v2-*.test.mjs files except this manifest.",
+    "changed_files": "Delta against parent commit; unchanged repository tree entries are inherited from parent_tree.",
+    "whole_repository_effective_tree_digest": false,
+    "self_hash": "Excluded to avoid recursive self-reference; the publication Git commit/tree binds this manifest.",
+    "historical_phase_1_manifest": "docs/learning-v2/source-manifest.json is unchanged and describes the parent Phase 1 snapshot."
+  },
+  "compatibility": {
+    "original_path": "proof/three-agent/gk-bag.mjs",
+    "controls_commit": "3091c2e8ae9e85b020e81bc62ad6520ca68e3cfb",
+    "history_commit": "e054d8dfc4befb586f8b28699904e8396fc30955",
+    "bag_git_blob": "3abd4181c0470d9b8fd9b81fb51e75ab9734bdc5",
+    "bag_sha256": "30266866befa36ef97a30a077e0a4541a64af45671520529bfad2d084278f1f1",
+    "active_runner_modified": false,
+    "whole_runtime_equivalence": "Not claimed; explicit capability/iteration and malformed-output handling changes require BASE controls."
+  },
+  "gate_dependency": {
+    "observed_date": "2026-11-04",
+    "served_spekky_source": "2882f1c67d77a17a42840c2eb738fa8e9c07891e",
+    "served_deployment": "5d15c5d1-5572-4162-881a-53f309625ed1",
+    "inspected_spekky_main": "f66bc753fb1c5de81ac4bdc1b9f152135bd372b1",
+    "gate_keeper_target_registered": false,
+    "gate_keeper_output_profile_present": false,
+    "next_step": "Existing owner completes registration, reconciled host composition and full exact-source managed qualification."
+  },
+  "changed_files": [
+    {
+      "path": "docs/learning-v2/integration.md",
+      "mode": "100644",
+      "bytes": 21225,
+      "sha256": "1644984672ab9096c6d8144704b62187daebb952128791b4fd1f2b553dcb2801",
+      "git_blob_sha1": "2b42615784afe81422a2c3082386016f3b0297d7",
+      "test_declarations": 0,
+      "change": "modified"
+    },
+    {
+      "path": "docs/learning-v2/phase-2-adapter.md",
+      "mode": "100644",
+      "bytes": 16114,
+      "sha256": "d1576b375d132f1871ed001822ceea373d88790b761d214e0b6567ebd692b80c",
+      "git_blob_sha1": "cb0f4cb07611349c405cbef5d2931ab4ce1942cd",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "docs/learning-v2/phase-plan.md",
+      "mode": "100644",
+      "bytes": 27248,
+      "sha256": "a1d33da899191b2e8c1e32a3c6c2da7f4db67ee63128290ae0097c29c3c1fdb7",
+      "git_blob_sha1": "431866a46468e1b3716c7e1ef7609a4538d4363c",
+      "test_declarations": 0,
+      "change": "modified"
+    },
+    {
+      "path": "scripts/learning-v2/compat/gk-bag-3091.mjs",
+      "mode": "100644",
+      "bytes": 15115,
+      "sha256": "30266866befa36ef97a30a077e0a4541a64af45671520529bfad2d084278f1f1",
+      "git_blob_sha1": "3abd4181c0470d9b8fd9b81fb51e75ab9734bdc5",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "scripts/learning-v2/controller.mjs",
+      "mode": "100644",
+      "bytes": 35343,
+      "sha256": "02b061067fbb35ec20e0596a9f878248397b7c4be9cc78bb3c0bc82bb50da67c",
+      "git_blob_sha1": "69528256621fd45e911b143e76d24a01643c4ef5",
+      "test_declarations": 0,
+      "change": "modified"
+    },
+    {
+      "path": "scripts/learning-v2/executor.mjs",
+      "mode": "100644",
+      "bytes": 17529,
+      "sha256": "13090e394074fd293d8cf4e47c7d3bfda50452135fbda12ac5f901272a29fc89",
+      "git_blob_sha1": "b6ccffcd8725ebf5fc0ab3120c31e4b9e3c9c724",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "scripts/learning-v2/legacy-renderer.mjs",
+      "mode": "100644",
+      "bytes": 5749,
+      "sha256": "53fb00f3eacaa8437176f768932a9bd9d263ff21100c665bce0b5e5f46d803fc",
+      "git_blob_sha1": "d7cd43fd2e088f020ad64668d9d69a93dde95a28",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "scripts/learning-v2/operation-archive.mjs",
+      "mode": "100644",
+      "bytes": 11156,
+      "sha256": "c4df7cc2090f8124f7ff30b9f5a3c6a7c75f4c1f632d349812d8526e892899c4",
+      "git_blob_sha1": "ccf9aecb0d022fd015cc33b9f4a3ccb53631be24",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "scripts/learning-v2/trueforge-turn.mjs",
+      "mode": "100644",
+      "bytes": 16236,
+      "sha256": "9a638dcdf175b2181584074411500b54c071ec2f1a47f1d6af371f8fdcf596f0",
+      "git_blob_sha1": "36733233b75097a33894e74276ccd6b5fd76f59c",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "tests/learning-v2-controller.test.mjs",
+      "mode": "100644",
+      "bytes": 43622,
+      "sha256": "659d0e0da05223ba3512857818081752ebe37b4796d0646951f0a95d9bb6d163",
+      "git_blob_sha1": "6642605f5567851057e8eadeef68e5215f36c5c9",
+      "test_declarations": 29,
+      "change": "modified"
+    },
+    {
+      "path": "tests/learning-v2-executor.test.mjs",
+      "mode": "100644",
+      "bytes": 27332,
+      "sha256": "ae3efe3d25ed48ee930789e59ca44a40c0f1607d6a5022f2ba63f1090298017b",
+      "git_blob_sha1": "ed172b4f2e06766654494051f43c3505080a082c",
+      "test_declarations": 8,
+      "change": "added"
+    },
+    {
+      "path": "tests/learning-v2-legacy-renderer.test.mjs",
+      "mode": "100644",
+      "bytes": 12452,
+      "sha256": "e49d21cc60d7b534cbb21c147c7f8f02439293a4ac5dce51d9bf7f1868fe5adf",
+      "git_blob_sha1": "be3a162fa47a9a292fad343b9ad2dc3b05343224",
+      "test_declarations": 15,
+      "change": "added"
+    },
+    {
+      "path": "tests/learning-v2-operation-archive.test.mjs",
+      "mode": "100644",
+      "bytes": 23223,
+      "sha256": "a80e653a51b07c120bb380b6c41ef137f60b8c001243bf6eb9c7bb8925cf26c7",
+      "git_blob_sha1": "0676d756e554180107b7fded395de14d9c9c1367",
+      "test_declarations": 19,
+      "change": "added"
+    },
+    {
+      "path": "tests/learning-v2-trueforge-turn.test.mjs",
+      "mode": "100644",
+      "bytes": 18128,
+      "sha256": "7046d49ebd2bcacfa2e5414965aedceb9748a1fea1eb41e2adc56aa66f943b0f",
+      "git_blob_sha1": "c359160a971b49eb5cb3cb6e672736e028496dee",
+      "test_declarations": 19,
+      "change": "added"
+    }
+  ],
+  "files": [
+    {
+      "path": "docs/learning-v2/integration.md",
+      "mode": "100644",
+      "bytes": 21225,
+      "sha256": "1644984672ab9096c6d8144704b62187daebb952128791b4fd1f2b553dcb2801",
+      "git_blob_sha1": "2b42615784afe81422a2c3082386016f3b0297d7",
+      "test_declarations": 0
+    },
+    {
+      "path": "docs/learning-v2/phase-2-adapter.md",
+      "mode": "100644",
+      "bytes": 16114,
+      "sha256": "d1576b375d132f1871ed001822ceea373d88790b761d214e0b6567ebd692b80c",
+      "git_blob_sha1": "cb0f4cb07611349c405cbef5d2931ab4ce1942cd",
+      "test_declarations": 0
+    },
+    {
+      "path": "docs/learning-v2/phase-plan.md",
+      "mode": "100644",
+      "bytes": 27248,
+      "sha256": "a1d33da899191b2e8c1e32a3c6c2da7f4db67ee63128290ae0097c29c3c1fdb7",
+      "git_blob_sha1": "431866a46468e1b3716c7e1ef7609a4538d4363c",
+      "test_declarations": 0
+    },
+    {
+      "path": "docs/learning-v2/source-manifest.json",
+      "mode": "100644",
+      "bytes": 2947,
+      "sha256": "d49ce136b0c908c08d5f0ffa9c55ec5eb37adf20409fe568f40508e3a6f0e946",
+      "git_blob_sha1": "bd74521ddc53e0696ab224d8052109a19e8bf24f",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/compat/gk-bag-3091.mjs",
+      "mode": "100644",
+      "bytes": 15115,
+      "sha256": "30266866befa36ef97a30a077e0a4541a64af45671520529bfad2d084278f1f1",
+      "git_blob_sha1": "3abd4181c0470d9b8fd9b81fb51e75ab9734bdc5",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/contracts.mjs",
+      "mode": "100644",
+      "bytes": 7911,
+      "sha256": "fcb166dd6b3e814617512321001355e5bb11ee524a09b7fde4dad36ee4331e5d",
+      "git_blob_sha1": "e071662663a3cb391edf2377419136da19878411",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/controller.mjs",
+      "mode": "100644",
+      "bytes": 35343,
+      "sha256": "02b061067fbb35ec20e0596a9f878248397b7c4be9cc78bb3c0bc82bb50da67c",
+      "git_blob_sha1": "69528256621fd45e911b143e76d24a01643c4ef5",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/evidence.mjs",
+      "mode": "100644",
+      "bytes": 14453,
+      "sha256": "39f60b2f319e69a17102d68210eb3e678138a83857a12e8499729cd4da097f89",
+      "git_blob_sha1": "9bce0efc521b98a8ae98c13bd9ee82a728b2e710",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/executor.mjs",
+      "mode": "100644",
+      "bytes": 17529,
+      "sha256": "13090e394074fd293d8cf4e47c7d3bfda50452135fbda12ac5f901272a29fc89",
+      "git_blob_sha1": "b6ccffcd8725ebf5fc0ab3120c31e4b9e3c9c724",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/journal.mjs",
+      "mode": "100644",
+      "bytes": 16692,
+      "sha256": "ed24555c4995156b1fca751a5df91e3f72082cce119d832e385b410bd1026703",
+      "git_blob_sha1": "a9d327ecba5958a511f11a111a42c2582bb76e1e",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/legacy-renderer.mjs",
+      "mode": "100644",
+      "bytes": 5749,
+      "sha256": "53fb00f3eacaa8437176f768932a9bd9d263ff21100c665bce0b5e5f46d803fc",
+      "git_blob_sha1": "d7cd43fd2e088f020ad64668d9d69a93dde95a28",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/operation-archive.mjs",
+      "mode": "100644",
+      "bytes": 11156,
+      "sha256": "c4df7cc2090f8124f7ff30b9f5a3c6a7c75f4c1f632d349812d8526e892899c4",
+      "git_blob_sha1": "ccf9aecb0d022fd015cc33b9f4a3ccb53631be24",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/prompts.mjs",
+      "mode": "100644",
+      "bytes": 3970,
+      "sha256": "5e7575a031c4d231bec081a3b92184b8a56113cffb344de2106b659c5c84bbe0",
+      "git_blob_sha1": "05dec1d6428062edca66dab78a31e7aa5fcb8cad",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/runtime.mjs",
+      "mode": "100644",
+      "bytes": 3429,
+      "sha256": "88e574b008ba8c02d2812e792610aeed7fda9db9e85bc2e2ac6f27778abedf59",
+      "git_blob_sha1": "3316e6eef9fcbaa809b83473fd119fb111c294e4",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/trueforge-turn.mjs",
+      "mode": "100644",
+      "bytes": 16236,
+      "sha256": "9a638dcdf175b2181584074411500b54c071ec2f1a47f1d6af371f8fdcf596f0",
+      "git_blob_sha1": "36733233b75097a33894e74276ccd6b5fd76f59c",
+      "test_declarations": 0
+    },
+    {
+      "path": "tests/learning-v2-controller.test.mjs",
+      "mode": "100644",
+      "bytes": 43622,
+      "sha256": "659d0e0da05223ba3512857818081752ebe37b4796d0646951f0a95d9bb6d163",
+      "git_blob_sha1": "6642605f5567851057e8eadeef68e5215f36c5c9",
+      "test_declarations": 29
+    },
+    {
+      "path": "tests/learning-v2-evidence.test.mjs",
+      "mode": "100644",
+      "bytes": 17015,
+      "sha256": "28fc2fa42da47a9efbbd826b61f770e6a2f0ced866cec63ba39f99e1f8e2951c",
+      "git_blob_sha1": "c657da18511de0ac3184663e2d04539361555331",
+      "test_declarations": 25
+    },
+    {
+      "path": "tests/learning-v2-executor.test.mjs",
+      "mode": "100644",
+      "bytes": 27332,
+      "sha256": "ae3efe3d25ed48ee930789e59ca44a40c0f1607d6a5022f2ba63f1090298017b",
+      "git_blob_sha1": "ed172b4f2e06766654494051f43c3505080a082c",
+      "test_declarations": 8
+    },
+    {
+      "path": "tests/learning-v2-journal.test.mjs",
+      "mode": "100644",
+      "bytes": 12209,
+      "sha256": "921fe557c269edde94c4b0cb12fff269a869f6fa94273ce4af1eaee5fa061620",
+      "git_blob_sha1": "c404e4ace5f352c50ada7bba6927aa6445227a1f",
+      "test_declarations": 13
+    },
+    {
+      "path": "tests/learning-v2-legacy-renderer.test.mjs",
+      "mode": "100644",
+      "bytes": 12452,
+      "sha256": "e49d21cc60d7b534cbb21c147c7f8f02439293a4ac5dce51d9bf7f1868fe5adf",
+      "git_blob_sha1": "be3a162fa47a9a292fad343b9ad2dc3b05343224",
+      "test_declarations": 15
+    },
+    {
+      "path": "tests/learning-v2-operation-archive.test.mjs",
+      "mode": "100644",
+      "bytes": 23223,
+      "sha256": "a80e653a51b07c120bb380b6c41ef137f60b8c001243bf6eb9c7bb8925cf26c7",
+      "git_blob_sha1": "0676d756e554180107b7fded395de14d9c9c1367",
+      "test_declarations": 19
+    },
+    {
+      "path": "tests/learning-v2-projections.test.mjs",
+      "mode": "100644",
+      "bytes": 14280,
+      "sha256": "ff1ba35c9f39a63b312097f0219be149edb75b9886a821658c30f34bc2ff9576",
+      "git_blob_sha1": "262e9e53efb7e2c22e68ef689cb93e0245137024",
+      "test_declarations": 15
+    },
+    {
+      "path": "tests/learning-v2-runtime.test.mjs",
+      "mode": "100644",
+      "bytes": 3103,
+      "sha256": "17d08444feab083b8ff19b6bf35f7a2b6c4a59532016ec96a3f8edbd1019435e",
+      "git_blob_sha1": "52bac5687f70cff65439549d4fc87334097c4aee",
+      "test_declarations": 5
+    },
+    {
+      "path": "tests/learning-v2-trueforge-turn.test.mjs",
+      "mode": "100644",
+      "bytes": 18128,
+      "sha256": "7046d49ebd2bcacfa2e5414965aedceb9748a1fea1eb41e2adc56aa66f943b0f",
+      "git_blob_sha1": "c359160a971b49eb5cb3cb6e672736e028496dee",
+      "test_declarations": 19
+    }
+  ]
+}

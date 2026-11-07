@@ -1,0 +1,571 @@
+{
+  "schema": "gk-learning-v2-source-increment-v1",
+  "repository": "appliedai-au/gate_keeper",
+  "created_date": "2026-11-04",
+  "parent_commit": "74c5eec6d2c0bae79c3345b91f55cd84fcb42e3c",
+  "parent_tree": "1ed32cc73184f12a2214d68dc517d47bf024eb63",
+  "unchanged_main_base": "20dcea65a22e680398d017191b91d04e32b4f883",
+  "phase": "4-read-only-app-status-source",
+  "qualification": {
+    "status": "unqualified-source",
+    "static_source_review": true,
+    "source_byte_hashing": true,
+    "local_candidate_execution": false,
+    "remote_managed_gate_run": false,
+    "browser_render_or_app_installation": false,
+    "paid_inference_dispatch": false,
+    "activation": false,
+    "deployment": false,
+    "merge": false,
+    "sealed_tranche_7_used": false
+  },
+  "review": {
+    "published_parent_review": "https://github.com/appliedai-au/gate_keeper/pull/43#issuecomment-6630543280",
+    "parent_review_status": "Approved with both preceding findings closed; applies only to parent source.",
+    "parent_review_applies_to_current_increment": false,
+    "current_increment": "Independent bounded source review completed; external review and full managed qualification remain pending.",
+    "source_findings_closed": [
+      "Owner assertion now binds the captured authenticated Base44 owner to the fixed host owner before any status read; it never selects a host or forwards browser identity.",
+      "Early incoming JSON/query rejection now cancels the unread request stream without awaiting peer acknowledgement."
+    ]
+  },
+  "tests": {
+    "source_files": 13,
+    "literal_test_declarations": 225,
+    "additional_declarations_since_parent": 30,
+    "count_method": "Text-only count of lines matching ^\\s*test\\( in learning-v2 test source.",
+    "discovered_count": null,
+    "passed_count": null,
+    "execution_status": "Not run; complete registered managed gate required."
+  },
+  "coverage": {
+    "current_files": "All current docs/learning-v2, scripts/learning-v2 and tests/learning-v2-*.test.mjs files, plus the eight explicit Base44 paths below, except this manifest.",
+    "base44_paths": [
+      "integrations/base44/README.md",
+      "integrations/base44/pages/GateKeeper.jsx",
+      "integrations/base44/components/GateKeeperLearningStatus.jsx",
+      "integrations/base44/components/GateKeeperLearningStatus.css",
+      "integrations/base44/shared/learning-status-contract.js",
+      "integrations/base44/shared/learning-status-backend.js",
+      "integrations/base44/functions/gatekeeperLearningStatus.js",
+      "integrations/base44/cli/base44/functions/gatekeeper-learning-status/entry.ts"
+    ],
+    "changed_files": "Delta against parent commit, excluding this new manifest itself; all unchanged tree entries are inherited from parent_tree.",
+    "whole_repository_effective_tree_digest": false,
+    "self_hash": "Excluded to avoid recursive self-reference; the publication Git commit/tree binds this manifest.",
+    "historical_manifests": "All four earlier source manifests remain byte-identical historical snapshots."
+  },
+  "implemented": {
+    "public_projection": "Strict dependency-free public host.status contract; no private state or diagnostic forwarding; fixed policy and expected experiment/source pins.",
+    "host_capability": "Fixed-path GET handler receives only readStatus, authenticate, binding and clock; starts no HTTP listener and cannot select a host or dispatch work.",
+    "owner_boundary": "Server-derived Base44 admin ID must match configured owner before experiment secrets; a required owner assertion matches the fixed token/grant owner before reading state.",
+    "transport": "One fixed HTTPS proxy origin/path; distinct scoped read token plus Basic proxy auth, redirect refusal, 16KiB actual-byte bound, 7s transport/body deadline and -5s..60s response age.",
+    "browser": "Read-only Learning section in existing prepared page; validated records, manual refresh, 20s UI deadline, late-response guards and no fixture fallback.",
+    "active_runner_modified": false,
+    "new_service_or_model_dependency": false,
+    "route_mounted": false,
+    "base44_assets_installed": false,
+    "phase_2_or_3_exit_advanced": false
+  },
+  "gate_dependency": {
+    "observed_at": "2026-11-04T12:31:00Z",
+    "observed_local": "2026-11-04 23:31 AEDT",
+    "served_spekky_source": "2882f1c67d77a17a42840c2eb738fa8e9c07891e",
+    "served_deployment": "5d15c5d1-5572-4162-881a-53f309625ed1",
+    "inspected_spekky_main": "179e6095a9f2bbffb17d5dffa98fec30388d016a",
+    "gate_keeper_target_registered": false,
+    "gate_keeper_output_profile_present": false,
+    "source_admission": "Open, non-draft PR with exact head and base remains mandatory, including explicit/prepared operator dispatch.",
+    "next_step": "Existing owners reconcile and connect the real runner/authorities/gateway/durable stores, register and release the full target/profile, qualify exact integrated source, then mount and install the owner-bound app read integration with verified Base44 packaging."
+  },
+  "changed_files": [
+    {
+      "path": "docs/learning-v2/integration.md",
+      "mode": "100644",
+      "bytes": 26507,
+      "sha256": "005d9cb3821412b01c9a2d4d382c5a83b3dd1e1e5bdbd857814018d15588e337",
+      "git_blob_sha1": "abe423247774ebf553a11554318521fa2b191156",
+      "test_declarations": 0,
+      "change": "modified"
+    },
+    {
+      "path": "docs/learning-v2/phase-4-app-status.md",
+      "mode": "100644",
+      "bytes": 12865,
+      "sha256": "8422e3417ed9e5c8cfd7ef8d2adb8201a95abb4804fcce70047874de57b223c6",
+      "git_blob_sha1": "f759101994394139d97b7e4a1e576e5fcefb3547",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "docs/learning-v2/phase-plan.md",
+      "mode": "100644",
+      "bytes": 31086,
+      "sha256": "0390899ffe3c6162f341c7b64675af12113df77d0033d69c9fbeeb359cc38553",
+      "git_blob_sha1": "ff059bb899ac48dc1d810edcc431018cfadbd0ca",
+      "test_declarations": 0,
+      "change": "modified"
+    },
+    {
+      "path": "integrations/base44/README.md",
+      "mode": "100644",
+      "bytes": 19203,
+      "sha256": "ab8d077f735e0734d3729fd0ca210010ab3b1f5afbea985ffa1fe977f004f7a9",
+      "git_blob_sha1": "3e5631a868060dfdcdc8f17cb1ba3e218a26caa8",
+      "test_declarations": 0,
+      "change": "modified"
+    },
+    {
+      "path": "integrations/base44/cli/base44/functions/gatekeeper-learning-status/entry.ts",
+      "mode": "100644",
+      "bytes": 650,
+      "sha256": "063eacb31ef9731f13aa557745de6ba0ff3e55ee5435d87935fda9447f443acf",
+      "git_blob_sha1": "02a81b974db33ff1c586d59323445b133752332a",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "integrations/base44/components/GateKeeperLearningStatus.css",
+      "mode": "100644",
+      "bytes": 6477,
+      "sha256": "416abea02e56921da8cb22adec691e12c79378ec11eb8f6c7f9a99fb67b678cd",
+      "git_blob_sha1": "0bfca96af19199b6d639f0b15ee08dc5a9bbe761",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "integrations/base44/components/GateKeeperLearningStatus.jsx",
+      "mode": "100644",
+      "bytes": 13375,
+      "sha256": "4ea3543ff1d00e007e82045f41c2380512fdb918e34dac718f4d8343163e84f7",
+      "git_blob_sha1": "012b431481fdaa5c3dbcee26fa05aa8f4ffc4264",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "integrations/base44/functions/gatekeeperLearningStatus.js",
+      "mode": "100644",
+      "bytes": 490,
+      "sha256": "387fc5b35ebc366ed339ea93c84a4643b5b05d897218175b0822d72318071f78",
+      "git_blob_sha1": "316119598c8afd34aae633c7ed2da21be0d5b214",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "integrations/base44/pages/GateKeeper.jsx",
+      "mode": "100644",
+      "bytes": 11426,
+      "sha256": "56459cd8b2dbb25f4d181a5f6cb2eaac1c84bbb23aaeda83cf6e73f1317b8721",
+      "git_blob_sha1": "136299163953dca27d940199f0eaf7cd1ec95e0d",
+      "test_declarations": 0,
+      "change": "modified"
+    },
+    {
+      "path": "integrations/base44/shared/learning-status-backend.js",
+      "mode": "100644",
+      "bytes": 5909,
+      "sha256": "cceb2397d512d4e5fc5f2ee3eafc010aef470bb8d086737abec1d05e825ed750",
+      "git_blob_sha1": "b7045278cc535a57985b7a383fc680aae4679b3e",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "integrations/base44/shared/learning-status-contract.js",
+      "mode": "100644",
+      "bytes": 6626,
+      "sha256": "efffa59ead4663264e34823e59e4437c5eb149074ccda9c7b0d9819d42632892",
+      "git_blob_sha1": "adb4d90e554c11b9a6a98b9274369eccee892e5b",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "scripts/learning-v2/status-endpoint.mjs",
+      "mode": "100644",
+      "bytes": 3932,
+      "sha256": "5cc42edfc8a43b79ccd78a21dcaf5796da3a930d2ba225085d4024ab0655f4fa",
+      "git_blob_sha1": "564a3b9e31a9ecc3f467837c4283a3472c059ec9",
+      "test_declarations": 0,
+      "change": "added"
+    },
+    {
+      "path": "tests/learning-v2-status-contract.test.mjs",
+      "mode": "100644",
+      "bytes": 21071,
+      "sha256": "645674dfb2589b7fc228a199f5a3b300357c3f8a59ce67b6b35270365f9c66ac",
+      "git_blob_sha1": "7fb07a1bc21009d4494e4fdd183df638c915b5fa",
+      "test_declarations": 18,
+      "change": "added"
+    },
+    {
+      "path": "tests/learning-v2-status-http.test.mjs",
+      "mode": "100644",
+      "bytes": 21646,
+      "sha256": "17282eaa73aaa7d8249dbe739f4e36d8ae9868ee1151c858e44334bb3e2e6f4d",
+      "git_blob_sha1": "abe05d86b5e450cf8c4f3b1b7ffc127fab7b16ee",
+      "test_declarations": 12,
+      "change": "added"
+    }
+  ],
+  "current_files": [
+    {
+      "path": "docs/learning-v2/baseline-recovery-source-manifest.json",
+      "mode": "100644",
+      "bytes": 17458,
+      "sha256": "2e61444349d98ce82b162d0d5567307bd41c901763b31fe036db6a9e82b921ac",
+      "git_blob_sha1": "112e8ea23b04cfb0e28da8ea876954e470ff29e3",
+      "test_declarations": 0
+    },
+    {
+      "path": "docs/learning-v2/host-source-manifest.json",
+      "mode": "100644",
+      "bytes": 15887,
+      "sha256": "c22efcf96d8e1239bef30188d62c98c3f66f61466a1a4bbdf2eeddf19ba171db",
+      "git_blob_sha1": "6b8bdfb7b0dd74edf6537fd7730e27084c4c4cf8",
+      "test_declarations": 0
+    },
+    {
+      "path": "docs/learning-v2/integration.md",
+      "mode": "100644",
+      "bytes": 26507,
+      "sha256": "005d9cb3821412b01c9a2d4d382c5a83b3dd1e1e5bdbd857814018d15588e337",
+      "git_blob_sha1": "abe423247774ebf553a11554318521fa2b191156",
+      "test_declarations": 0
+    },
+    {
+      "path": "docs/learning-v2/phase-2-adapter.md",
+      "mode": "100644",
+      "bytes": 17015,
+      "sha256": "9758b0f048836ec2ded286434df05fa4c67eb30cd4c8ecbbe0524845b778639c",
+      "git_blob_sha1": "58392d1519146850a5f7eb694157639e088aea7d",
+      "test_declarations": 0
+    },
+    {
+      "path": "docs/learning-v2/phase-2-baseline-recovery.md",
+      "mode": "100644",
+      "bytes": 7773,
+      "sha256": "7e1b93877cdb64935921fd70e99e9810d447f5266418fcd419a0222553c22e8a",
+      "git_blob_sha1": "31a40f5e641b6ec3079cc19abfbc6e45b3c39bef",
+      "test_declarations": 0
+    },
+    {
+      "path": "docs/learning-v2/phase-2-host.md",
+      "mode": "100644",
+      "bytes": 15497,
+      "sha256": "300663fb069e8548bc645d706b64cd2cc24dbf87ad8e61c7d784cdef13bf5513",
+      "git_blob_sha1": "2041da992417e1c27cfeb4d627eddebbd873c539",
+      "test_declarations": 0
+    },
+    {
+      "path": "docs/learning-v2/phase-2-source-manifest.json",
+      "mode": "100644",
+      "bytes": 14226,
+      "sha256": "08bd0bbf647a1448fd91efa92ca8e9da4bdea42ba4165e88d959ffebe4dc10de",
+      "git_blob_sha1": "9919f753e598fdf7c627d0ad6b2351d1178dbaf3",
+      "test_declarations": 0
+    },
+    {
+      "path": "docs/learning-v2/phase-4-app-status.md",
+      "mode": "100644",
+      "bytes": 12865,
+      "sha256": "8422e3417ed9e5c8cfd7ef8d2adb8201a95abb4804fcce70047874de57b223c6",
+      "git_blob_sha1": "f759101994394139d97b7e4a1e576e5fcefb3547",
+      "test_declarations": 0
+    },
+    {
+      "path": "docs/learning-v2/phase-plan.md",
+      "mode": "100644",
+      "bytes": 31086,
+      "sha256": "0390899ffe3c6162f341c7b64675af12113df77d0033d69c9fbeeb359cc38553",
+      "git_blob_sha1": "ff059bb899ac48dc1d810edcc431018cfadbd0ca",
+      "test_declarations": 0
+    },
+    {
+      "path": "docs/learning-v2/source-manifest.json",
+      "mode": "100644",
+      "bytes": 2947,
+      "sha256": "d49ce136b0c908c08d5f0ffa9c55ec5eb37adf20409fe568f40508e3a6f0e946",
+      "git_blob_sha1": "bd74521ddc53e0696ab224d8052109a19e8bf24f",
+      "test_declarations": 0
+    },
+    {
+      "path": "integrations/base44/README.md",
+      "mode": "100644",
+      "bytes": 19203,
+      "sha256": "ab8d077f735e0734d3729fd0ca210010ab3b1f5afbea985ffa1fe977f004f7a9",
+      "git_blob_sha1": "3e5631a868060dfdcdc8f17cb1ba3e218a26caa8",
+      "test_declarations": 0
+    },
+    {
+      "path": "integrations/base44/cli/base44/functions/gatekeeper-learning-status/entry.ts",
+      "mode": "100644",
+      "bytes": 650,
+      "sha256": "063eacb31ef9731f13aa557745de6ba0ff3e55ee5435d87935fda9447f443acf",
+      "git_blob_sha1": "02a81b974db33ff1c586d59323445b133752332a",
+      "test_declarations": 0
+    },
+    {
+      "path": "integrations/base44/components/GateKeeperLearningStatus.css",
+      "mode": "100644",
+      "bytes": 6477,
+      "sha256": "416abea02e56921da8cb22adec691e12c79378ec11eb8f6c7f9a99fb67b678cd",
+      "git_blob_sha1": "0bfca96af19199b6d639f0b15ee08dc5a9bbe761",
+      "test_declarations": 0
+    },
+    {
+      "path": "integrations/base44/components/GateKeeperLearningStatus.jsx",
+      "mode": "100644",
+      "bytes": 13375,
+      "sha256": "4ea3543ff1d00e007e82045f41c2380512fdb918e34dac718f4d8343163e84f7",
+      "git_blob_sha1": "012b431481fdaa5c3dbcee26fa05aa8f4ffc4264",
+      "test_declarations": 0
+    },
+    {
+      "path": "integrations/base44/functions/gatekeeperLearningStatus.js",
+      "mode": "100644",
+      "bytes": 490,
+      "sha256": "387fc5b35ebc366ed339ea93c84a4643b5b05d897218175b0822d72318071f78",
+      "git_blob_sha1": "316119598c8afd34aae633c7ed2da21be0d5b214",
+      "test_declarations": 0
+    },
+    {
+      "path": "integrations/base44/pages/GateKeeper.jsx",
+      "mode": "100644",
+      "bytes": 11426,
+      "sha256": "56459cd8b2dbb25f4d181a5f6cb2eaac1c84bbb23aaeda83cf6e73f1317b8721",
+      "git_blob_sha1": "136299163953dca27d940199f0eaf7cd1ec95e0d",
+      "test_declarations": 0
+    },
+    {
+      "path": "integrations/base44/shared/learning-status-backend.js",
+      "mode": "100644",
+      "bytes": 5909,
+      "sha256": "cceb2397d512d4e5fc5f2ee3eafc010aef470bb8d086737abec1d05e825ed750",
+      "git_blob_sha1": "b7045278cc535a57985b7a383fc680aae4679b3e",
+      "test_declarations": 0
+    },
+    {
+      "path": "integrations/base44/shared/learning-status-contract.js",
+      "mode": "100644",
+      "bytes": 6626,
+      "sha256": "efffa59ead4663264e34823e59e4437c5eb149074ccda9c7b0d9819d42632892",
+      "git_blob_sha1": "adb4d90e554c11b9a6a98b9274369eccee892e5b",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/compat/gk-bag-3091.mjs",
+      "mode": "100644",
+      "bytes": 15115,
+      "sha256": "30266866befa36ef97a30a077e0a4541a64af45671520529bfad2d084278f1f1",
+      "git_blob_sha1": "3abd4181c0470d9b8fd9b81fb51e75ab9734bdc5",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/contracts.mjs",
+      "mode": "100644",
+      "bytes": 7911,
+      "sha256": "fcb166dd6b3e814617512321001355e5bb11ee524a09b7fde4dad36ee4331e5d",
+      "git_blob_sha1": "e071662663a3cb391edf2377419136da19878411",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/controller.mjs",
+      "mode": "100644",
+      "bytes": 42571,
+      "sha256": "0f5149d4d9fce86b685b55116a7e5f83a4cfb73df3216b89f84e32b16f9054d4",
+      "git_blob_sha1": "e1c058a25d9749d48051d121e5f40aca912f23e3",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/dispatch-ledger.mjs",
+      "mode": "100644",
+      "bytes": 13176,
+      "sha256": "fa156428436a1ce69c68b3fb7fced19874c4f9504b0dfea2bb4a6db0ea6287c9",
+      "git_blob_sha1": "54c41c3f815a815854f1db07ebe4224fe21dd37a",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/evidence.mjs",
+      "mode": "100644",
+      "bytes": 14453,
+      "sha256": "39f60b2f319e69a17102d68210eb3e678138a83857a12e8499729cd4da097f89",
+      "git_blob_sha1": "9bce0efc521b98a8ae98c13bd9ee82a728b2e710",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/executor.mjs",
+      "mode": "100644",
+      "bytes": 17529,
+      "sha256": "13090e394074fd293d8cf4e47c7d3bfda50452135fbda12ac5f901272a29fc89",
+      "git_blob_sha1": "b6ccffcd8725ebf5fc0ab3120c31e4b9e3c9c724",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/host.mjs",
+      "mode": "100644",
+      "bytes": 24092,
+      "sha256": "d07aa3eaed4a520b4b7596dc1c247967300c41c5742883f138ad17cf1c1e0a44",
+      "git_blob_sha1": "872bef0e2f6df13ee04b397796da081dff486a50",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/journal.mjs",
+      "mode": "100644",
+      "bytes": 17178,
+      "sha256": "ac90a3b42c4eb5baef40feb49c1bf49cec45af6d892ad44e9a1dca62a26dd694",
+      "git_blob_sha1": "fd244724c2c583ff9f852027abe050c373316d24",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/legacy-renderer.mjs",
+      "mode": "100644",
+      "bytes": 5749,
+      "sha256": "53fb00f3eacaa8437176f768932a9bd9d263ff21100c665bce0b5e5f46d803fc",
+      "git_blob_sha1": "d7cd43fd2e088f020ad64668d9d69a93dde95a28",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/operation-archive.mjs",
+      "mode": "100644",
+      "bytes": 11156,
+      "sha256": "c4df7cc2090f8124f7ff30b9f5a3c6a7c75f4c1f632d349812d8526e892899c4",
+      "git_blob_sha1": "ccf9aecb0d022fd015cc33b9f4a3ccb53631be24",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/prompts.mjs",
+      "mode": "100644",
+      "bytes": 4234,
+      "sha256": "8c4d9f4f021cba3e7567ee2a0321c6d6b6c1a1b14e2aa58af6e3d16f6a9ac877",
+      "git_blob_sha1": "f21c9c4142e9711a308d3f274d0db607b91a9650",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/runtime.mjs",
+      "mode": "100644",
+      "bytes": 3429,
+      "sha256": "88e574b008ba8c02d2812e792610aeed7fda9db9e85bc2e2ac6f27778abedf59",
+      "git_blob_sha1": "3316e6eef9fcbaa809b83473fd119fb111c294e4",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/status-endpoint.mjs",
+      "mode": "100644",
+      "bytes": 3932,
+      "sha256": "5cc42edfc8a43b79ccd78a21dcaf5796da3a930d2ba225085d4024ab0655f4fa",
+      "git_blob_sha1": "564a3b9e31a9ecc3f467837c4283a3472c059ec9",
+      "test_declarations": 0
+    },
+    {
+      "path": "scripts/learning-v2/trueforge-turn.mjs",
+      "mode": "100644",
+      "bytes": 16236,
+      "sha256": "9a638dcdf175b2181584074411500b54c071ec2f1a47f1d6af371f8fdcf596f0",
+      "git_blob_sha1": "36733233b75097a33894e74276ccd6b5fd76f59c",
+      "test_declarations": 0
+    },
+    {
+      "path": "tests/learning-v2-controller.test.mjs",
+      "mode": "100644",
+      "bytes": 55428,
+      "sha256": "b7634e69a8d984ebc63f92a6b9a6f740b821c43f0a7a34fecf0d0e262d4fbd73",
+      "git_blob_sha1": "b7844ef2ced59af85535636cd215d098ef579d6c",
+      "test_declarations": 35
+    },
+    {
+      "path": "tests/learning-v2-dispatch-ledger.test.mjs",
+      "mode": "100644",
+      "bytes": 36797,
+      "sha256": "114a3a20e0fd34d9bcd37a2861b57d4594ce1a1192d99d39adf34d6e9244140c",
+      "git_blob_sha1": "b56f195dfb137c9df016017184dc8aba1e2ee111",
+      "test_declarations": 28
+    },
+    {
+      "path": "tests/learning-v2-evidence.test.mjs",
+      "mode": "100644",
+      "bytes": 17015,
+      "sha256": "28fc2fa42da47a9efbbd826b61f770e6a2f0ced866cec63ba39f99e1f8e2951c",
+      "git_blob_sha1": "c657da18511de0ac3184663e2d04539361555331",
+      "test_declarations": 25
+    },
+    {
+      "path": "tests/learning-v2-executor.test.mjs",
+      "mode": "100644",
+      "bytes": 27332,
+      "sha256": "ae3efe3d25ed48ee930789e59ca44a40c0f1607d6a5022f2ba63f1090298017b",
+      "git_blob_sha1": "ed172b4f2e06766654494051f43c3505080a082c",
+      "test_declarations": 8
+    },
+    {
+      "path": "tests/learning-v2-host.test.mjs",
+      "mode": "100644",
+      "bytes": 40142,
+      "sha256": "465f1c6cb07b9880688e0aedc236d1c3627c949dc0a42f55b243fed87e4665d3",
+      "git_blob_sha1": "6aad2b5f0398ad93c78d222a79b93ed3ffd2ef8c",
+      "test_declarations": 12
+    },
+    {
+      "path": "tests/learning-v2-journal.test.mjs",
+      "mode": "100644",
+      "bytes": 12209,
+      "sha256": "921fe557c269edde94c4b0cb12fff269a869f6fa94273ce4af1eaee5fa061620",
+      "git_blob_sha1": "c404e4ace5f352c50ada7bba6927aa6445227a1f",
+      "test_declarations": 13
+    },
+    {
+      "path": "tests/learning-v2-legacy-renderer.test.mjs",
+      "mode": "100644",
+      "bytes": 12452,
+      "sha256": "e49d21cc60d7b534cbb21c147c7f8f02439293a4ac5dce51d9bf7f1868fe5adf",
+      "git_blob_sha1": "be3a162fa47a9a292fad343b9ad2dc3b05343224",
+      "test_declarations": 15
+    },
+    {
+      "path": "tests/learning-v2-operation-archive.test.mjs",
+      "mode": "100644",
+      "bytes": 23223,
+      "sha256": "a80e653a51b07c120bb380b6c41ef137f60b8c001243bf6eb9c7bb8925cf26c7",
+      "git_blob_sha1": "0676d756e554180107b7fded395de14d9c9c1367",
+      "test_declarations": 19
+    },
+    {
+      "path": "tests/learning-v2-projections.test.mjs",
+      "mode": "100644",
+      "bytes": 16412,
+      "sha256": "11f18f681a337d0b7298b2380aec2af4c9d35ddfda334296189c0f8495d1f4d9",
+      "git_blob_sha1": "1907c569b717853b617d153249728826969e2cd0",
+      "test_declarations": 16
+    },
+    {
+      "path": "tests/learning-v2-runtime.test.mjs",
+      "mode": "100644",
+      "bytes": 3103,
+      "sha256": "17d08444feab083b8ff19b6bf35f7a2b6c4a59532016ec96a3f8edbd1019435e",
+      "git_blob_sha1": "52bac5687f70cff65439549d4fc87334097c4aee",
+      "test_declarations": 5
+    },
+    {
+      "path": "tests/learning-v2-status-contract.test.mjs",
+      "mode": "100644",
+      "bytes": 21071,
+      "sha256": "645674dfb2589b7fc228a199f5a3b300357c3f8a59ce67b6b35270365f9c66ac",
+      "git_blob_sha1": "7fb07a1bc21009d4494e4fdd183df638c915b5fa",
+      "test_declarations": 18
+    },
+    {
+      "path": "tests/learning-v2-status-http.test.mjs",
+      "mode": "100644",
+      "bytes": 21646,
+      "sha256": "17282eaa73aaa7d8249dbe739f4e36d8ae9868ee1151c858e44334bb3e2e6f4d",
+      "git_blob_sha1": "abe05d86b5e450cf8c4f3b1b7ffc127fab7b16ee",
+      "test_declarations": 12
+    },
+    {
+      "path": "tests/learning-v2-trueforge-turn.test.mjs",
+      "mode": "100644",
+      "bytes": 18128,
+      "sha256": "7046d49ebd2bcacfa2e5414965aedceb9748a1fea1eb41e2adc56aa66f943b0f",
+      "git_blob_sha1": "c359160a971b49eb5cb3cb6e672736e028496dee",
+      "test_declarations": 19
+    }
+  ]
+}

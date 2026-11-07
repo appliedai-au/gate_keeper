@@ -10,7 +10,67 @@ This folder holds **source-only integration assets**, not an installed Base44 ap
 - `pages/GateKeeper.css` contains the visual system: charcoal/navy navigation, pale editorial surfaces, lime signal accents, crisp monospace technical details, accessible focus states and mobile layouts.
 - `components/GateKeeperConnectionPanel.jsx` displays actual runtime reachability, not invented agent activity.
 - `functions/gatekeeperStatus.js` is a narrowly scoped admin-only server-side probe.
+- `components/GateKeeperLearningStatus.jsx` adds a separate read-only Learning view of validated v2 experiment state. Its backend is source only; an absent learning route or owner binding displays unavailable, without fixture counts.
 - The walkthrough uses a **clearly labeled static review fixture**. Selectable findings highlight real code lines and expose proposed mitigations; it performs no chargeable model call.
+
+## Prepared v2 learning status integration
+
+The new Learning view is a source increment for this same app. It is not installed
+or connected by committing these files. The existing `/healthz` probe remains a
+runtime-reachability check; it cannot establish learning progress or qualification.
+
+The source path is the Learning component, the shared strict public contract,
+one of the two Base44 function entrypoints, and a capability-only handler in the
+owned runtime integration. The fixed upstream path is
+`https://proxy-production-9553.up.railway.app/gatekeeper/learning-v3/status`.
+The reviewed public Proxy recipe rewrites only that path to the existing private
+status handler. Deploy `Dockerfile.status-proxy` after full qualification; until
+the route and private owner binding are configured, the app remains unavailable.
+See [the public status transport](../../docs/learning-v2/public-status-transport.md).
+
+| Prepared file | Responsibility |
+| --- | --- |
+| `components/GateKeeperLearningStatus.jsx` and `.css` | Manual refresh and validated recorded-state display; no model or learning-write action |
+| `shared/learning-status-contract.js` | Exact public schema and fixed policy validation, used by browser, backend and host endpoint |
+| `shared/learning-status-backend.js` | Server-only owner check, fixed upstream request, bounded response and sanitized failures |
+| `functions/gatekeeperLearningStatus.js` | Editor/Deno entrypoint; UI function name `gatekeeperLearningStatus` |
+| `cli/base44/functions/gatekeeper-learning-status/entry.ts` | Alternative CLI entrypoint; UI function name `gatekeeper-learning-status` |
+| `../../scripts/learning-v2/status-endpoint.mjs` | Fixed read capability and source-bound token authentication; starts no server |
+
+The function requires a signed-in `admin` whose **server-derived** user ID equals
+the server-configured `GATEKEEPER_LEARNING_OWNER_ID`. Other administrators do not
+inherit access to that experiment. This is a single-owner binding; general
+tenant membership and multi-user experiment selection are not implemented.
+Owner identity is checked before upstream credentials or experiment secrets
+are read. The browser sends only `{}` and cannot choose an owner, URL or source.
+The bridge sends its captured owner ID as an assertion that the host must match
+against its fixed owner after token authentication, before any state read.
+Browser-supplied identity headers are not forwarded. The assertion detects
+mismatched token/owner configuration; it never selects a different experiment.
+
+Server configuration requires `GATEKEEPER_LEARNING_OWNER_ID`,
+`GATEKEEPER_LEARNING_EXPERIMENT_ID`, `GATEKEEPER_LEARNING_SOURCE_COMMIT`,
+`GATEKEEPER_LEARNING_READ_TOKEN`. The Learning function does not read or forward
+general Proxy credentials. No values are included in source. The read token must be
+an independently provisioned opaque 32–256-character base64url value, scoped by
+the host to the same fixed owner, experiment and source. The existing broad
+Basic proxy credential alone does not authorize a learning-state read. Ordinary
+TrueForge routes retain that credential; the separate legacy readiness function
+continues to have its own existing configuration requirements.
+
+Use only the function convention verified in the existing app. Include both
+shared modules in its server function bundle, and the contract module in its
+frontend bundle; the backend module must never enter the frontend bundle. The
+relative imports describe this repository's staged layout. App editor and CLI
+packaging compatibility have not been executed or verified. Preserve these
+module boundaries when adapting the actual app paths, then qualify that exact
+integrated source. Do not copy just an entrypoint and assume its dependencies
+exist in the hosted editor.
+
+The [Phase 4 record](../../docs/learning-v2/phase-4-app-status.md) specifies the
+read contract, mounting prerequisites, ownership, freshness semantics and
+remaining qualification. No bulk deployment, entity push or forced function
+deployment from this sparse source folder is authorized or required.
 
 To install these into the **existing** Base44 app, first inspect its actual source layout in the owner editor. Place files under its matching `pages/`, `components/` and `functions/` directories; ensure the default landing route renders `GateKeeper`. Import its stylesheet, preserve existing app auth/layout plumbing, and remove any redundant Asteroids navigation. Inspect and adapt the auth integration for the actual app version. The files are integration inputs, not evidence of a deployed site.
  The present site contains links and an Asteroids demo. **Do not preserve Asteroids as a requirement.** Replace the placeholder landing experience with a polished, functional Gate Keeper demo; remove the game and extraneous links if they distract from the actual product. Preserve the existing Base44 app, domain, and owner settings.
@@ -124,3 +184,5 @@ See `docs/review-control-settings.md` for the complete checkpoint, RLS, installa
 ## Current status
 
 The code in `functions/` and `components/` is **prepared only**. It has not been installed, deployed or tested inside the Base44 app. The CLI and Base44 editor require the authenticated owner's Base44 session. Railway has not been changed by this source-only work.
+
+

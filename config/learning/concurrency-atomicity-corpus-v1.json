@@ -1,0 +1,232 @@
+{
+  "schema": "gk-learning-production-corpus-v1",
+  "corpusId": "gk-concurrency-atomicity-t456-bag-v12",
+  "scope": "concurrency-atomicity",
+  "provenance": {
+    "repository": "appliedai-au/gate_keeper",
+    "sourceCommit": "138ef6bba4a7a109bd9969f57073b9cf9e6a3f62",
+    "path": "proof/three-agent/payloads/train-t4-t5-t6burned-bag-v12.b64",
+    "gitBlobSha": "ddc86c9ddce9f50b0fb278fb542d5bf1bae8a538",
+    "payloadSha256": "391a4960159a0644432f35608b0962678a81cefe4f78c092b6526d13ebfdd5c5",
+    "decodedSha256": "9321e3cdbed5870fd4110bf52877fa71112abc142ae461c40a77654a366b236e",
+    "selectionSourcePath": "proof/three-agent/run.mjs",
+    "selectionSourceBlob": "9eedced04ac765c1a48c14db956e3f1905a08a78",
+    "selectionPattern": "\\b(concurren\\w*|race|racing|atomic\\w*|interleav\\w*|lock\\w*|mutex|critical section|lost update|double[- ](charge|spend|write)|simultaneous|transaction\\w*|check.then.act|read.then.write|idempoten\\w*)\\b"
+  },
+  "limitations": [
+    "development-only",
+    "t6-already-burned",
+    "no-sealed-holdout-evidence"
+  ],
+  "baseInstructions": "# Gate Keeper reviewer\n\nReply format, always: the first word of your reply is `Checklist:`. Never open with analysis such as \"Let me analyze\"; do all thinking inside the checklist lines.\n\nYou review one change. Find every defect a careful senior engineer would block the merge for, and nothing else. A missed defect and a false alarm cost the same.\n\n## Read\nRead the whole change and the stated context before writing. The context states the real rules (units, encodings, isolation, who can call this). Check every line against it. When the context allows something under a condition (link accounts by email, trust a header from the proxy), check the code enforces the condition (the email is verified, the request really came through the proxy).\n\n## Hunt (go through every pass, on every line it applies to)\n1. **Boundaries:** empty, zero, one, last, negative and oversized inputs; off-by-one in ranges, slices, pagination and limits; integer, float and money rounding (money held in float is a defect, above all when a decimal type is imported); percentages vs fractions; sums and counts that mix units or currencies, or that include rows the change now marks as excluded (soft-deleted, other tenant, wrong status); time units and time zones; sort direction against what the name promises.\n2. **Untrusted input:** follow each input into SQL, shell, paths, HTML, redirects, regexes, deserialisation and logs. Check what is validated against what is actually used.\n3. **Identity and access:** every read and write is scoped to the caller's tenant or owner; roles cannot be self-granted; secrets, passwords and tokens are generated with a secure random source, compared in constant time, single-use when they should be, never logged, never trusted from the client.\n4. **State and concurrency:** check-then-act races, missing transactions or locks, idempotency under retries, ordering under out-of-order events, shared mutable defaults, cache keys missing a dimension.\n5. **Failure paths:** swallowed or over-broad exceptions and discarded errors (Go `_`, empty catch, ignored return codes), HTTP or RPC responses used without checking their status, validation that returns success on a failure branch, partial writes, missing cleanup, network clients or calls with no timeout, retries that duplicate side effects, resources (files, connections, response bodies) never closed on every path, including success.\n6. **Semantics:** what the language and library really do (mutation vs copy, async ordering, falsy values, integer division, default arguments, string vs bytes, reference vs value equality, missing decoding). Prove it from the code before you claim it. A broken guard is a defect even when a later check happens to hide it.\n\n## Decide (borrowed from OpenAI Codex review guidelines, Apache-2.0, and Qodo PR-Agent, MIT)\n- Report a defect only when you can name the line, the realistic input or state that triggers it, and the wrong result. Do not skip a real bug or security hole because its trigger is narrow.\n- For lower-impact concerns, be certain before you report. No style, naming, type-choice, docs, missing-tests or \"could be cleaner\" comments, and no bad arguments from trusted internal callers unless the context says they happen.\n- Do not speculate about code you cannot see, and do not rely on unstated assumptions about the author's intent.\n- Before you mark a line BROKEN, look for the guard that would stop it (a flag checked under the same lock, an earlier return, a type that cannot hold the bad value). If such a guard exists and works, the line is ok.\n- A symptom of a defect you already reported is not a new finding: an empty value used because a check was skipped is the skipped check.\n- One defect per finding. A root cause is one fix: if one change repairs it everywhere it shows, report it once; defects that need different fixes are separate findings, even when they touch the same data. Point at the line where the fix belongs: a missing check, cap or authorisation on an input goes on the line where the input is read from the request; an injection goes on the line where the input reaches the query, command or output.\n\n## Output\nYour reply starts with the word `Checklist:`. No analysis, preamble or headings before it or after the JSON; the checklist is where you think.\n1. Checklist: one line per rule stated in the context and one per suspicious line, `L<n>: <what> — ok` or `— BROKEN`. At most 15 lines.\n2. Then this JSON, written once:\n{\"findings\":[{\"line\":12,\"category\":\"bug\",\"comment\":\"≤ 20 words: trigger and consequence\"}]}\n- `line`: the 1-based line number shown on the left of the statement that is wrong and would be edited, not a neighbouring line or the function header.\n- `category`: `bug`, `security`, `resource-leak`, `error-handling` or `performance`.\n- Every BROKEN item becomes a finding unless it shares its fix with another one.\n- Write findings in ascending `line` order. No two findings may have the same `line`: if two would, write one finding whose comment names both problems.\n- Every rule stated in the context that the code breaks is a finding. So is a swallowed or over-broad exception that hides failures.\n- No real defects → {\"findings\":[]}\n\nExtra field: every finding also has `\"quote\"`: the code of the line it points at, copied character for character (without the line number).\n",
+  "modelParameters": {
+    "temperature": 0.2,
+    "maxTokens": 8000
+  },
+  "scoring": {
+    "id": "legacy-line-window-neutral-v1",
+    "lineTolerance": 1,
+    "expectedOrder": "source",
+    "neutralOrder": "after-unmatched-expected",
+    "falseAlarm": "unmatched-nonneutral-finding",
+    "findingPasses": 2
+  },
+  "cases": [
+    {
+      "caseId": "t4-01-py-wallet-transfer",
+      "split": "fit",
+      "scope": "concurrency-atomicity",
+      "prompt": "Review this change. File: `wallet/transfers.py`. What the change does: Adds transfers between customer wallets on PostgreSQL (psycopg 3). Clients retry on timeout with the same idempotency key; the API runs on many workers. The sender pays amount plus fee. The fee is 1.5% with a minimum of 0.30. `month` comes from a query parameter like '2026-10'.\n\nLine numbers are on the left of the `|`.\n\n```python\n 1 | from decimal import ROUND_HALF_UP, Decimal\n 2 | \n 3 | FEE_RATE = Decimal(\"0.015\")\n 4 | MIN_FEE = Decimal(\"0.30\")\n 5 | CENT = Decimal(\"0.01\")\n 6 | \n 7 | \n 8 | class InsufficientFunds(Exception):\n 9 |     pass\n10 | \n11 | \n12 | def compute_fee(amount: Decimal) -> Decimal:\n13 |     fee = (amount * FEE_RATE).quantize(CENT, rounding=ROUND_HALF_UP)\n14 |     return min(fee, MIN_FEE)\n15 | \n16 | \n17 | def transfer(conn, from_id, to_id, amount: Decimal, idempotency_key: str):\n18 |     if amount <= 0:\n19 |         raise ValueError(\"amount must be positive\")\n20 |     fee = compute_fee(amount)\n21 |     with conn.transaction():\n22 |         cur = conn.cursor()\n23 |         cur.execute(\"SELECT id FROM transfers WHERE idempotency_key = %s\", (idempotency_key,))\n24 |         existing = cur.fetchone()\n25 |         if existing:\n26 |             return existing[0]\n27 | \n28 |         cur.execute(\"SELECT balance FROM accounts WHERE id = %s\", (from_id,))\n29 |         (balance,) = cur.fetchone()\n30 | \n31 |         if balance < amount:\n32 |             raise InsufficientFunds(from_id)\n33 |         cur.execute(\n34 |             \"UPDATE accounts SET balance = balance - %s WHERE id = %s\",\n35 |             (amount + fee, from_id),\n36 |         )\n37 |         cur.execute(\n38 |             \"UPDATE accounts SET balance = balance + %s WHERE id = %s\",\n39 |             (amount, to_id),\n40 |         )\n41 |         cur.execute(\n42 |             \"INSERT INTO transfers (idempotency_key, from_id, to_id, amount, fee)\"\n43 |             \" VALUES (%s, %s, %s, %s, %s) RETURNING id\",\n44 |             (idempotency_key, from_id, to_id, amount, fee),\n45 |         )\n46 |         transfer_id = cur.fetchone()[0]\n47 |     notify_parties(from_id, to_id, amount)\n48 |     return transfer_id\n49 | \n50 | \n51 | def notify_parties(from_id, to_id, amount):\n52 |     from wallet.mail import send_receipt\n53 | \n54 |     send_receipt(from_id, f\"You sent {amount}\")\n55 |     send_receipt(to_id, f\"You received {amount}\")\n56 | \n57 | \n58 | def statement(conn, account_id, month):\n59 |     cur = conn.cursor()\n60 |     cur.execute(\n61 |         \"SELECT * FROM transfers WHERE (from_id = %s OR to_id = %s)\"\n62 |         f\" AND to_char(created_at, 'YYYY-MM') = '{month}' ORDER BY created_at\",\n63 |         (account_id, account_id),\n64 |     )\n65 |     return cur.fetchall()\n```",
+      "expected": [
+        25,
+        28
+      ],
+      "benign": [
+        47,
+        14,
+        31,
+        38,
+        62
+      ],
+      "why": [
+        {
+          "line": 25,
+          "why": "check-then-insert on the idempotency key: two concurrent retries both see no row and the transfer runs twice (needs a unique constraint / ON CONFLICT)"
+        },
+        {
+          "line": 28,
+          "why": "balance read without FOR UPDATE, so concurrent transfers can both pass the check and overdraw the account"
+        }
+      ]
+    },
+    {
+      "caseId": "t4-03-go-ttl-lru",
+      "split": "fit",
+      "scope": "concurrency-atomicity",
+      "prompt": "Review this change. File: `internal/cache/lru.go`. What the change does: Adds a size-bounded LRU cache with a per-entry TTL, shared by all request goroutines in the API server.\n\nLine numbers are on the left of the `|`.\n\n```go\n 1 | package cache\n 2 | \n 3 | import (\n 4 | \t\"container/list\"\n 5 | \t\"sync\"\n 6 | \t\"time\"\n 7 | )\n 8 | \n 9 | type entry struct {\n10 | \tkey     string\n11 | \tvalue   []byte\n12 | \texpires time.Time\n13 | }\n14 | \n15 | type Cache struct {\n16 | \tmu    sync.RWMutex\n17 | \titems map[string]*list.Element\n18 | \torder *list.List\n19 | \tmax   int\n20 | \tttl   time.Duration\n21 | }\n22 | \n23 | func New(max int, ttl time.Duration) *Cache {\n24 | \treturn &Cache{items: make(map[string]*list.Element), order: list.New(), max: max, ttl: ttl}\n25 | }\n26 | \n27 | func (c *Cache) Get(key string) ([]byte, bool) {\n28 | \tc.mu.RLock()\n29 | \tdefer c.mu.RUnlock()\n30 | \tel, ok := c.items[key]\n31 | \tif !ok {\n32 | \t\treturn nil, false\n33 | \t}\n34 | \te := el.Value.(*entry)\n35 | \tif time.Now().After(e.expires) {\n36 | \t\treturn nil, false\n37 | \t}\n38 | \tc.order.MoveToFront(el)\n39 | \treturn e.value, true\n40 | }\n41 | \n42 | func (c *Cache) Set(key string, value []byte) {\n43 | \tc.mu.Lock()\n44 | \tdefer c.mu.Unlock()\n45 | \tif el, ok := c.items[key]; ok {\n46 | \t\te := el.Value.(*entry)\n47 | \t\te.value = value\n48 | \t\tc.order.MoveToFront(el)\n49 | \t\treturn\n50 | \t}\n51 | \tel := c.order.PushFront(&entry{key: key, value: value, expires: time.Now().Add(c.ttl)})\n52 | \tc.items[key] = el\n53 | \tif c.order.Len() > c.max {\n54 | \t\tlast := c.order.Back()\n55 | \t\tc.order.Remove(last)\n56 | \t}\n57 | }\n58 | \n59 | func (c *Cache) Delete(key string) {\n60 | \tc.mu.Lock()\n61 | \tel := c.items[key]\n62 | \tc.order.Remove(el)\n63 | \tdelete(c.items, key)\n64 | \tc.mu.Unlock()\n65 | }\n66 | \n67 | func (c *Cache) Len() int {\n68 | \treturn len(c.items)\n69 | }\n```",
+      "expected": [
+        38,
+        68
+      ],
+      "benign": [
+        36,
+        48,
+        55,
+        62
+      ],
+      "why": [
+        {
+          "line": 38,
+          "why": "MoveToFront mutates the shared list under a read lock, racing with other concurrent Gets"
+        },
+        {
+          "line": 68,
+          "why": "reads the map without holding the lock (data race)"
+        }
+      ]
+    },
+    {
+      "caseId": "t4-04-cs-exchange-rates",
+      "split": "fit",
+      "scope": "concurrency-atomicity",
+      "prompt": "Review this change. File: `src/Pricing/ExchangeRateService.cs`. What the change does: ASP.NET Core 8 service registered as a singleton. Fetches FX rates, caches them for 10 minutes, and converts prices on every checkout request (about 300 requests/second). WarmUp() is called from Program.cs at startup. Convert() is called from synchronous Razor helpers.\n\nLine numbers are on the left of the `|`.\n\n```csharp\n 1 | using System.Net.Http.Json;\n 2 | \n 3 | namespace Shop.Pricing;\n 4 | \n 5 | public class ExchangeRateService\n 6 | {\n 7 |     private static readonly TimeSpan CacheFor = TimeSpan.FromMinutes(10);\n 8 |     private readonly ILogger<ExchangeRateService> _log;\n 9 |     private Dictionary<string, decimal> _rates = new();\n10 |     private DateTime _fetchedAt = DateTime.MinValue;\n11 | \n12 |     public ExchangeRateService(ILogger<ExchangeRateService> log)\n13 |     {\n14 |         _log = log;\n15 |     }\n16 | \n17 |     public async Task<decimal> GetRateAsync(string from, string to)\n18 |     {\n19 |         if (DateTime.UtcNow - _fetchedAt > CacheFor)\n20 |         {\n21 |             await RefreshAsync();\n22 |         }\n23 |         return _rates[$\"{from}{to}\"];\n24 |     }\n25 | \n26 |     private async Task RefreshAsync()\n27 |     {\n28 |         using var client = new HttpClient();\n29 |         var rates = await client.GetFromJsonAsync<Dictionary<string, decimal>>(\"https://rates.example.com/latest\");\n30 |         _log.LogInformation(\"Fetched {Count} rates\", rates?.Count);\n31 | \n32 |         _rates = rates;\n33 |         _fetchedAt = DateTime.UtcNow;\n34 |     }\n35 | \n36 |     public async void WarmUp()\n37 |     {\n38 |         await RefreshAsync();\n39 |     }\n40 | \n41 |     public decimal Convert(decimal amount, string from, string to)\n42 |     {\n43 |         if (from == to)\n44 |         {\n45 |             return amount;\n46 |         }\n47 |         return GetRateAsync(from, to).Result * amount;\n48 |     }\n49 | \n50 |     public static decimal RoundForDisplay(decimal value) => Math.Round(value, 2);\n51 | }\n```",
+      "expected": [
+        19
+      ],
+      "benign": [
+        50,
+        23,
+        28,
+        32,
+        36,
+        47
+      ],
+      "why": [
+        {
+          "line": 19,
+          "why": "no lock or single-flight: when the cache expires every concurrent request starts its own refresh (stampede)"
+        }
+      ]
+    },
+    {
+      "caseId": "t5-01-py-login-flow",
+      "split": "fit",
+      "scope": "concurrency-atomicity",
+      "prompt": "Review this change. File: `app/auth/views.py`. What the change does: Rewrites login for the customer portal. Sessions are server-side (Flask-Session on Redis) and keyed by the session cookie. Emails are stored lower-case. Accounts lock after 5 failed attempts for 15 minutes. After login the user returns to the `next` URL, which must stay on our own site.\n\nLine numbers are on the left of the `|`.\n\n```python\n 1 | import time\n 2 | from urllib.parse import urlparse\n 3 | \n 4 | import bcrypt\n 5 | from flask import Blueprint, abort, redirect, request, session\n 6 | \n 7 | from ..models import User, db\n 8 | \n 9 | bp = Blueprint(\"auth\", __name__)\n10 | MAX_ATTEMPTS = 5\n11 | LOCKOUT_SECONDS = 15 * 60\n12 | \n13 | \n14 | def _safe_next(url):\n15 |     if not url:\n16 |         return \"/\"\n17 |     parsed = urlparse(url)\n18 |     if parsed.netloc and parsed.netloc != request.host:\n19 |         return \"/\"\n20 |     return url\n21 | \n22 | \n23 | @bp.post(\"/login\")\n24 | def login():\n25 |     email = request.form[\"email\"].strip()\n26 |     password = request.form[\"password\"].encode()\n27 |     user = User.query.filter_by(email=email).first()\n28 | \n29 |     if user is None:\n30 |         abort(401)\n31 |     if user.locked_until and user.locked_until > time.time():\n32 |         abort(423)\n33 | \n34 |     if not bcrypt.checkpw(password, user.password_hash):\n35 |         user.failed_logins += 1\n36 |         if user.failed_logins > MAX_ATTEMPTS:\n37 |             user.locked_until = time.time() + LOCKOUT_SECONDS\n38 |         db.session.commit()\n39 |         abort(401)\n40 | \n41 |     user.failed_logins = 0\n42 |     session[\"user_id\"] = user.id\n43 |     session.permanent = True\n44 |     db.session.commit()\n45 |     return redirect(_safe_next(request.args.get(\"next\")))\n46 | \n47 | \n48 | @bp.post(\"/password\")\n49 | def change_password():\n50 |     user = db.session.get(User, session[\"user_id\"])\n51 |     if not bcrypt.checkpw(request.form[\"current\"].encode(), user.password_hash):\n52 |         abort(403)\n53 |     new = request.form[\"new\"]\n54 |     if len(new) < 8:\n55 |         abort(400)\n56 |     user.password_hash = bcrypt.hashpw(new.encode(), bcrypt.gensalt())\n57 | \n58 |     db.session.commit()\n59 |     return \"\", 204\n```",
+      "expected": [
+        36
+      ],
+      "benign": [
+        56,
+        18,
+        25,
+        29,
+        42,
+        58
+      ],
+      "why": [
+        {
+          "line": 36,
+          "why": "off by one: the account locks on the 6th failure, not the 5th"
+        }
+      ]
+    },
+    {
+      "caseId": "t5-04-java-inventory-reservations",
+      "split": "fit",
+      "scope": "concurrency-atomicity",
+      "prompt": "Review this change. File: `src/main/java/com/acme/inventory/InventoryService.java`. What the change does: Spring Boot 3 singleton service with Spring Data JPA. Checkout calls reserveAll for every order line in one go; if any line is out of stock, none of the lines may stay reserved. Many checkouts run at once. The Stock entity has no @Version field. Reservations expire after 15 minutes; the table holds millions of rows. Gift-card orders can be split between several payers.\n\nLine numbers are on the left of the `|`.\n\n```java\n 1 | package com.acme.inventory;\n 2 | \n 3 | import java.math.BigDecimal;\n 4 | import java.time.Duration;\n 5 | import java.time.Instant;\n 6 | import java.util.ArrayList;\n 7 | import java.util.Collections;\n 8 | import java.util.HashMap;\n 9 | import java.util.List;\n10 | import java.util.Map;\n11 | import org.springframework.scheduling.annotation.Scheduled;\n12 | import org.springframework.stereotype.Service;\n13 | import org.springframework.transaction.annotation.Transactional;\n14 | \n15 | @Service\n16 | public class InventoryService {\n17 |     private final StockRepository stock;\n18 |     private final ReservationRepository reservations;\n19 |     private final Map<String, BigDecimal> priceCache = new HashMap<>();\n20 | \n21 |     public InventoryService(StockRepository stock, ReservationRepository reservations) {\n22 |         this.stock = stock;\n23 |         this.reservations = reservations;\n24 |     }\n25 | \n26 |     public List<Reservation> reserveAll(String orderId, List<Line> lines) {\n27 |         List<Reservation> made = new ArrayList<>();\n28 |         for (Line line : lines) {\n29 |             made.add(reserve(orderId, line));\n30 |         }\n31 |         return made;\n32 |     }\n33 | \n34 |     @Transactional\n35 |     public Reservation reserve(String orderId, Line line) {\n36 |         Stock s = stock.findBySku(line.sku()).orElseThrow();\n37 |         if (s.getAvailable() < line.qty()) {\n38 |             throw new OutOfStockException(line.sku());\n39 |         }\n40 |         s.setAvailable(s.getAvailable() - line.qty());\n41 |         stock.save(s);\n42 |         return reservations.save(new Reservation(orderId, line.sku(), line.qty()));\n43 |     }\n44 | \n45 |     public BigDecimal lineTotal(Line line) {\n46 |         BigDecimal price = priceCache.computeIfAbsent(line.sku(), sku -> stock.findBySku(sku).orElseThrow().getPrice());\n47 |         return price.multiply(BigDecimal.valueOf(line.qty()));\n48 |     }\n49 | \n50 |     public boolean isFree(Line line) {\n51 |         return lineTotal(line).equals(BigDecimal.ZERO);\n52 |     }\n53 | \n54 |     public List<BigDecimal> splitEvenly(BigDecimal total, int payers) {\n55 |         BigDecimal each = total.divide(BigDecimal.valueOf(payers));\n56 |         return Collections.nCopies(payers, each);\n57 |     }\n58 | \n59 |     @Scheduled(fixedDelay = 60_000)\n60 |     public void releaseExpired() {\n61 |         Instant cutoff = Instant.now().minus(Duration.ofMinutes(15));\n62 |         for (Reservation r : reservations.findAll()) {\n63 |             if (r.getCreatedAt().isBefore(cutoff)) {\n64 |                 Stock s = stock.findBySku(r.getSku()).orElseThrow();\n65 |                 s.setAvailable(s.getAvailable() + r.getQty());\n66 |                 stock.save(s);\n67 |                 reservations.delete(r);\n68 |             }\n69 |         }\n70 |     }\n71 | }\n```",
+      "expected": [
+        19,
+        29,
+        40
+      ],
+      "benign": [
+        46,
+        67,
+        51,
+        55,
+        62
+      ],
+      "why": [
+        {
+          "line": 19,
+          "why": "plain HashMap in a singleton is mutated by concurrent requests via computeIfAbsent (not thread-safe)"
+        },
+        {
+          "line": 29,
+          "why": "self-invocation bypasses the Spring proxy and reserveAll has no transaction, so earlier lines stay reserved when a later line is out of stock"
+        },
+        {
+          "line": 40,
+          "why": "read-modify-write with no row lock or @Version, so concurrent checkouts oversell"
+        }
+      ]
+    },
+    {
+      "caseId": "t6-01-py-redis-lock",
+      "split": "check",
+      "scope": "concurrency-atomicity",
+      "prompt": "Review this change. File: `jobs/locking.py`. What the change does: Ensures only one worker across the cluster runs each scheduled job. Uses redis-py with the default client settings (decode_responses=False). Jobs take between 2 and 60 seconds. Worker processes can be killed at any time by autoscaling.\n\nLine numbers are on the left of the `|`.\n\n```python\n 1 | import os\n 2 | import random\n 3 | import time\n 4 | import uuid\n 5 | \n 6 | import redis\n 7 | \n 8 | client = redis.Redis.from_url(os.environ[\"REDIS_URL\"])\n 9 | \n10 | \n11 | class LockTimeout(Exception):\n12 |     pass\n13 | \n14 | \n15 | class RedisLock:\n16 |     def __init__(self, conn, name, ttl_ms=10_000):\n17 |         self.conn = conn\n18 |         self.key = f\"lock:{name}\"\n19 |         self.ttl_ms = ttl_ms\n20 |         self.token = str(uuid.uuid4())\n21 | \n22 |     def acquire(self, timeout=5.0):\n23 |         deadline = time.time() + timeout\n24 |         while True:\n25 |             if self.conn.setnx(self.key, self.token):\n26 |                 self.conn.pexpire(self.key, self.ttl_ms)\n27 |                 return True\n28 |             if time.time() > deadline:\n29 |                 raise LockTimeout(self.key)\n30 |             time.sleep(0.05)\n31 | \n32 |     def release(self):\n33 |         current = self.conn.get(self.key)\n34 |         if current is None:\n35 |             return\n36 | \n37 |         if current == self.token:\n38 |             self.conn.delete(self.key)\n39 | \n40 |     def extend(self, extra_ms):\n41 |         self.conn.pexpire(self.key, self.ttl_ms + extra_ms)\n42 | \n43 |     def __enter__(self):\n44 |         self.acquire()\n45 |         return self\n46 | \n47 |     def __exit__(self, *exc):\n48 |         self.release()\n49 | \n50 | \n51 | def run_exclusive(name, fn, retries=3):\n52 |     for attempt in range(retries):\n53 |         try:\n54 |             with RedisLock(client, name):\n55 |                 return fn()\n56 |         except LockTimeout:\n57 |             time.sleep(2 ** attempt + random.random())\n58 | \n59 |     raise\n```",
+      "expected": [
+        25,
+        33,
+        37,
+        41,
+        55,
+        59
+      ],
+      "benign": [
+        23
+      ],
+      "why": [
+        {
+          "line": 25,
+          "why": "SETNX and PEXPIRE are separate calls; a worker killed between them leaves a lock with no expiry that is never released (use SET NX PX)"
+        },
+        {
+          "line": 33,
+          "why": "get-then-delete is not atomic: the lock can expire and be taken by another worker in between, whose lock is then deleted (needs a compare-and-delete script)"
+        },
+        {
+          "line": 37,
+          "why": "get returns bytes but the token is a str, so the comparison is always false and the lock is never released early"
+        },
+        {
+          "line": 41,
+          "why": "extends the key without checking the token, so it can extend another worker's lock"
+        },
+        {
+          "line": 55,
+          "why": "jobs can run up to 60s but the lock TTL is 10s and is never renewed, so a second worker can start the same job"
+        },
+        {
+          "line": 59,
+          "why": "bare raise outside an except block raises RuntimeError('No active exception to reraise') instead of LockTimeout"
+        }
+      ]
+    },
+    {
+      "caseId": "t6-03-go-sse-broker",
+      "split": "check",
+      "scope": "concurrency-atomicity",
+      "prompt": "Review this change. File: `internal/events/broker.go`. What the change does: In-memory pub/sub that pushes live updates to browsers over SSE. Topics are named 'user:<id>' and are private to that user; auth middleware stores the caller's id, readable with auth.UserID(r.Context()). Slow subscribers may drop messages but must never block publishers. Close() runs on shutdown while clients are still connected. Messages are JSON and can contain newlines.\n\nLine numbers are on the left of the `|`.\n\n```go\n 1 | package events\n 2 | \n 3 | import (\n 4 | \t\"context\"\n 5 | \t\"fmt\"\n 6 | \t\"net/http\"\n 7 | \t\"sync\"\n 8 | \t\"time\"\n 9 | )\n10 | \n11 | type Broker struct {\n12 | \tmu     sync.Mutex\n13 | \tsubs   map[string]map[chan []byte]struct{}\n14 | \tclosed bool\n15 | }\n16 | \n17 | func New() *Broker {\n18 | \treturn &Broker{subs: map[string]map[chan []byte]struct{}{}}\n19 | }\n20 | \n21 | func (b *Broker) Subscribe(ctx context.Context, topic string) <-chan []byte {\n22 | \tch := make(chan []byte, 16)\n23 | \tb.mu.Lock()\n24 | \tif b.subs[topic] == nil {\n25 | \t\tb.subs[topic] = map[chan []byte]struct{}{}\n26 | \t}\n27 | \tb.subs[topic][ch] = struct{}{}\n28 | \tb.mu.Unlock()\n29 | \n30 | \tgo func() {\n31 | \t\t<-ctx.Done()\n32 | \t\tb.mu.Lock()\n33 | \t\tdelete(b.subs[topic], ch)\n34 | \t\tb.mu.Unlock()\n35 | \n36 | \t\tclose(ch)\n37 | \t}()\n38 | \treturn ch\n39 | }\n40 | \n41 | func (b *Broker) Publish(topic string, msg []byte) {\n42 | \tb.mu.Lock()\n43 | \tdefer b.mu.Unlock()\n44 | \tif b.closed {\n45 | \t\treturn\n46 | \t}\n47 | \tfor ch := range b.subs[topic] {\n48 | \t\tch <- msg\n49 | \t}\n50 | }\n51 | \n52 | func (b *Broker) Close() {\n53 | \tb.mu.Lock()\n54 | \tdefer b.mu.Unlock()\n55 | \tb.closed = true\n56 | \tfor _, set := range b.subs {\n57 | \t\tfor ch := range set {\n58 | \t\t\tclose(ch)\n59 | \t\t}\n60 | \t}\n61 | }\n62 | \n63 | func (b *Broker) ReportEvery(ctx context.Context, d time.Duration, report func(map[string]int)) {\n64 | \tt := time.NewTicker(d)\n65 | \tfor {\n66 | \t\tselect {\n67 | \t\tcase <-ctx.Done():\n68 | \t\t\treturn\n69 | \t\tcase <-t.C:\n70 | \t\t\tcounts := map[string]int{}\n71 | \t\t\tb.mu.Lock()\n72 | \t\t\tfor topic, set := range b.subs {\n73 | \t\t\t\tcounts[topic] = len(set)\n74 | \t\t\t}\n75 | \t\t\tb.mu.Unlock()\n76 | \t\t\treport(counts)\n77 | \t\t}\n78 | \t}\n79 | }\n80 | \n81 | func (b *Broker) ServeSSE(w http.ResponseWriter, r *http.Request) {\n82 | \ttopic := r.URL.Query().Get(\"topic\")\n83 | \tflusher, ok := w.(http.Flusher)\n84 | \tif !ok {\n85 | \t\thttp.Error(w, \"streaming unsupported\", http.StatusInternalServerError)\n86 | \t\treturn\n87 | \t}\n88 | \tw.Header().Set(\"Content-Type\", \"text/event-stream\")\n89 | \tw.Header().Set(\"Cache-Control\", \"no-cache\")\n90 | \n91 | \tfor msg := range b.Subscribe(r.Context(), topic) {\n92 | \t\tfmt.Fprintf(w, \"data: %s\\n\\n\", msg)\n93 | \t\tflusher.Flush()\n94 | \t}\n95 | }\n```",
+      "expected": [
+        48
+      ],
+      "benign": [
+        33,
+        36,
+        64,
+        82,
+        92
+      ],
+      "why": [
+        {
+          "line": 48,
+          "why": "blocking send while holding the lock: one slow subscriber with a full buffer stalls all publishers and the unsubscribe goroutines"
+        }
+      ]
+    }
+  ]
+}

@@ -3,6 +3,8 @@ import GateKeeperConnectionPanel from "../components/GateKeeperConnectionPanel";
 import AdversarialLab from "../components/AdversarialLab";
 import GateKeeperBenchmark from "../components/GateKeeperBenchmark";
 import GateKeeperControlSettings from "../components/GateKeeperControlSettings";
+import GateKeeperLearningHistory from "../components/GateKeeperLearningHistory";
+import GateKeeperReview from "../components/GateKeeperReview";
 import "./GateKeeper.css";
 
 // A product walkthrough fixture, not output from TrueForge. Never display it
@@ -42,7 +44,9 @@ const SAMPLE_FINDINGS = [
 const NAV = [
   ["Overview", "◫"],
   ["Review", "⌁"],
+  ["Walkthrough", "▷"],
   ["Runs", "◷"],
+  ["Learning", "↗"],
   ["Evidence", "◇"],
   ["Settings", "⚙"],
 ];
@@ -188,7 +192,7 @@ export default function GateKeeper() {
           <Mark /><span>GATE<span className="gk-brand-slashed">/</span>KEEPER</span>
         </button>
         <div className="gk-top-center"><span className="gk-online-dot" /> TRUEFORGE ENGINE <span className="gk-top-center-divider">/</span> RAILWAY HOSTED</div>
-        <button type="button" className="gk-top-cta" onClick={() => navigate("Review")}>Try the walkthrough <span>↗</span></button>
+        <button type="button" className="gk-top-cta" onClick={() => navigate("Review")}>Review code <span>↗</span></button>
       </div>
       <div className="gk-layout">
         <aside className="gk-sidebar">
@@ -203,19 +207,22 @@ export default function GateKeeper() {
             </nav>
           </div>
           <div className="gk-sidebar-bottom">
-            <span className="gk-label-small">RELEASE MODE</span>
-            <div className="gk-mode"><span className="gk-mode-dot" /> DEMONSTRATION</div>
-            <p>Live reviews and paid learning are not enabled in this interface.</p>
+            <span className="gk-label-small">{page === "Learning" ? "PILOT ARCHIVE" : "RELEASE MODE"}</span>
+            <div className="gk-mode"><span className="gk-mode-dot" /> {page === "Learning" ? "READ ONLY" : page === "Review" ? "OWNER REVIEW" : "DEMONSTRATION"}</div>
+            <p>{page === "Learning" ? "Completed pilot records are scoped to the configured owner. This view provides no learning or promotion controls." : page === "Review" ? "Private review availability is checked against the configured owner's service." : "This section displays sample content. Use Review for authenticated submissions."}</p>
           </div>
         </aside>
         <main id="gk-main-content" className="gk-content">
           {page === "Overview" && <AdversarialLab onReview={() => navigate("Review")} onControls={() => navigate("Settings")} />}
-          {page === "Review" && <Review onControls={() => navigate("Settings")} />}
+          {page === "Review" && <GateKeeperReview />}
+          {page === "Walkthrough" && <Review onControls={() => navigate("Settings")} />}
           {(page === "Runs" || page === "Evidence") && <GateKeeperBenchmark key={page} section={page} />}
+          {page === "Learning" && <GateKeeperLearningHistory />}
           {page === "Settings" && <Settings />}
-          <footer className="gk-footer"><span>GATE / KEEPER</span><span>REVIEW WITH EVIDENCE. SHIP WITH INTENT.</span><span>SAMPLE UI · NOT LIVE AI OUTPUT</span></footer>
+          <footer className="gk-footer"><span>GATE / KEEPER</span><span>REVIEW WITH EVIDENCE. SHIP WITH INTENT.</span><span>{page === "Learning" ? "COMPLETED PILOT HISTORY · NO EXECUTION CONTROLS" : page === "Review" ? "PRIVATE REVIEW REQUESTS · HUMAN DECISIONS" : "SAMPLE UI · NOT LIVE AI OUTPUT"}</span></footer>
         </main>
       </div>
     </div>
   );
 }
+

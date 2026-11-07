@@ -13,6 +13,17 @@ const P = JSON.parse(gunzipSync(Buffer.from(process.env.GK3_PAYLOAD_B64, "base64
 // Codex and Qodo prompts are untouched. The override's hash is logged so every run names the exact prompt it used.
 if (process.env.GK3_GK_SYSTEM) { P.agents.gate_keeper.system = process.env.GK3_GK_SYSTEM; P.sha256 = { ...(P.sha256 || {}), gate_keeper: createHash("sha256").update(process.env.GK3_GK_SYSTEM).digest("hex") };
   console.log("GK3_GK_OVERRIDE " + JSON.stringify({ file: process.env.GK3_GK_FILE || null, sha256: P.sha256.gate_keeper, chars: process.env.GK3_GK_SYSTEM.length })); }
+// GK3_GK_RULES: a per-model rule overlay (the learned rules for THIS model only), inserted into Gate Keeper's prompt exactly as the
+// improve loop inserts them (same heading, same position), so a rule set tuned in the loop replays byte-for-byte. Rules are not
+// model-agnostic: an overlay is used only on the model it was learned on; the core prompt stays shared. The overlay applies to the
+// "gate_keeper" arm only; "gate_keeper_b" is the comparison arm and gets exactly the prompt in GK3_GK_SYSTEM_B.
+if (process.env.GK3_GK_RULES) { const list = process.env.GK3_GK_RULES.split("\n").map((x) => x.replace(/^-\s*/, "").trim()).filter((x) => x && !x.startsWith("#"));
+  const runModel = process.env.GK3_MODEL_B || MODEL; // improve and pipe modes run Gate Keeper on GK3_MODEL_B when it is set
+  if (!list.length) console.log("GK3_GK_RULES_EMPTY " + JSON.stringify({ file: process.env.GK3_GK_RULES_FILE || null, model: runModel }));
+  else { const B = P.agents.gate_keeper.system, block = "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
+    P.agents.gate_keeper.system = B.includes("\n\nExtra field:") ? B.replace("\n\nExtra field:", () => block + "\n\nExtra field:") : B + block;
+    P.sha256 = { ...(P.sha256 || {}), gate_keeper: createHash("sha256").update(P.agents.gate_keeper.system).digest("hex") };
+    console.log("GK3_GK_RULES " + JSON.stringify({ file: process.env.GK3_GK_RULES_FILE || null, model: runModel, rules: list.length, sha256: P.sha256.gate_keeper })); } }
 // GK3_GK_SYSTEM_B: a second Gate Keeper variant run as its own arm ("gate_keeper_b") on the same prompts, so two prompt versions
 // can be compared in one run. Same harness treatment as gate_keeper (line merge included).
 if (process.env.GK3_GK_SYSTEM_B) { P.agents.gate_keeper_b = { system: process.env.GK3_GK_SYSTEM_B }; for (const t of P.tasks) t.prompts.gate_keeper_b = t.prompts.gate_keeper;
@@ -464,9 +475,9 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   const tally = (xs) => { const seen = new Map(); for (const x of xs) { const k = x.task + ":" + x.line; seen.set(k, { ...x, n: (seen.get(k)?.n || 0) + 1 }); } return [...seen.values()].sort((a, b) => b.n - a.n); };
   console.log("GK3_START " + JSON.stringify({ improve: true, model: GM, rounds: ROUNDS, gain: GAIN, trials: TRIALS, tasks: P.tasks.length, cap: CAP, sha256: P.sha256 }));
   const BASE = P.agents.gate_keeper.system;
-  const withRules = (list) => BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n") + "\n\nExtra field:") : BASE + "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
+  const withRules = (list) => BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", () => "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n") + "\n\nExtra field:") : BASE + "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
   // Gated rules go in their own section, so a prompt that already has "## Learned rules" (v13.1) keeps it unchanged.
-  const withGated = (list) => { const sec = "\n\n## Rules for code like this\n" + list.map((x) => "- " + x).join("\n"); return BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", sec + "\n\nExtra field:") : BASE + sec; };
+  const withGated = (list) => { const sec = "\n\n## Rules for code like this\n" + list.map((x) => "- " + x).join("\n"); return BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", () => sec + "\n\nExtra field:") : BASE + sec; };
   let rules = BASE, learned = [], rejected = [];
   let best = await evalRules(BAGMODE ? "round A (rule bag)" : (process.env.GK3_GK_FILE || "v12"), rules);
   // Paired sign-flip test on per-review net differences (same task, same trial), one split at a time.
@@ -510,7 +521,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     const STRICT = !!process.env.GK3_STRICT, STRICT_P = Number(process.env.GK3_STRICT_P || "0.2");
     // Per-task paired test: each task's net summed over its trials (only tasks parsed in every trial on both sides).
     const pairedTask = (ar, br) => { const agg = (rows) => { const m = new Map(); for (const r of rows) { const o = m.get(r.task) || { net: 0, ok: true, k: r.task, parsed: true }; o.net += r.net; o.ok = o.ok && r.parsed; m.set(r.task, o); } return [...m.values()].map((o) => ({ k: o.k, net: o.net, parsed: o.ok })); }; return pairedRows(agg(ar), agg(br)); };
-    const withPack = (s, list) => { const sec = `\n\n## Extra checks for ${NAME[s] || s} code\nThese add to everything above; keep reporting every other defect you find.\n` + list.map((x) => "- " + x).join("\n"); return BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", sec + "\n\nExtra field:") : BASE + sec; };
+    const withPack = (s, list) => { const sec = `\n\n## Extra checks for ${NAME[s] || s} code\nThese add to everything above; keep reporting every other defect you find.\n` + list.map((x) => "- " + x).join("\n"); return BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", () => sec + "\n\nExtra field:") : BASE + sec; };
     if (process.env.GK3_PACK_EVAL) {
       const PK = JSON.parse(process.env.GK3_PACK_JSON || "null"), bsha = createHash("sha256").update(BASE).digest("hex");
       if (!PK || PK.model !== GM || PK.base !== bsha) { console.error("GK3_PACK_MODEL_MISMATCH " + JSON.stringify({ runModel: GM, packModel: PK?.model ?? null, runBase: bsha, packBase: PK?.base ?? null })); process.exit(2); }
@@ -634,7 +645,7 @@ Do not propose a rule that repeats one already listed. Reply with only this JSON
     console.log("GK3_IMPROVE " + JSON.stringify({ round: r, rules: nr, why: (() => { try { return JSON.parse(rr.text.slice(rr.text.indexOf("{"), rr.text.lastIndexOf("}") + 1)).why; } catch { return null; } })(), base: { net: best.net, caught: best.caught, fa: best.fa, fit: best.fitNet, check: best.checkNet }, cand: { net: c.net, caught: c.caught, fa: c.fa, fit: c.fitNet, check: c.checkNet }, delta: { net: c.net - best.net, caught: c.caught - best.caught, falseAlarms: c.fa - best.fa, fit: c.fitNet - best.fitNet, check: c.checkNet - best.checkNet }, fitTest: paired(best, c, true), checkTest: paired(best, c, false), accepted: ok }));
     if (ok) { rules = candRules; learned = [...learned, ...nr]; best = c; } else rejected.push(...nr);
   }
-  console.log("GK3_RULES " + JSON.stringify({ learned, sha256: createHash("sha256").update(rules).digest("hex") }));
+  console.log("GK3_RULES " + JSON.stringify({ model: GM, learned, sha256: createHash("sha256").update(rules).digest("hex") }));
   console.log("GK3_FINAL " + JSON.stringify(rules));
   console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, best: { net: best.net, caught: best.caught, fa: best.fa }, focused: { net: fq.net, caught: fq.caught, fa: fq.fa, avgUsd: fq.avgUsd }, learned }));
 }

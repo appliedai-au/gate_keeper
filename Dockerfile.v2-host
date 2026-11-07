@@ -1,0 +1,18 @@
+# Opt-in v2 host candidate. Never configure on production without a
+# reviewed disposable-volume startup and fail-closed read-status integration.
+FROM node:24.19.0-bookworm-slim
+ARG TRUEFORGE_VERSION=0.180.0
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN case "$TRUEFORGE_VERSION" in 0.180.0|0.182.0) ;; *) echo "unapproved TrueForge version"; exit 1;; esac \
+    && npm ci --no-audit --no-fund \
+    && npm install --no-save --package-lock=false --no-audit --no-fund "@truefoundry/trueforge@${TRUEFORGE_VERSION}" \
+    && apt-get update && apt-get install -y --no-install-recommends util-linux \
+    && rm -rf /var/lib/apt/lists/*
+COPY . .
+ENV NODE_ENV=production STANDALONE=false HOST=0.0.0.0 PORT=8790
+USER root
+EXPOSE 8790
+HEALTHCHECK --interval=20s --timeout=5s --start-period=60s --retries=5 \
+  CMD node -e "fetch('http://127.0.0.1:'+ (process.env.PORT || '8790') +'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["/bin/sh", "/app/scripts/learning-v2/start-v2-host.sh"]

@@ -1,0 +1,25 @@
+.gk-review { max-width: 1120px; margin: 0 auto; }
+.gk-review-kicker { color: #91a3ac; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; }
+.gk-review-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.gk-review button { border: 1px solid #59656b; background: #20282d; color: #edf3f5; padding: 10px 14px; border-radius: 5px; cursor: pointer; font: inherit; }
+.gk-review button:disabled { cursor: not-allowed; opacity: .5; }
+.gk-review button:focus-visible, .gk-review input:focus-visible, .gk-review textarea:focus-visible, .gk-review select:focus-visible { outline: 2px solid #d3f5ab; outline-offset: 3px; }
+.gk-review-form { display: grid; grid-template-columns: 2fr 1fr; gap: 18px; margin: 28px 0; }
+.gk-review-form label { display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.gk-review-form input:not([type=checkbox]), .gk-review-form textarea, .gk-review-form select { width: 100%; padding: 12px; border: 1px solid #3e4b53; border-radius: 5px; background: #11191f; color: #edf3f5; font: inherit; }
+.gk-review-form textarea { resize: vertical; }
+.gk-review-form .gk-review-code { font: 13px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; tab-size: 2; }
+.gk-review-wide { grid-column: 1 / -1; }
+.gk-review-form .gk-review-consent { flex-direction: row; align-items: flex-start; line-height: 1.6; }
+.gk-review-consent input { margin-top: 5px; flex: 0 0 auto; }
+.gk-review-note { color: #a4b3bd; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.gk-review-alert { padding: 15px; border: 1px solid #a3854e; background: #362c1f; border-radius: 5px; color: #f8deb0; line-height: 1.7; }
+.gk-review-card { padding: 24px; border: 1px solid #39454c; border-radius: 8px; margin-top: 24px; }
+.gk-review-card h2 { margin: 10px 0; font-size: 25px; }
+.gk-review-card p { line-height: 1.7; }
+.gk-review-card ul { padding-left: 20px; }
+.gk-review-card li { margin: 12px 0; }
+.gk-review-findings { padding-left: 22px; }
+.gk-review-findings li { padding: 16px; border: 1px solid #3e4b53; border-radius: 5px; overflow-wrap: anywhere; }
+.gk-review-findings strong { color: #f4c283; font-size: 12px; }
+@media (max-width: 620px) { .gk-review-form { grid-template-columns: 1fr; } .gk-review-card { padding: 16px; } }
