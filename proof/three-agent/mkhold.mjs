@@ -13,7 +13,7 @@ if (sha(manifest) !== want) throw new Error("holdout manifest hash mismatch");
 const tasks = files.map((f) => JSON.parse(readFileSync(dir + f, "utf8")));
 const gk = readFileSync(gkFile, "utf8"), codex = readFileSync(new URL("./vendor/openai-codex/review-rubric.md", import.meta.url), "utf8");
 if (sha(codex) !== "ec60e7f36a1d1c2679ce095c0205ecc56f7dd8fb57707a13ef362072390f219f") throw new Error("codex rubric changed");
-const P = { set: "lang-holdout-1", params: { temperature: 0.2, maxTokens: 8000 }, agents: { codex: { system: codex }, gate_keeper: { system: gk } },
+const P = { set: process.argv[3].replace(/\/$/, "").split("/").pop(), params: { temperature: 0.2, maxTokens: 8000 }, agents: { codex: { system: codex }, gate_keeper: { system: gk } },
   tasks: tasks.map((t) => ({ id: t.id, stack: t.stack, expected: t.expected.map((e) => e.line), benign: Array.isArray(t.benign) ? t.benign : [],
     why: t.expected.map((e) => ({ line: e.line, why: e.why })), prompts: { codex: taskPrompt(t), gate_keeper: taskPrompt(t) } })) };
 P.sha256 = { codex: sha(codex), gate_keeper: sha(gk), tasks: sha(JSON.stringify(P.tasks)), manifest: want };
