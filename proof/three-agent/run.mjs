@@ -507,7 +507,10 @@ Write at most two NEW rules for this pack. A rule is either a CATCH rule (a %LAN
 - Each rule is one sentence of at most 40 words, starting "Catch:" or "Do not flag:", naming the %LANG% construct (API, keyword or idiom) it applies to; never a file, function, variable or product name from the examples.
 - Do not repeat or reword a rule the pack or the instructions already have. Prefer the pattern behind the most examples.
 Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
-    const withPack = (s, list) => { const sec = `\n\n## Rules for ${NAME[s] || s} code\n` + list.map((x) => "- " + x).join("\n"); return BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", sec + "\n\nExtra field:") : BASE + sec; };
+    const STRICT = !!process.env.GK3_STRICT, STRICT_P = Number(process.env.GK3_STRICT_P || "0.2");
+    // Per-task paired test: each task's net summed over its trials (only tasks parsed in every trial on both sides).
+    const pairedTask = (ar, br) => { const agg = (rows) => { const m = new Map(); for (const r of rows) { const o = m.get(r.task) || { net: 0, ok: true, k: r.task, parsed: true }; o.net += r.net; o.ok = o.ok && r.parsed; m.set(r.task, o); } return [...m.values()].map((o) => ({ k: o.k, net: o.net, parsed: o.ok })); }; return pairedRows(agg(ar), agg(br)); };
+    const withPack = (s, list) => { const sec = `\n\n## Extra checks for ${NAME[s] || s} code\nThese add to everything above; keep reporting every other defect you find.\n` + list.map((x) => "- " + x).join("\n"); return BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", sec + "\n\nExtra field:") : BASE + sec; };
     if (process.env.GK3_PACK_EVAL) {
       const PK = JSON.parse(process.env.GK3_PACK_JSON || "null"), bsha = createHash("sha256").update(BASE).digest("hex");
       if (!PK || PK.model !== GM || PK.base !== bsha) { console.error("GK3_PACK_MODEL_MISMATCH " + JSON.stringify({ runModel: GM, packModel: PK?.model ?? null, runBase: bsha, packBase: PK?.base ?? null })); process.exit(2); }
@@ -537,12 +540,19 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
         const rr = await turn(`lang/${s}/improve-r${r}`, LANG_IMPROVER.replaceAll("%LANG%", NAME[s] || s), ask, GM);
         const nr = (jsonFindings(rr.text, "rules") || []).filter((x) => typeof x === "string" && x.length > 10).slice(0, 2).map((x) => x.trim().slice(0, 300));
         if (!nr.length) { console.log("GK3_PACK " + JSON.stringify({ stack: s, round: r, error: "no rules", status: rr.status })); continue; }
-        const c = await evalRules(`pack ${s} r${r}`, withPack(s, [...pack, ...nr]), false, only);
+        // GK3_STRICT=1: each rule is tried on its own; it is kept only if, per task (trials summed), more tasks improve than get
+        // worse on the learn split, the learn split's per-task sign-flip p <= GK3_STRICT_P (default 0.2), the keep split does not
+        // drop in net, and catches do not drop on either split. Otherwise: the original rule (both rules, net gain >= GAIN).
+        for (const cand of STRICT ? nr.map((x) => [x]) : [nr]) {
+        const c = await evalRules(`pack ${s} r${r}${STRICT ? "/" + nr.indexOf(cand[0]) : ""}`, withPack(s, [...pack, ...cand]), false, only);
         const B = sum(cur.rows), C = sum(c.rows), Bf = sum(on(cur.rows, s, true)), Cf = sum(on(c.rows, s, true)), Bc = sum(on(cur.rows, s, false)), Cc = sum(on(c.rows, s, false));
-        const ok = C.net - B.net >= GAIN && Cf.net >= Bf.net && Cc.net >= Bc.net;
-        console.log("GK3_PACK " + JSON.stringify({ stack: s, round: r, rules: nr, base: B, cand: C, delta: { net: C.net - B.net, caught: C.caught - B.caught, fa: C.fa - B.fa, fit: Cf.net - Bf.net, check: Cc.net - Bc.net },
-          fitTest: pairedRows(on(cur.rows, s, true), on(c.rows, s, true)), checkTest: pairedRows(on(cur.rows, s, false), on(c.rows, s, false)), accepted: ok }));
-        if (ok) { pack = [...pack, ...nr]; cur = c; } else rejected.push(...nr);
+        const ft = pairedTask(on(cur.rows, s, true), on(c.rows, s, true)), ct = pairedTask(on(cur.rows, s, false), on(c.rows, s, false));
+        const ok = STRICT ? (C.net - B.net >= GAIN && ft.up > ft.down && ft.p <= STRICT_P && Cc.net >= Bc.net && Cf.caught >= Bf.caught && Cc.caught >= Bc.caught)
+          : (C.net - B.net >= GAIN && Cf.net >= Bf.net && Cc.net >= Bc.net);
+        console.log("GK3_PACK " + JSON.stringify({ stack: s, round: r, rules: cand, strict: STRICT, base: B, cand: C, delta: { net: C.net - B.net, caught: C.caught - B.caught, fa: C.fa - B.fa, fit: Cf.net - Bf.net, check: Cc.net - Bc.net },
+          fitTest: pairedRows(on(cur.rows, s, true), on(c.rows, s, true)), checkTest: pairedRows(on(cur.rows, s, false), on(c.rows, s, false)), fitTaskTest: ft, checkTaskTest: ct, accepted: ok }));
+        if (ok) { pack = [...pack, ...cand]; cur = c; } else rejected.push(...cand);
+        }
       }
       packs[s] = pack; for (const x of cur.rows) fin.set(x.k, x);
       const cxr = on(cx.rows, s), row = { tasks: only.size, base: sum(base.rows), packed: sum(cur.rows), codex: cx.rows.length ? sum(cxr) : null,
