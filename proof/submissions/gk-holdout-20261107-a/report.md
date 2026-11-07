@@ -10,16 +10,16 @@
   - Gate Keeper v12 (sha `c552b0b2…`) with its line merge
 - **Model and settings:** same for all three. `truefoundry/deepseek-v4-flash-0731` through the Stranger Builds TrueFoundry gateway, temperature 0.2, max 8,000 output tokens, 3 trials, no tools.
 - **Harness:** `proof/three-agent/run.mjs` at `9f12a8ec97cf3ff5ca8a4c7c38a769f2825b33c3`. Each finding is scored deterministically by line (±1) against the private key.
-- **Spend:** US$0.184853 over 378 calls.
+- **Spend:** about US$0.18 over 378 calls (estimated from turn metrics, not reconciled with gateway receipts).
 
 ## Results (126 reviews per reviewer)
-| Reviewer | Real bugs caught | Catch rate | False alarms | Net | Clean changes flagged | Avg time | Avg cost / review |
+| Reviewer | Real bugs caught | Catch rate | False alarms | Net | Clean changes flagged | Avg time | Avg cost / review (est.) |
 |---|---|---|---|---|---|---|---|
 | Codex rubric | 78/81 | 96% | 22 | **56** | 12/45 | 16.2 s | $0.00090 |
 | Qodo PR-Agent | 81/81 | 100% | 54 | 27 | 26/45 | 6.6 s | $0.00031 |
 | Gate Keeper v12 | 72/81 | 89% | 39 | 33 | 14/45 | 6.5 s | $0.00025 |
 
-Codex had 3 reviews that hit the output limit; they scored zero.
+Codex had 3 reviews that did not return a parseable answer within the output limit; they scored zero. Two were on bug tasks and one on a clean task, so they account for 2 of its 3 misses. Excluding them, Codex caught 78/79 (99%).
 
 ## Where Gate Keeper lost
 - **Go: `defer rows.Close()` before the error check.** Missed in 0/3 trials. Its checklist talked itself out of the bug, wrongly concluding "Close on nil rows is safe".
