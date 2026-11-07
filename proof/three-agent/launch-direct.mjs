@@ -10,6 +10,7 @@ writeFileSync("/tmp/gk3-run.mjs", await get("run.mjs"));
 writeFileSync("/tmp/gk3-bag.mjs", await get("gk-bag.mjs"));
 process.env.GK3_PAYLOAD_B64 = (await get("payloads/" + process.env.GK3_PAYLOAD)).trim();
 if (process.env.GK3_GK_FILE) process.env.GK3_GK_SYSTEM = await get(process.env.GK3_GK_FILE);
+if (process.env.GK3_PACK_FILE) process.env.GK3_PACK_JSON = await get(process.env.GK3_PACK_FILE);
 console.log("GK3_BOOT " + JSON.stringify({ commit: c, payload: process.env.GK3_PAYLOAD, gk: process.env.GK3_GK_FILE || null, model: process.env.GK3_MODEL, direct: true }));
 await import("file:///tmp/gk3-run.mjs");
 process.exit(0);

@@ -483,7 +483,10 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   // gets its own pack of "catch" and "do not flag" rules, learned from that stack's fit-split misses and false alarms only,
   // shown only on that stack's code, and kept only if that stack's net rises by GAIN and neither its fit nor its check
   // split drops. The unchanged Codex rubric runs on the same tasks and trials as the comparison arm (GK3_ARMS includes codex).
-  if (process.env.GK3_LANG_PACKS) {
+  // GK3_PACK_EVAL=1: run 1 vs run 2 for one model. Run 1 = the rule-free prompt. Run 2 = the same prompt plus, on each
+  // task, only the pack this model learned for that task's language (GK3_PACK_JSON, from GK3_PACK_FILE). A pack learned
+  // on another model, or on another base prompt, is refused: rules are model- and language-specific.
+  if (process.env.GK3_LANG_PACKS || process.env.GK3_PACK_EVAL) {
     const ST = new Map(P.tasks.map((t) => [t.id, BAG.stackOf(t.prompts.gate_keeper)])), MINT = Number(process.env.GK3_LANG_MIN_FIT || "4");
     const NAME = { node: "Node.js", react: "React", bun: "Bun", elysia: "Elysia (Bun)", ts: "TypeScript", go: "Go", rust: "Rust", erlang: "Erlang", php: "PHP", python: "Python", jvm: "JVM (Java/Kotlin)" };
     const of = (s) => P.tasks.filter((t) => ST.get(t.id) === s), stacks = [...new Set(ST.values())].filter((s) => of(s).filter(isFit).length >= MINT && of(s).some((t) => !isFit(t))).sort();
@@ -505,6 +508,18 @@ Write at most two NEW rules for this pack. A rule is either a CATCH rule (a %LAN
 - Do not repeat or reword a rule the pack or the instructions already have. Prefer the pattern behind the most examples.
 Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     const withPack = (s, list) => { const sec = `\n\n## Rules for ${NAME[s] || s} code\n` + list.map((x) => "- " + x).join("\n"); return BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", sec + "\n\nExtra field:") : BASE + sec; };
+    if (process.env.GK3_PACK_EVAL) {
+      const PK = JSON.parse(process.env.GK3_PACK_JSON || "null"), bsha = createHash("sha256").update(BASE).digest("hex");
+      if (!PK || PK.model !== GM || PK.base !== bsha) { console.error("GK3_PACK_MODEL_MISMATCH " + JSON.stringify({ runModel: GM, packModel: PK?.model ?? null, runBase: bsha, packBase: PK?.base ?? null })); process.exit(2); }
+      const all = new Map(best.rows.map((r) => [r.k, r])), per = {}, every = [...new Set(ST.values())].sort();
+      for (const s of every) { const rules = PK.packs[s] || [], only = new Set(of(s).map((t) => t.id)), r1 = on(best.rows, s);
+        let r2 = r1; if (rules.length) { const e = await evalRules(`run2 ${s}`, withPack(s, rules), false, only); r2 = e.rows; for (const x of r2) all.set(x.k, x); }
+        const cxr = on(cx.rows, s); per[s] = { tasks: only.size, rules: rules.length, run1: sum(r1), run2: sum(r2), codex: cx.rows.length ? sum(cxr) : null, run2VsRun1: pairedRows(r1, r2), run2VsCodex: cx.rows.length ? pairedRows(cxr, r2) : null };
+        console.log("GK3_RUN2 " + JSON.stringify({ stack: s, ...per[s] })); }
+      const r2all = [...all.values()];
+      console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, model: GM, base: bsha, run1: sum(best.rows), run2: sum(r2all), codex: cx.rows.length ? sum(cx.rows) : null, run2VsRun1: pairedRows(best.rows, r2all), run2VsCodex: cx.rows.length ? pairedRows(cx.rows, r2all) : null, run1VsCodex: cx.rows.length ? pairedRows(cx.rows, best.rows) : null, per }));
+      return;
+    }
     const report = {}, packs = {}, fin = new Map(best.rows.map((r) => [r.k, r]));
     console.log("GK3_LANG_START " + JSON.stringify({ model: GM, stacks: stacks.map((s) => ({ s, fit: of(s).filter(isFit).length, check: of(s).filter((t) => !isFit(t)).length })), skipped: [...new Set(ST.values())].filter((s) => !stacks.includes(s)) }));
     for (const s of stacks) {
@@ -532,7 +547,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     }
     // Totals: 13.1 with every pack in place (stacks without a pack keep the base reply) vs the Codex rubric, paired per review.
     const all = [...fin.values()];
-    console.log("GK3_PACKS " + JSON.stringify({ model: GM, base: P.sha256?.gate_keeper, packs }));
+    console.log("GK3_PACKS " + JSON.stringify({ model: GM, base: createHash("sha256").update(BASE).digest("hex"), packs }));
     console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, base: sum(best.rows), packed: sum(all), codex: cx.rows.length ? sum(cx.rows) : null, baseVsCodex: cx.rows.length ? pairedRows(cx.rows, best.rows) : null, packedVsCodex: cx.rows.length ? pairedRows(cx.rows, all) : null, checkPackedVsCodex: cx.rows.length ? pairedRows(cx.rows.filter((r) => !r.fit), all.filter((r) => !r.fit)) : null, report }));
     return;
   }
