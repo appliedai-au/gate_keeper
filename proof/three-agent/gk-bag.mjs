@@ -123,3 +123,20 @@ export function gate(prompt, rules = GATED) {
   for (const r of rules) { const lines = [...code].filter(([, t]) => r.trigger.test(t)).map(([n]) => n); if (lines.length) on.push({ ...r, lines: lines.slice(0, 6) }); }
   return on;
 }
+
+// Stack of a review prompt, from its code fence, file name and imports. Deterministic; used to pick a per-language
+// rule pack (learned separately for each stack and model) and to show it only on code of that stack.
+export function stackOf(prompt) {
+  const fence = (prompt.match(/```([\w+#-]+)/)?.[1] || "").toLowerCase(), file = prompt.match(/File: `([^`]+)`/)?.[1] || "";
+  if (fence === "erlang" || /\.[eh]rl$/.test(file)) return "erlang";
+  if (fence === "php" || /\.php$/.test(file)) return "php";
+  if (fence === "go" || /\.go$/.test(file)) return "go";
+  if (fence === "rust" || /\.rs$/.test(file)) return "rust";
+  const js = /^(javascript|js|typescript|ts|tsx|jsx)$/.test(fence);
+  if (js && /from\s+["']elysia["']/.test(prompt)) return "elysia";
+  if (js && (/\bBun\.\w+|from\s+["']bun(:\w+)?["']/.test(prompt))) return "bun";
+  if (js && (/\.(tsx|jsx)$/.test(file) || /from\s+["']react["']/.test(prompt))) return "react";
+  if (js && (/require\(["']|from\s+["'](express|express-session|node:\w+|fs|http|https|child_process|crypto)["']/.test(prompt) || /^(javascript|js)$/.test(fence))) return "node";
+  if (js) return "ts";
+  return LANG[fence] || fence || "other";
+}

@@ -196,7 +196,7 @@ async function duo(arm, task, trial) {
 // Gate Keeper's rule bag (gk-bag.mjs): rule packs picked for this code, pattern hints, post-call filters and
 // fingerprints, still ONE model call per review. gk_bag = rules + hints; gk_bag_strict adds the Codex-style report bar.
 // Fingerprints come from GK3_FP_URL / payload P.fingerprints, built only from tasks outside the set being scored.
-const BAG = (process.env.GK3_BAG_PATH || (ARMS.some((a) => a.startsWith("gk_")) || process.env.GK3_IMPROVE_BAG || process.env.GK3_SELF_GATED)) ? await import(process.env.GK3_BAG_PATH || "file:///tmp/gk3-bag.mjs") : null;
+const BAG = (process.env.GK3_BAG_PATH || (ARMS.some((a) => a.startsWith("gk_")) || process.env.GK3_IMPROVE_BAG || process.env.GK3_SELF_GATED || process.env.GK3_LANG_PACKS)) ? await import(process.env.GK3_BAG_PATH || "file:///tmp/gk3-bag.mjs") : null;
 const FP = P.fingerprints || null;
 async function bag(arm, task, trial) {
   const strict = arm.includes("strict"), useFp = arm.includes("fp");
@@ -413,8 +413,9 @@ async function improve() {
   const codeOf = (t) => { const m = new Map(); for (const x of t.prompts.gate_keeper.matchAll(/^\s*(\d+) \| ?(.*)$/gm)) m.set(+x[1], x[2].trim()); return m; };
   // Check split: task ids matching GK3_CHECK_RE (default: tranche 6). Everything else is the fit split.
   const CHECK_RE = new RegExp(process.env.GK3_CHECK_RE || "^t6-"), isFit = (t) => !CHECK_RE.test(t.id);
-  async function evalRules(tag, sys, focused = false) {
-    const q = []; for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) q.push({ trial, task });
+  async function evalRules(tag, sys, focused = false, only = null) {
+    const TS = only ? P.tasks.filter((t) => only.has(t.id)) : P.tasks;
+    const q = []; for (let trial = 1; trial <= TRIALS; trial++) for (const task of TS) q.push({ trial, task });
     const res = { tag, fit: 0, val: 0, caught: 0, fa: 0, cost: 0, sec: 0, n: 0, unparsed: 0, misses: [], fas: [], rows: [] };
     async function one({ trial, task }) {
       const id = `i/${tag}/${task.id}/t${trial}`, pr = task.prompts.gate_keeper;
@@ -444,7 +445,7 @@ async function improve() {
         const parts = rs.map(toSpans); fs = parts.some(Boolean) ? merge(parts.filter(Boolean).flat()) : null;
       }
       const sc = score(task.expected, fs, task.benign || []), code = codeOf(task);
-      res.rows.push({ k: `${task.id}/t${trial}`, fit: isFit(task), net: sc.caught - sc.extra, parsed: !!sc.parsed });
+      res.rows.push({ k: `${task.id}/t${trial}`, task: task.id, fit: isFit(task), net: sc.caught - sc.extra, caught: sc.caught, fa: sc.extra, parsed: !!sc.parsed });
       res.caught += sc.caught; res.fa += sc.extra; res[isFit(task) ? "fit" : "val"] += sc.caught - sc.extra; res.n++; if (!sc.parsed) res.unparsed++;
       res.cost += rs.reduce((a, r) => a + (r.cost || 0), 0); res.sec += BAGMODE ? rs.reduce((a, r) => a + (r.seconds || 0), 0) : Math.max(...rs.map((r) => r.seconds || 0));
       if (fs) { for (const w of task.why) if (!fs.some((f) => w.line >= f.start - 1 && w.line <= (f.end ?? f.start) + 1)) res.misses.push({ task: task.id, line: w.line, code: code.get(w.line) || "", why: w.why });
@@ -452,7 +453,7 @@ async function improve() {
       console.log("GK3_ROW " + JSON.stringify({ arm: tag, task: task.id, trial, ...sc }));
     }
     await Promise.all(Array.from({ length: CONC }, async () => { while (q.length) await one(q.shift()); }));
-    const out = { tag, net: res.caught - res.fa, caught: res.caught, of: P.tasks.reduce((a, t) => a + t.expected.length, 0) * TRIALS, fa: res.fa, fitNet: res.fit, checkNet: res.val, unparsed: res.unparsed, avgS: Math.round(10 * res.sec / res.n) / 10, avgUsd: Math.round(1e6 * res.cost / res.n) / 1e6 };
+    const out = { tag, net: res.caught - res.fa, caught: res.caught, of: TS.reduce((a, t) => a + t.expected.length, 0) * TRIALS, fa: res.fa, fitNet: res.fit, checkNet: res.val, unparsed: res.unparsed, avgS: Math.round(10 * res.sec / res.n) / 10, avgUsd: Math.round(1e6 * res.cost / res.n) / 1e6 };
     console.log("GK3_EVAL " + JSON.stringify(out)); return { ...out, misses: res.misses, fas: res.fas, rows: res.rows };
   }
   const IMPROVER = `You maintain the instructions of an automated code reviewer. You get its current instructions, the planted bugs it missed on training reviews (with the reason each is a bug), and its false alarms.
@@ -471,12 +472,70 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   // Paired sign-flip test on per-review net differences (same task, same trial), one split at a time.
   // Pairs where either side failed or did not parse are left out. Exact over all sign vectors of the non-zero
   // differences when there are at most 20 of them; otherwise 20000 draws from mulberry32 (exact 32-bit math).
-  const paired = (a, b, fit) => { const A = new Map(a.rows.filter((r) => r.fit === fit && r.parsed).map((r) => [r.k, r.net])); const d = b.rows.filter((r) => r.fit === fit && r.parsed && A.has(r.k)).map((r) => r.net - A.get(r.k));
+  const paired = (a, b, fit) => pairedRows(a.rows.filter((r) => r.fit === fit), b.rows.filter((r) => r.fit === fit));
+  const pairedRows = (ar, br) => { const A = new Map(ar.filter((r) => r.parsed).map((r) => [r.k, r.net])); const d = br.filter((r) => r.parsed && A.has(r.k)).map((r) => r.net - A.get(r.k));
     const obs = d.reduce((x, y) => x + y, 0), nz = d.filter((x) => x); let hit = 0, R;
     if (nz.length <= 20) { R = 2 ** nz.length; for (let m = 0; m < R; m++) { let t = 0; for (let j = 0; j < nz.length; j++) t += (m >> j) & 1 ? nz[j] : -nz[j]; if (t >= obs) hit++; } }
     else { R = 20000; let s = 12345; const rand = () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return (t ^ (t >>> 14)) >>> 0; };
       for (let i = 0; i < R; i++) { let t = 0; for (const x of nz) t += rand() & 1 ? x : -x; if (t >= obs) hit++; } hit++; R++; }
     return { diff: obs, reviews: d.length, changed: nz.length, up: nz.filter((x) => x > 0).length, down: nz.filter((x) => x < 0).length, p: Math.round(1e4 * hit / R) / 1e4 }; };
+  // GK3_LANG_PACKS=1: per-language learned packs for this model. Each stack (stackOf: the code fence, file name and imports)
+  // gets its own pack of "catch" and "do not flag" rules, learned from that stack's fit-split misses and false alarms only,
+  // shown only on that stack's code, and kept only if that stack's net rises by GAIN and neither its fit nor its check
+  // split drops. The unchanged Codex rubric runs on the same tasks and trials as the comparison arm (GK3_ARMS includes codex).
+  if (process.env.GK3_LANG_PACKS) {
+    const ST = new Map(P.tasks.map((t) => [t.id, BAG.stackOf(t.prompts.gate_keeper)])), MINT = Number(process.env.GK3_LANG_MIN_FIT || "4");
+    const NAME = { node: "Node.js", react: "React", bun: "Bun", elysia: "Elysia (Bun)", ts: "TypeScript", go: "Go", rust: "Rust", erlang: "Erlang", php: "PHP", python: "Python", jvm: "JVM (Java/Kotlin)" };
+    const of = (s) => P.tasks.filter((t) => ST.get(t.id) === s), stacks = [...new Set(ST.values())].filter((s) => of(s).filter(isFit).length >= MINT && of(s).some((t) => !isFit(t))).sort();
+    const sum = (rows) => rows.reduce((a, r) => ({ net: a.net + r.net, caught: a.caught + r.caught, fa: a.fa + r.fa, n: a.n + 1 }), { net: 0, caught: 0, fa: 0, n: 0 });
+    const on = (rows, s, fit) => rows.filter((r) => ST.get(r.task) === s && (fit === undefined || r.fit === fit));
+    const cx = { rows: [] };
+    if (P.agents.codex && ARMS.includes("codex")) {
+      const q = []; for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) q.push({ trial, task });
+      await Promise.all(Array.from({ length: CONC }, async () => { while (q.length) { const { trial, task } = q.shift();
+        const r = await turn(`codex/${task.id}/t${trial}`, P.agents.codex.system, task.prompts.codex, GM), fs = r.status === "done" ? parse("codex", r.text) : null, sc = score(task.expected, fs, task.benign || []);
+        cx.rows.push({ k: `${task.id}/t${trial}`, task: task.id, fit: isFit(task), net: sc.caught - sc.extra, caught: sc.caught, fa: sc.extra, parsed: !!sc.parsed });
+        console.log("GK3_ROW " + JSON.stringify({ arm: "codex", task: task.id, trial, ...sc })); } }));
+      const t = sum(cx.rows); console.log("GK3_EVAL " + JSON.stringify({ tag: "codex rubric", ...t, unparsed: cx.rows.filter((r) => !r.parsed).length }));
+    }
+    const LANG_IMPROVER = `You maintain one language's rule pack for an automated code reviewer. The pack is shown to the reviewer only when it reviews %LANG% code.
+You get the reviewer's instructions, its current %LANG% pack, the planted bugs it missed in %LANG% training reviews (with the reason each is a bug), and its false alarms there.
+Write at most two NEW rules for this pack. A rule is either a CATCH rule (a %LANG% defect pattern to report) or a DO-NOT-FLAG rule (a %LANG% idiom that looks wrong but is fine, so it is not reported). Prefer a DO-NOT-FLAG rule when false alarms repeat.
+- Each rule is one sentence of at most 40 words, starting "Catch:" or "Do not flag:", naming the %LANG% construct (API, keyword or idiom) it applies to; never a file, function, variable or product name from the examples.
+- Do not repeat or reword a rule the pack or the instructions already have. Prefer the pattern behind the most examples.
+Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
+    const withPack = (s, list) => { const sec = `\n\n## Rules for ${NAME[s] || s} code\n` + list.map((x) => "- " + x).join("\n"); return BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", sec + "\n\nExtra field:") : BASE + sec; };
+    const report = {}, packs = {}, fin = new Map(best.rows.map((r) => [r.k, r]));
+    console.log("GK3_LANG_START " + JSON.stringify({ model: GM, stacks: stacks.map((s) => ({ s, fit: of(s).filter(isFit).length, check: of(s).filter((t) => !isFit(t)).length })), skipped: [...new Set(ST.values())].filter((s) => !stacks.includes(s)) }));
+    for (const s of stacks) {
+      const only = new Set(of(s).map((t) => t.id)), base = { rows: on(best.rows, s), misses: best.misses.filter((m) => only.has(m.task)), fas: best.fas.filter((f) => only.has(f.task)) };
+      let cur = base, pack = [], rejected = [];
+      for (let r = 1; r <= ROUNDS; r++) {
+        const fitIds = new Set(of(s).filter(isFit).map((t) => t.id)), ms = tally(cur.misses.filter((m) => fitIds.has(m.task))).slice(0, 14), fs = tally(cur.fas.filter((f) => fitIds.has(f.task))).slice(0, 10);
+        if (!ms.length && !fs.length) break;
+        const ask = "Reviewer instructions:\n" + BASE + `\n\nCurrent ${NAME[s] || s} pack:\n` + (pack.length ? pack.map((x) => "- " + x).join("\n") : "(empty)") + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + (ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n") || "(none)") +
+          "\n\nFalse alarms:\n" + (fs.map((f) => `- [${f.n}x] line ${f.line}: \`${f.code}\` — reviewer said: ${f.comment}`).join("\n") || "(none)") + (rejected.length ? "\n\nRules already tried that did not help (do not propose these again):\n" + rejected.map((x) => "- " + x).join("\n") : "");
+        const rr = await turn(`lang/${s}/improve-r${r}`, LANG_IMPROVER.replaceAll("%LANG%", NAME[s] || s), ask, GM);
+        const nr = (jsonFindings(rr.text, "rules") || []).filter((x) => typeof x === "string" && x.length > 10).slice(0, 2).map((x) => x.trim().slice(0, 300));
+        if (!nr.length) { console.log("GK3_PACK " + JSON.stringify({ stack: s, round: r, error: "no rules", status: rr.status })); continue; }
+        const c = await evalRules(`pack ${s} r${r}`, withPack(s, [...pack, ...nr]), false, only);
+        const B = sum(cur.rows), C = sum(c.rows), Bf = sum(on(cur.rows, s, true)), Cf = sum(on(c.rows, s, true)), Bc = sum(on(cur.rows, s, false)), Cc = sum(on(c.rows, s, false));
+        const ok = C.net - B.net >= GAIN && Cf.net >= Bf.net && Cc.net >= Bc.net;
+        console.log("GK3_PACK " + JSON.stringify({ stack: s, round: r, rules: nr, base: B, cand: C, delta: { net: C.net - B.net, caught: C.caught - B.caught, fa: C.fa - B.fa, fit: Cf.net - Bf.net, check: Cc.net - Bc.net },
+          fitTest: pairedRows(on(cur.rows, s, true), on(c.rows, s, true)), checkTest: pairedRows(on(cur.rows, s, false), on(c.rows, s, false)), accepted: ok }));
+        if (ok) { pack = [...pack, ...nr]; cur = c; } else rejected.push(...nr);
+      }
+      packs[s] = pack; for (const x of cur.rows) fin.set(x.k, x);
+      const cxr = on(cx.rows, s), row = { tasks: only.size, base: sum(base.rows), packed: sum(cur.rows), codex: cx.rows.length ? sum(cxr) : null,
+        packedVsBase: pairedRows(base.rows, cur.rows), packedVsCodex: cx.rows.length ? pairedRows(cxr, cur.rows) : null, checkVsCodex: cx.rows.length ? pairedRows(on(cx.rows, s, false), on(cur.rows, s, false)) : null, pack };
+      report[s] = row; console.log("GK3_LANG " + JSON.stringify({ stack: s, ...row }));
+    }
+    // Totals: 13.1 with every pack in place (stacks without a pack keep the base reply) vs the Codex rubric, paired per review.
+    const all = [...fin.values()];
+    console.log("GK3_PACKS " + JSON.stringify({ model: GM, base: P.sha256?.gate_keeper, packs }));
+    console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, base: sum(best.rows), packed: sum(all), codex: cx.rows.length ? sum(cx.rows) : null, baseVsCodex: cx.rows.length ? pairedRows(cx.rows, best.rows) : null, packedVsCodex: cx.rows.length ? pairedRows(cx.rows, all) : null, checkPackedVsCodex: cx.rows.length ? pairedRows(cx.rows.filter((r) => !r.fit), all.filter((r) => !r.fit)) : null, report }));
+    return;
+  }
   if (BAGMODE && process.env.GK3_GATED) {
     const g = await evalRules("round D gated", BAG.GATED);
     const fired = P.tasks.map((t) => ({ task: t.id, rules: BAG.gate(t.prompts.gate_keeper).map((r) => r.id) })).filter((x) => x.rules.length);
