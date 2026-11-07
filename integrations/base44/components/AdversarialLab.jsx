@@ -177,7 +177,7 @@ export default function AdversarialLab({ onReview, onControls }) {
           <div className="al-hero-text">
             <span className="al-eyebrow"><span className="al-slash"/> WATCH THE ADVERSARIAL THINKING</span>
             <h1>The dangerous bug<br/>is <em>the one you</em><br/><em>can't see.</em></h1>
-            <p>Most tools tell you what changed. Gate Keeper asks what that change could allow. Follow one flaw from an innocent line of code to a missing trust boundary—and see the evidence.</p>
+            <p>Most tools tell you what changed. Gate Keeper asks what that change could allow. Follow one error from an innocent line of code to a missing trust boundary—and see the evidence.</p>
             <div className="al-actions">
               <button className="al-start" type="button" onClick={start} aria-label={phase>0?"Replay scripted investigation":"Start scripted investigation"}>
                 <span className="al-start-disc">{phase>0?"↻":"▶"}</span>{phase>0?"Replay investigation":"Run the investigation"}<span className="al-action-arrow">↗</span>
