@@ -1,0 +1,73 @@
+{
+  "id": "x1-erl-01-session-store",
+  "title": "Erlang session store gen_server",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/session_store.erl",
+  "context": "In-memory session store. put/2 is called during login and the caller redirects right after it returns, so the session must be stored by then. Sessions expire 30 minutes after they are stored; expired entries are swept every minute.",
+  "code": [
+    "-module(session_store).",
+    "-behaviour(gen_server).",
+    "-export([start_link/0, put/2, get/1]).",
+    "-export([init/1, handle_call/3, handle_cast/2, handle_info/2]).",
+    "",
+    "-define(TTL_MS, 30 * 60 * 1000).",
+    "",
+    "start_link() ->",
+    "    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).",
+    "",
+    "put(Id, Data) ->",
+    "    gen_server:cast(?MODULE, {put, Id, Data}).",
+    "",
+    "get(Id) ->",
+    "    gen_server:call(?MODULE, {get, Id}).",
+    "",
+    "init([]) ->",
+    "    erlang:send_after(60000, self(), sweep),",
+    "    {ok, #{}}.",
+    "",
+    "handle_call({get, Id}, _From, State) ->",
+    "    case maps:find(Id, State) of",
+    "        {ok, {Data, Expires}} when Expires > erlang:monotonic_time(millisecond) ->",
+    "            {reply, {ok, Data}, State};",
+    "        _ ->",
+    "            {reply, not_found, State}",
+    "    end.",
+    "",
+    "handle_cast({put, Id, Data}, State) ->",
+    "    Expires = erlang:system_time(millisecond) + ?TTL_MS,",
+    "    {noreply, maps:put(Id, {Data, Expires}, State)}.",
+    "",
+    "handle_info(sweep, State) ->",
+    "    Now = erlang:monotonic_time(millisecond),",
+    "    Live = maps:filter(fun(_Id, {_Data, Expires}) -> Expires > Now end, State),",
+    "    {noreply, Live}."
+  ],
+  "expected": [
+    {
+      "line": 12,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "put is an asynchronous cast, so the caller can redirect before the session is stored; it must be a call"
+    },
+    {
+      "line": 30,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "expiry uses system_time but is compared with monotonic_time, which has a different origin, so sessions expire at the wrong time"
+    },
+    {
+      "line": 36,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "the sweep is never rescheduled (no new send_after), so it runs only once and expired sessions pile up"
+    }
+  ],
+  "benign": []
+}

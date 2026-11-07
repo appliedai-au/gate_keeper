@@ -1,0 +1,60 @@
+{
+  "id": "x2-elysia-03-payment-webhook",
+  "title": "Elysia payment webhook",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/webhook.ts",
+  "context": "Receives payment webhooks. The provider signs the raw request body with HMAC-SHA256 in the x-signature header (hex). The provider may deliver the same event several times, including in parallel; each event id must be processed once.",
+  "code": [
+    "import { Elysia } from \"elysia\";",
+    "import { createHmac } from \"node:crypto\";",
+    "import { markPaid } from \"./orders\";",
+    "",
+    "const SECRET = process.env.WEBHOOK_SECRET!;",
+    "const seen = new Set<string>();",
+    "",
+    "new Elysia()",
+    "  .post(\"/webhooks/payments\", async ({ request, set }) => {",
+    "    const body = await request.json();",
+    "    const sig = request.headers.get(\"x-signature\") ?? \"\";",
+    "    const expected = createHmac(\"sha256\", SECRET).update(JSON.stringify(body)).digest(\"hex\");",
+    "    console.info(\"webhook\", body.id);",
+    "    if (sig != expected) {",
+    "      set.status = 401;",
+    "      return \"bad signature\";",
+    "    }",
+    "    if (seen.has(body.id)) return \"duplicate\";",
+    "    await markPaid(body.orderId, body.amount);",
+    "    seen.add(body.id);",
+    "    return \"ok\";",
+    "  })",
+    "  .listen(3001);"
+  ],
+  "expected": [
+    {
+      "line": 12,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "HMAC is computed over re-serialised JSON instead of the raw body bytes, so it does not verify what was actually sent"
+    },
+    {
+      "line": 14,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "signature is compared with != (not constant time); use timingSafeEqual"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "the event id is recorded only after markPaid finishes, so a parallel retry passes the check and pays twice"
+    }
+  ],
+  "benign": []
+}

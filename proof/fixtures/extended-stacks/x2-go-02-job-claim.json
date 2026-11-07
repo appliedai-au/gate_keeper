@@ -1,0 +1,82 @@
+{
+  "id": "x2-go-02-job-claim",
+  "title": "Go job worker",
+  "holdout": false,
+  "language": "go",
+  "filename": "worker/claim.go",
+  "context": "Several worker processes run Run against the same PostgreSQL database; each queued job must be claimed by exactly one worker. Retry must return the last error when every attempt fails.",
+  "code": [
+    "package worker",
+    "",
+    "import (",
+    "\t\"context\"",
+    "\t\"database/sql\"",
+    "\t\"errors\"",
+    "\t\"time\"",
+    ")",
+    "",
+    "func ClaimJob(ctx context.Context, db *sql.DB) (int64, error) {",
+    "\tvar id int64",
+    "\terr := db.QueryRowContext(ctx, `SELECT id FROM jobs WHERE status = 'queued' ORDER BY id LIMIT 1`).Scan(&id)",
+    "\tif errors.Is(err, sql.ErrNoRows) {",
+    "\t\treturn 0, nil",
+    "\t}",
+    "\tif err != nil {",
+    "\t\treturn 0, err",
+    "\t}",
+    "\t_, err = db.ExecContext(ctx, `UPDATE jobs SET status = 'running' WHERE id = $1`, id)",
+    "\treturn id, err",
+    "}",
+    "",
+    "func Run(db *sql.DB, process func(context.Context, int64)) {",
+    "\tfor {",
+    "\t\tctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)",
+    "\t\tid, err := ClaimJob(ctx, db)",
+    "\t\tif err != nil || id == 0 {",
+    "\t\t\ttime.Sleep(time.Second)",
+    "\t\t\tcontinue",
+    "\t\t}",
+    "\t\tprocess(ctx, id)",
+    "\t\tcancel()",
+    "\t}",
+    "}",
+    "",
+    "func Retry(f func() error) error {",
+    "\tvar err error",
+    "\tfor i := 0; i < 5; i++ {",
+    "\t\tif err = f(); err == nil {",
+    "\t\t\treturn nil",
+    "\t\t}",
+    "\t\ttime.Sleep(time.Duration(i+1) * 100 * time.Millisecond)",
+    "\t}",
+    "\treturn nil",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 12,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "select then update with no transaction or FOR UPDATE SKIP LOCKED, so two workers can claim the same job"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "resource-leak"
+      ],
+      "severity": "medium",
+      "why": "cancel is never called on this path, leaking the context and its timer"
+    },
+    {
+      "line": 44,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "returns nil after every attempt failed, hiding the last error"
+    }
+  ],
+  "benign": []
+}

@@ -1,0 +1,76 @@
+{
+  "id": "x1-bun-01-file-server",
+  "title": "Bun upload and file server",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/server.ts",
+  "context": "Adds a Bun file server. Uploads are limited to 5 MB and every file must stay inside /srv/uploads. Error responses must never expose internals such as stack traces.",
+  "code": [
+    "import { join } from \"node:path\";",
+    "",
+    "const UPLOAD_DIR = \"/srv/uploads\";",
+    "const MAX_BYTES = 5 * 1024 * 1024;",
+    "",
+    "Bun.serve({",
+    "  port: 3000,",
+    "  async fetch(req) {",
+    "    const url = new URL(req.url);",
+    "    if (req.method === \"POST\" && url.pathname === \"/upload\") {",
+    "      const form = await req.formData();",
+    "      const file = form.get(\"file\");",
+    "      if (!(file instanceof File)) return new Response(\"missing file\", { status: 400 });",
+    "      if (file.size > MAX_BYTES) return new Response(\"too large\", { status: 413 });",
+    "      const dest = join(UPLOAD_DIR, file.name);",
+    "      await Bun.write(dest, file);",
+    "      return Response.json({ path: dest });",
+    "    }",
+    "    if (req.method === \"GET\" && url.pathname.startsWith(\"/files/\")) {",
+    "      const name = decodeURIComponent(url.pathname.slice(\"/files/\".length));",
+    "      const f = Bun.file(join(UPLOAD_DIR, name));",
+    "      if (f.size > MAX_BYTES * 20) return new Response(\"too large\", { status: 413 });",
+    "      return new Response(f);",
+    "    }",
+    "    if (url.pathname === \"/health\") return new Response(\"ok\");",
+    "    return new Response(\"not found\", { status: 404 });",
+    "  },",
+    "  error(err) {",
+    "    return new Response(String(err.stack), { status: 500 });",
+    "  },",
+    "});"
+  ],
+  "expected": [
+    {
+      "line": 15,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "client-supplied file name is joined unsanitised, so ../ in the name writes outside the upload directory"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "decoded name containing ../ escapes the upload directory (path traversal on read)"
+    },
+    {
+      "line": 23,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the file's existence is never checked (await f.exists()), so a missing file gives an error instead of 404"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "stack trace is returned to the client, exposing internals"
+    }
+  ],
+  "benign": []
+}

@@ -1,0 +1,79 @@
+{
+  "id": "x1-ts-01-bookings",
+  "title": "TypeScript room bookings",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/bookings.ts",
+  "context": "Room bookings. A booking's end time is exclusive, so a booking may start exactly when another ends. Only bookings for the same room can clash. Dates come from user input and invalid dates must be rejected. sortByStart must not change the caller's array.",
+  "code": [
+    "export interface Booking {",
+    "  id: string;",
+    "  roomId: string;",
+    "  start: Date;",
+    "  end: Date;",
+    "}",
+    "",
+    "const bookings: Booking[] = [];",
+    "",
+    "export function overlaps(a: Booking, b: Booking): boolean {",
+    "  return a.start <= b.end && b.start <= a.end;",
+    "}",
+    "",
+    "export function book(b: Booking): boolean {",
+    "  if (b.end <= b.start) return false;",
+    "  const clash = bookings.find((x) => overlaps(x, b));",
+    "  if (clash) return false;",
+    "  bookings.push(b);",
+    "  return true;",
+    "}",
+    "",
+    "export function parseDate(s: string): Date {",
+    "  return new Date(s);",
+    "}",
+    "",
+    "export function nightsBetween(a: Date, b: Date): number {",
+    "  return Math.round((b.getTime() - a.getTime()) / 86_400_000);",
+    "}",
+    "",
+    "export function sortByStart(list: Booking[]): Booking[] {",
+    "  return list.sort((x, y) => x.start.getTime() - y.start.getTime());",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 11,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "end is exclusive, so back-to-back bookings (a.end equal to b.start) are wrongly treated as overlapping"
+    },
+    {
+      "line": 16,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "the clash check ignores roomId, so bookings in different rooms block each other"
+    },
+    {
+      "line": 23,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "invalid input gives an Invalid Date that is never rejected; NaN comparisons are false, so it passes every check"
+    },
+    {
+      "line": 31,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "sort works in place, so the caller's array is changed"
+    }
+  ],
+  "benign": [
+    27
+  ]
+}

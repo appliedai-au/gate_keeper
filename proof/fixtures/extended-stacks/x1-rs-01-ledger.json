@@ -1,0 +1,81 @@
+{
+  "id": "x1-rs-01-ledger",
+  "title": "Rust ledger",
+  "holdout": false,
+  "language": "rust",
+  "filename": "src/ledger.rs",
+  "context": "Loads balances from a CSV of name,amount lines; a name can appear on several lines and its amounts add up. A missing file must give an error, not a panic. Transfer amounts must be positive. Totals can exceed 2^31 cents.",
+  "code": [
+    "use std::collections::HashMap;",
+    "use std::fs::File;",
+    "use std::io::{BufRead, BufReader};",
+    "",
+    "pub struct Ledger {",
+    "    balances: HashMap<String, i64>,",
+    "}",
+    "",
+    "impl Ledger {",
+    "    pub fn load(path: &str) -> Result<Ledger, String> {",
+    "        let f = File::open(path).unwrap();",
+    "        let mut balances = HashMap::new();",
+    "        for line in BufReader::new(f).lines() {",
+    "            let line = line.map_err(|e| e.to_string())?;",
+    "            let mut parts = line.split(',');",
+    "            let name = parts.next().unwrap_or(\"\").to_string();",
+    "            let amount: i64 = parts.next().unwrap_or(\"0\").trim().parse().map_err(|_| \"bad amount\".to_string())?;",
+    "            balances.insert(name, amount);",
+    "        }",
+    "        Ok(Ledger { balances })",
+    "    }",
+    "",
+    "    pub fn transfer(&mut self, from: &str, to: &str, amount: i64) -> Result<(), String> {",
+    "        let available = self.balances.get(from).copied().unwrap_or(0);",
+    "        if available < amount {",
+    "            return Err(\"insufficient funds\".into());",
+    "        }",
+    "        *self.balances.entry(from.to_string()).or_insert(0) -= amount;",
+    "        *self.balances.entry(to.to_string()).or_insert(0) += amount;",
+    "        Ok(())",
+    "    }",
+    "",
+    "    pub fn total(&self) -> i32 {",
+    "        self.balances.values().sum::<i64>() as i32",
+    "    }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 11,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "unwrap panics when the file is missing instead of returning an error"
+    },
+    {
+      "line": 18,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "insert overwrites earlier lines for the same name; amounts must be added"
+    },
+    {
+      "line": 25,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "a negative amount is never rejected, so a transfer can move money the other way"
+    },
+    {
+      "line": 34,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "casting the sum to i32 truncates totals above 2^31"
+    }
+  ],
+  "benign": []
+}

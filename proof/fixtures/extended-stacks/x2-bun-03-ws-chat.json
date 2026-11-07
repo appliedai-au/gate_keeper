@@ -1,0 +1,73 @@
+{
+  "id": "x2-bun-03-ws-chat",
+  "title": "Bun WebSocket chat rooms",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/chat.ts",
+  "context": "Chat rooms over Bun WebSockets. Clients render each message as HTML. The display name must come from the signed `session` cookie (verifySession returns the name or null), never from the URL.",
+  "code": [
+    "import type { ServerWebSocket } from \"bun\";",
+    "import { verifySession } from \"./session\";",
+    "",
+    "type Client = { name: string; room: string };",
+    "const rooms = new Map<string, Set<ServerWebSocket<Client>>>();",
+    "const MAX_MESSAGE = 2000;",
+    "",
+    "Bun.serve<Client>({",
+    "  port: 4000,",
+    "  fetch(req, server) {",
+    "    const url = new URL(req.url);",
+    "    const name = url.searchParams.get(\"name\") ?? \"anon\";",
+    "    const room = url.searchParams.get(\"room\") ?? \"lobby\";",
+    "    if (server.upgrade(req, { data: { name, room } })) return;",
+    "    return new Response(\"upgrade required\", { status: 426 });",
+    "  },",
+    "  websocket: {",
+    "    open(ws) {",
+    "      let set = rooms.get(ws.data.room);",
+    "      if (!set) {",
+    "        set = new Set();",
+    "        rooms.set(ws.data.room, set);",
+    "      }",
+    "      set.add(ws);",
+    "    },",
+    "    message(ws, msg) {",
+    "      const text = String(msg);",
+    "      if (text.length > MAX_MESSAGE) return;",
+    "      const out = `<b>${ws.data.name}</b>: ${text}`;",
+    "      for (const peer of rooms.get(ws.data.room)!) peer.send(out);",
+    "    },",
+    "    close(ws) {",
+    "      rooms.get(ws.data.room);",
+    "    },",
+    "  },",
+    "});"
+  ],
+  "expected": [
+    {
+      "line": 12,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "display name is taken from the URL instead of the signed session cookie, so anyone can impersonate another user"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "name and text are inserted into HTML unescaped and clients render it, so any user can inject script (XSS)"
+    },
+    {
+      "line": 33,
+      "categories": [
+        "resource-leak"
+      ],
+      "severity": "medium",
+      "why": "closed sockets are never removed from the room set, so sends go to dead sockets and memory grows"
+    }
+  ],
+  "benign": []
+}

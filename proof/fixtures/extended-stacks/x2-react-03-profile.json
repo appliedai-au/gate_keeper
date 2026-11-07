@@ -1,0 +1,73 @@
+{
+  "id": "x2-react-03-profile",
+  "title": "React user profile page",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/UserProfile.tsx",
+  "context": "Shows a user's profile. The API returns 200 with the user, 401 when signed out, and 404 or 500 with {error}. website is entered by the user. joined is a Unix timestamp in milliseconds.",
+  "code": [
+    "import { useEffect, useState } from \"react\";",
+    "import { redirectToLogin } from \"./auth\";",
+    "",
+    "export function UserProfile({ id }: { id: string }) {",
+    "  const [user, setUser] = useState<any>(null);",
+    "  const [error, setError] = useState<string | null>(null);",
+    "",
+    "  useEffect(() => {",
+    "    async function load() {",
+    "      const r = await fetch(`/api/users/${encodeURIComponent(id)}`);",
+    "      if (r.status === 401) return redirectToLogin();",
+    "      const data = await r.json();",
+    "      setUser(data);",
+    "    }",
+    "    load().catch((e) => setError(e.message));",
+    "  }, [id]);",
+    "",
+    "  if (error) return <p>{error}</p>;",
+    "  if (!user) return <p>Loading…</p>;",
+    "  return (",
+    "    <div>",
+    "      <h1>{user.name}</h1>",
+    "      <a href={user.website}>Website</a>",
+    "      <p>{user.bio}</p>",
+    "      <p>Joined {new Date(user.joined * 1000).toLocaleDateString()}</p>",
+    "    </div>",
+    "  );",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 12,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "other error statuses are not checked, so a 404/500 {error} body is shown as the profile"
+    },
+    {
+      "line": 16,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "no cleanup or abort, so a slow response for a previous id can overwrite the current profile"
+    },
+    {
+      "line": 23,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "user-entered URL in href allows javascript: links (XSS)"
+    },
+    {
+      "line": 25,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "joined is already in milliseconds; multiplying by 1000 gives a date far in the future"
+    }
+  ],
+  "benign": []
+}

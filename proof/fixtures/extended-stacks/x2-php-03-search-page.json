@@ -1,0 +1,53 @@
+{
+  "id": "x2-php-03-search-page",
+  "title": "PHP product search page",
+  "holdout": false,
+  "language": "php",
+  "filename": "public/search.php",
+  "context": "Product search page. The query string q is shown back to the user in the page. Results are paged with 20 per page; page is 1-based and must be a positive integer.",
+  "code": [
+    "<?php",
+    "require __DIR__ . '/../bootstrap.php';",
+    "",
+    "$q = $_GET['q'] ?? '';",
+    "$page = $_GET['page'] ?? 1;",
+    "$offset = ($page - 1) * 20;",
+    "",
+    "$sql = \"SELECT id, name, price FROM products WHERE name LIKE '%$q%' LIMIT 20 OFFSET $offset\";",
+    "$rows = $db->query($sql)->fetchAll(PDO::FETCH_ASSOC);",
+    "?>",
+    "<h1>Results for <?= $q ?></h1>",
+    "<ul>",
+    "<?php foreach ($rows as $row): ?>",
+    "  <li><?= htmlspecialchars($row['name']) ?> — <?= number_format($row['price'] / 100, 2) ?></li>",
+    "<?php endforeach; ?>",
+    "</ul>"
+  ],
+  "expected": [
+    {
+      "line": 6,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "page is never validated as a positive integer, so \"0\", \"-5\" or \"abc\" give negative or broken offsets"
+    },
+    {
+      "line": 8,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "q and offset are interpolated into the SQL (injection); use bound parameters"
+    },
+    {
+      "line": 11,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "q is echoed without htmlspecialchars (reflected XSS)"
+    }
+  ],
+  "benign": []
+}

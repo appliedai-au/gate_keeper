@@ -1,0 +1,67 @@
+{
+  "id": "x1-react-02-cart-hook",
+  "title": "React cart hook",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/useCart.ts",
+  "context": "Shopping cart hook. The cart is saved to localStorage and a saved cart must be restored when the page loads. Prices are integer cents.",
+  "code": [
+    "import { useEffect, useMemo, useState } from \"react\";",
+    "",
+    "type Item = { sku: string; price: number; qty: number };",
+    "",
+    "export function useCart(initial: Item[]) {",
+    "  const [items, setItems] = useState(initial);",
+    "",
+    "  useEffect(() => {",
+    "    localStorage.setItem(\"cart\", JSON.stringify(items));",
+    "  }, [items]);",
+    "",
+    "  useEffect(() => {",
+    "    const saved = localStorage.getItem(\"cart\");",
+    "    if (saved) setItems(JSON.parse(saved));",
+    "  }, []);",
+    "",
+    "  function add(sku: string, price: number) {",
+    "    const found = items.find((i) => i.sku === sku);",
+    "    if (found) {",
+    "      found.qty += 1;",
+    "      setItems(items);",
+    "    } else {",
+    "      setItems([...items, { sku, price, qty: 1 }]);",
+    "    }",
+    "  }",
+    "",
+    "  const total = useMemo(() => items.reduce((sum, i) => sum + i.price * i.qty, 0), []);",
+    "",
+    "  return { items, add, total };",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 13,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "the save effect runs first on mount and overwrites the stored cart with initial, so the saved cart is never restored"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "state is mutated in place and the same array is set again, so React does not re-render"
+    },
+    {
+      "line": 27,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "empty dependency list: total is computed once and never updates when items change"
+    }
+  ],
+  "benign": []
+}

@@ -1,0 +1,77 @@
+{
+  "id": "x1-elysia-01-jwt-api",
+  "title": "Elysia JWT notes API",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/app.ts",
+  "context": "Elysia API with JWT auth. JWT_SECRET is always set in production and the service must refuse to start without it. Routes under /admin are only for tokens whose payload has role \"admin\". Notes are at most 10,000 characters. Unauthenticated requests must get 401.",
+  "code": [
+    "import { Elysia, t } from \"elysia\";",
+    "import { jwt } from \"@elysiajs/jwt\";",
+    "import { listAllUsers, saveNote } from \"./store\";",
+    "",
+    "const app = new Elysia()",
+    "  .use(jwt({ name: \"jwt\", secret: process.env.JWT_SECRET ?? \"dev-secret\" }))",
+    "  .derive(async ({ jwt, headers }) => {",
+    "    const auth = headers[\"authorization\"] ?? \"\";",
+    "    const token = auth.replace(\"Bearer \", \"\");",
+    "    const user = await jwt.verify(token);",
+    "    return { user };",
+    "  })",
+    "  .get(\"/me\", ({ user, set }) => {",
+    "    if (!user) {",
+    "      set.status = 401;",
+    "      return \"unauthorized\";",
+    "    }",
+    "    return user;",
+    "  })",
+    "  .get(\"/admin/users\", ({ user, set }) => {",
+    "    if (!user) {",
+    "      set.status = 401;",
+    "      return \"unauthorized\";",
+    "    }",
+    "    return listAllUsers();",
+    "  })",
+    "  .post(\"/notes\", ({ body, user }) => saveNote(user.id, body.text), {",
+    "    body: t.Object({",
+    "      text: t.String(),",
+    "    }),",
+    "  })",
+    "  .listen(3000);"
+  ],
+  "expected": [
+    {
+      "line": 6,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "falls back to a hard-coded secret when JWT_SECRET is missing, so tokens can be forged instead of the service refusing to start"
+    },
+    {
+      "line": 25,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "any signed-in user reaches the admin list; the token's role is never checked"
+    },
+    {
+      "line": 27,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "user is false when verification fails and is dereferenced, so unauthenticated requests crash with 500 instead of 401"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "no maxLength on text although notes are capped at 10,000 characters"
+    }
+  ],
+  "benign": []
+}

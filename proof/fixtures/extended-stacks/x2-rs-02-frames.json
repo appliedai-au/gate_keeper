@@ -1,0 +1,73 @@
+{
+  "id": "x2-rs-02-frames",
+  "title": "Rust frame parsing",
+  "holdout": false,
+  "language": "rust",
+  "filename": "src/frames.rs",
+  "context": "Parses frames read from the network: 1 byte kind, 2 bytes big-endian length, then the payload. Input may be short or malformed and must never panic. avg is called with possibly empty slices.",
+  "code": [
+    "use std::sync::{Arc, Mutex};",
+    "use std::thread;",
+    "",
+    "pub fn parse_header(buf: &[u8]) -> (u8, u16) {",
+    "    let kind = buf[0];",
+    "    let len = u16::from_be_bytes([buf[1], buf[2]]);",
+    "    (kind, len)",
+    "}",
+    "",
+    "pub fn payload(buf: &[u8]) -> &[u8] {",
+    "    let (_, len) = parse_header(buf);",
+    "    &buf[3..3 + len as usize]",
+    "}",
+    "",
+    "pub fn count_words(texts: Vec<String>) -> usize {",
+    "    let total = Arc::new(Mutex::new(0));",
+    "    let mut handles = vec![];",
+    "    for t in texts {",
+    "        let total = Arc::clone(&total);",
+    "        handles.push(thread::spawn(move || {",
+    "            let n = t.split_whitespace().count();",
+    "            *total.lock().unwrap() += n;",
+    "        }));",
+    "    }",
+    "    for h in handles {",
+    "        h.join().unwrap();",
+    "    }",
+    "    let n = *total.lock().unwrap();",
+    "    n",
+    "}",
+    "",
+    "pub fn avg(xs: &[u32]) -> u32 {",
+    "    xs.iter().sum::<u32>() / xs.len() as u32",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 6,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "indexes buf[0..3] without checking the length, so short network input panics"
+    },
+    {
+      "line": 12,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "the declared length is never checked against the buffer, so a malformed frame panics"
+    },
+    {
+      "line": 33,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "an empty slice divides by zero and panics"
+    }
+  ],
+  "benign": [
+    22
+  ]
+}

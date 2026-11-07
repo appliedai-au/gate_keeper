@@ -411,7 +411,8 @@ async function improve() {
     return Number.isInteger(l) ? { start: l, end: e, comment: String(x?.comment || [x?.title, x?.why].filter(Boolean).join(": ")).slice(0, 200) } : null; }).filter(Boolean) ?? null : null;
   const merge = (fs) => { if (!fs) return null; const out = []; for (const f of [...fs].sort((a, b) => a.start - b.start)) { if (out.length && f.start - out[out.length - 1].start <= 1) continue; out.push(f); } return out; };
   const codeOf = (t) => { const m = new Map(); for (const x of t.prompts.gate_keeper.matchAll(/^\s*(\d+) \| ?(.*)$/gm)) m.set(+x[1], x[2].trim()); return m; };
-  const isFit = (t) => !t.id.startsWith("t6-");
+  // Check split: task ids matching GK3_CHECK_RE (default: tranche 6). Everything else is the fit split.
+  const CHECK_RE = new RegExp(process.env.GK3_CHECK_RE || "^t6-"), isFit = (t) => !CHECK_RE.test(t.id);
   async function evalRules(tag, sys, focused = false) {
     const q = []; for (let trial = 1; trial <= TRIALS; trial++) for (const task of P.tasks) q.push({ trial, task });
     const res = { tag, fit: 0, val: 0, caught: 0, fa: 0, cost: 0, sec: 0, n: 0, unparsed: 0, misses: [], fas: [], rows: [] };
@@ -532,7 +533,8 @@ Do not propose a rule that repeats one already listed. Reply with only this JSON
     return;
   }
   for (let r = 1; r <= ROUNDS; r++) {
-    const ms = tally(best.misses).slice(0, 14), fs = tally(best.fas).slice(0, 10);
+    // The improver sees fit-split evidence only, so the check split stays unseen.
+    const fitOnly = new Set(P.tasks.filter(isFit).map((t) => t.id)), ms = tally(best.misses.filter((m) => fitOnly.has(m.task))).slice(0, 14), fs = tally(best.fas.filter((f) => fitOnly.has(f.task))).slice(0, 10);
     const ask = "Current instructions:\n" + rules + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n") +
       "\n\nFalse alarms:\n" + fs.map((f) => `- [${f.n}x] line ${f.line}: \`${f.code}\` — reviewer said: ${f.comment}`).join("\n") + (rejected.length ? "\n\nRules already tried that did not help (do not propose these again):\n" + rejected.map((x) => "- " + x).join("\n") : "");
     const rr = await turn(`i/improve-r${r}`, IMPROVER, ask, GM);
@@ -541,7 +543,7 @@ Do not propose a rule that repeats one already listed. Reply with only this JSON
     const candRules = withRules([...learned, ...nr]);
     const c = await evalRules(BAGMODE ? `round ${"BCDEFG"[r - 1]}` : `r${r}`, candRules);
     const ok = c.net - best.net >= GAIN && c.fitNet >= best.fitNet && c.checkNet >= best.checkNet;
-    console.log("GK3_IMPROVE " + JSON.stringify({ round: r, rules: nr, why: (() => { try { return JSON.parse(rr.text.slice(rr.text.indexOf("{"), rr.text.lastIndexOf("}") + 1)).why; } catch { return null; } })(), base: { net: best.net, caught: best.caught, fa: best.fa, fit: best.fitNet, check: best.checkNet }, cand: { net: c.net, caught: c.caught, fa: c.fa, fit: c.fitNet, check: c.checkNet }, delta: { net: c.net - best.net, caught: c.caught - best.caught, falseAlarms: c.fa - best.fa, fit: c.fitNet - best.fitNet, check: c.checkNet - best.checkNet }, accepted: ok }));
+    console.log("GK3_IMPROVE " + JSON.stringify({ round: r, rules: nr, why: (() => { try { return JSON.parse(rr.text.slice(rr.text.indexOf("{"), rr.text.lastIndexOf("}") + 1)).why; } catch { return null; } })(), base: { net: best.net, caught: best.caught, fa: best.fa, fit: best.fitNet, check: best.checkNet }, cand: { net: c.net, caught: c.caught, fa: c.fa, fit: c.fitNet, check: c.checkNet }, delta: { net: c.net - best.net, caught: c.caught - best.caught, falseAlarms: c.fa - best.fa, fit: c.fitNet - best.fitNet, check: c.checkNet - best.checkNet }, fitTest: paired(best, c, true), checkTest: paired(best, c, false), accepted: ok }));
     if (ok) { rules = candRules; learned = [...learned, ...nr]; best = c; } else rejected.push(...nr);
   }
   console.log("GK3_RULES " + JSON.stringify({ learned, sha256: createHash("sha256").update(rules).digest("hex") }));

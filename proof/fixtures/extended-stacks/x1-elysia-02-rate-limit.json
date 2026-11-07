@@ -1,0 +1,80 @@
+{
+  "id": "x1-elysia-02-rate-limit",
+  "title": "Elysia rate limit and product cache",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/plugins.ts",
+  "context": "Elysia plugins. The rate limit allows 100 requests per IP per minute. There is no proxy in front of the service; the client IP comes from server.requestIP(request). Product prices change every hour.",
+  "code": [
+    "import { Elysia } from \"elysia\";",
+    "import { fetchProduct } from \"./catalog\";",
+    "",
+    "const hits = new Map<string, { count: number; reset: number }>();",
+    "const LIMIT = 100;",
+    "const WINDOW_MS = 60_000;",
+    "",
+    "export const rateLimit = new Elysia({ name: \"rate-limit\" })",
+    "  .onBeforeHandle({ as: \"global\" }, ({ request, set }) => {",
+    "    const ip = request.headers.get(\"x-forwarded-for\") ?? \"unknown\";",
+    "    const now = Date.now();",
+    "    const entry = hits.get(ip);",
+    "    if (!entry || entry.reset < now) {",
+    "      hits.set(ip, { count: 1, reset: now + WINDOW_MS });",
+    "      return;",
+    "    }",
+    "    entry.count++;",
+    "    if (entry.count >= LIMIT) {",
+    "      set.status = 429;",
+    "      set.headers[\"retry-after\"] = String(entry.reset - now);",
+    "      return \"too many requests\";",
+    "    }",
+    "  });",
+    "",
+    "const cache = new Map<string, unknown>();",
+    "",
+    "export const products = new Elysia({ name: \"products\" })",
+    "  .get(\"/products/:id\", async ({ params }) => {",
+    "    if (cache.has(params.id)) return cache.get(params.id);",
+    "    const p = await fetchProduct(params.id);",
+    "    cache.set(params.id, p);",
+    "    return p;",
+    "  });"
+  ],
+  "expected": [
+    {
+      "line": 10,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "trusts the client-supplied X-Forwarded-For header, so a client can change it on every request to bypass the limit"
+    },
+    {
+      "line": 18,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": ">= blocks the 100th request; the limit allows 100 per window, so the check must be > LIMIT"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "Retry-After is in seconds, but this sends milliseconds"
+    },
+    {
+      "line": 31,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "cache entries never expire, so hourly price changes are never seen (and the map grows without bound)"
+    }
+  ],
+  "benign": [
+    14
+  ]
+}
