@@ -1,0 +1,36 @@
+{
+  "model": "gk-allmodels/deepseek-v4-flash-0731",
+  "base": "2e4569f7fbd81b3f6c973e6391fc7032212330ae5b586832a63f2aed1b3950cc",
+  "base_file": "gate-keeper-v13.1-core.md",
+  "learned": {
+    "commit": "ef4930edbaef70a8249a13a743054516ee2e75b2",
+    "railway_deployment": "5de9f047-f990-4861-b7b7-2c30a34a3620",
+    "payload": "train-lang-packs-v13.1.b64",
+    "strict": true,
+    "trials": 2,
+    "rounds": 2,
+    "min_gain": 2,
+    "frozen": "2026-11-07T11:40Z"
+  },
+  "packs": {
+    "bun": [],
+    "elysia": [
+      "Catch: Elysia plugin hooks (onBeforeHandle or derive) without `{ as: 'scoped' }` that guard routes registered on the parent, since the hook never runs for them.",
+      "Catch: SQLite LIKE patterns that escape wildcards with backslash but omit the ESCAPE clause, since the backslash does nothing and wildcards still match."
+    ],
+    "erlang": [],
+    "go": [
+      "Catch: an opened file, HTTP response body, multipart file, or database rows that is never closed on any path, leaking a handle or connection."
+    ],
+    "node": [
+      "Catch: jwt.sign calls that omit an expiresIn/exp option, issuing tokens that never expire and stay valid indefinitely."
+    ],
+    "php": [],
+    "python": [],
+    "react": [],
+    "rust": [
+      "Do not flag: a transfer that never rejects a negative amount — the caller contract may guarantee non-negative amounts, so only the available < amount guard is needed."
+    ],
+    "ts": []
+  }
+}
