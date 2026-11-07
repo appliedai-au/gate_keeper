@@ -6,6 +6,10 @@ import controls from "../data/controlProfiles.json";
 // stored rows and revision checks. This never starts model inference.
 const defaults = controls.defaults;
 const levels = controls.levels;
+const validControls = (value) => value && typeof value === "object" && !Array.isArray(value) &&
+  Object.keys(value).length === Object.keys(defaults).length &&
+  typeof value.adversarialReview === "boolean" && typeof value.gateEnabled === "boolean" &&
+  Number.isInteger(value.vModelLevel) && value.vModelLevel >= 0 && value.vModelLevel <= 3;
 export default function GateKeeperControlSettings({ functionName = "gatekeeperControls" }) {
   const [state, setState] = useState({
     ready: false, saving: false, error: "", notice: "",
@@ -16,8 +20,8 @@ export default function GateKeeperControlSettings({ functionName = "gatekeeperCo
     try {
       const response = await base44.functions.invoke(functionName, { action: "load" });
       const data = response?.data;
-      if (data?.status !== "draft_only" || !data.controls ||
-          !Number.isSafeInteger(data.revision)) throw new Error("invalid_response");
+      if (data?.status !== "draft_only" || !validControls(data.controls) ||
+          !Number.isSafeInteger(data.revision) || data.revision < 0) throw new Error("invalid_response");
       setState({
         ready: true, saving: false, error: "", notice: "Owner draft loaded. Runtime remains unchanged.",
         revision: data.revision, current: data.controls, form: { ...data.controls },
@@ -41,19 +45,28 @@ export default function GateKeeperControlSettings({ functionName = "gatekeeperCo
   );
   const save = async () => {
     if (!state.ready || state.saving || !dirty) return;
+    // patch() replaces the form object. Keep this submission's identity so an
+    // acknowledgement cannot overwrite edits made while the request is pending.
+    const submittedForm = state.form;
     setState((s) => ({ ...s, saving: true, error: "", notice: "" }));
     try {
       const response = await base44.functions.invoke(functionName, {
-        action: "save", controls: state.form, expectedRevision: state.revision,
+        action: "save", controls: { ...submittedForm }, expectedRevision: state.revision,
       });
       const data = response?.data;
-      if (data?.status !== "saved_draft_not_applied" || !Number.isSafeInteger(data.revision))
+      if (data?.status !== "saved_draft_not_applied" || !validControls(data.controls) ||
+          !Number.isSafeInteger(data.revision) || data.revision !== state.revision + 1)
         throw new Error("not_saved");
-      setState((s) => ({
-        ...s, ready: true, saving: false, revision: data.revision,
-        current: { ...data.controls }, form: { ...data.controls },
-        notice: "Draft saved. No change to the live TrueForge agent, sandbox or billing.",
-      }));
+      setState((s) => {
+        const form = s.form === submittedForm ? { ...data.controls } : s.form;
+        const unsaved = Object.keys(defaults).some((key) => form[key] !== data.controls[key]);
+        return {
+          ...s, ready: true, saving: false, revision: data.revision,
+          current: { ...data.controls }, form,
+          notice: unsaved ? "Submitted draft saved. Newer edits are still unsaved; no live settings changed." :
+            "Draft saved. No change to the live TrueForge agent, sandbox or billing.",
+        };
+      });
     } catch (error) {
       const code = error?.response?.status;
       setState((s) => ({
