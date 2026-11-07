@@ -464,6 +464,55 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     console.log("GK3_GATED " + JSON.stringify({ base: { net: best.net, caught: best.caught, fa: best.fa, fit: best.fitNet, check: best.checkNet }, gated: { net: g.net, caught: g.caught, fa: g.fa, fit: g.fitNet, check: g.checkNet }, fit: paired(best, g, true), check: paired(best, g, false), fired: fired.length, of: P.tasks.length, firedOn: fired }));
   }
   const fq = BAGMODE ? { net: null } : await evalRules("v12 focused x3", rules, true);
+  // GK3_SELF_GATED=1: Gate Keeper writes its own trigger-gated rules. Each round the improver proposes up to 4 single
+  // rules, each with a line regex (its trigger) and the rule text. Code checks every candidate before any model call:
+  // the regex must compile, must fire on the line (±1) of at least one missed bug, and may fire on at most GK3_MAX_FIRE
+  // training tasks. Survivors are scored gated (the rule appears only where its trigger fires; other reviews are the
+  // cached base). The best survivor is kept if net rises by GAIN or more and neither split gets worse.
+  if (BAGMODE && process.env.GK3_SELF_GATED) {
+    const MAXF = Number(process.env.GK3_MAX_FIRE || "5"), lineOf = (t) => codeOf(t);
+    const SELF = `You maintain an automated code reviewer. It already has general instructions. You add LEARNED RULES, and each learned rule is shown to the reviewer ONLY on code where its trigger regex matches a line, so a rule cannot cause false alarms elsewhere.
+You get the planted bugs it missed (code line and why it is a bug) and its false alarms (code line and what it wrongly said).
+Propose up to 4 candidates, each aimed at a different kind of miss. Each has:
+- "trigger": a JavaScript regex source (no slashes, case-insensitive) that matches the kind of code line where this defect lives: API names, operators, keywords. It must be generic: no variable, function, file or product names from the examples. It should match the missed line and as few other lines as possible.
+- "rule": one sentence, at most 50 words, in the form "When <pattern>, check <what>; flag only if you can quote <evidence>; not when <exception>." Take the exception from the false alarms where you can.
+Do not propose a rule that repeats one already listed. Reply with only this JSON: {"candidates":[{"trigger":"...","rule":"..."}],"why":"<= 30 words"}`;
+    let gated = [], gbest = best;
+    for (let r = 1; r <= ROUNDS; r++) {
+      // Evidence comes from the fit split only, so the check split stays unseen by the rule writer.
+      const fitIds = new Set(P.tasks.filter(isFit).map((t) => t.id)), ms = tally(gbest.misses.filter((m) => fitIds.has(m.task))).slice(0, 16), fs = tally(gbest.fas.filter((f) => fitIds.has(f.task))).slice(0, 12);
+      const ask = "Learned rules so far:\n" + (gated.length ? gated.map((g) => `- [${g.trigger.source}] ${g.rule}`).join("\n") : "(none)") +
+        "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] \`${m.code}\` — ${m.why}`).join("\n") +
+        "\n\nFalse alarms:\n" + fs.map((f) => `- [${f.n}x] \`${f.code}\` — reviewer said: ${f.comment}`).join("\n") +
+        (rejected.length ? "\n\nCandidates already tried that did not help (do not propose again):\n" + rejected.map((x) => "- " + x).join("\n") : "");
+      const rr = await turn(`i/self-gated-r${r}`, SELF, ask, GM);
+      const raw = (jsonFindings(rr.text, "candidates") || []).slice(0, 4), checked = [];
+      for (const [i, c] of raw.entries()) {
+        let re = null, why = null;
+        try { if (typeof c?.trigger !== "string" || typeof c?.rule !== "string" || c.trigger.length > 200 || c.rule.length < 20) throw new Error("bad shape"); re = new RegExp(c.trigger, "i"); } catch (e) { why = "invalid: " + e.message; }
+        let fired = 0, hits = 0;
+        if (re) { for (const t of P.tasks) { const code = lineOf(t), on = [...code].filter(([, x]) => re.test(x)).map(([n]) => n); if (on.length) fired++; for (const m of ms) if (m.task === t.id && on.some((n) => Math.abs(n - m.line) <= 1)) hits++; }
+          if (!why && gated.some((g) => g.trigger.source === re.source)) why = "same trigger as a kept rule";
+          if (!why && hits === 0) why = "fires on no missed bug"; if (!why && fired > MAXF) why = `fires on ${fired} tasks (max ${MAXF})`; }
+        const cand = { id: `L${r}${"abcd"[i]}`, trigger: re, rule: String(c?.rule || "").trim().slice(0, 400), fired, hits };
+        console.log("GK3_CAND " + JSON.stringify({ round: r, id: cand.id, trigger: c?.trigger, rule: cand.rule, fired, missHits: hits, rejectedByCode: why }));
+        if (why) rejected.push(`[${c?.trigger}] ${cand.rule}`); else checked.push(cand);
+      }
+      let pick = null;
+      for (const c of checked) {
+        const e = await evalRules(`self r${r} ${c.id}`, [...gated, c]);
+        const ok = e.net - gbest.net >= GAIN && e.fitNet >= gbest.fitNet && e.checkNet >= gbest.checkNet;
+        console.log("GK3_SELF " + JSON.stringify({ round: r, id: c.id, rule: c.rule, trigger: c.trigger.source, base: { net: gbest.net, caught: gbest.caught, fa: gbest.fa, fit: gbest.fitNet, check: gbest.checkNet }, cand: { net: e.net, caught: e.caught, fa: e.fa, fit: e.fitNet, check: e.checkNet }, fitTest: paired(gbest, e, true), checkTest: paired(gbest, e, false), ok }));
+        if (ok && (!pick || e.net > pick.e.net)) pick = { c, e }; else if (!ok) rejected.push(`[${c.trigger.source}] ${c.rule}`);
+      }
+      if (pick) { gated = [...gated, pick.c]; gbest = pick.e; }
+      console.log("GK3_SELF_ROUND " + JSON.stringify({ round: r, candidates: raw.length, passedCode: checked.length, kept: pick ? pick.c.id : null, net: gbest.net, caught: gbest.caught, fa: gbest.fa }));
+    }
+    const out = gated.map((g) => ({ id: g.id, trigger: g.trigger.source, rule: g.rule }));
+    console.log("GK3_LEARNED_GATED " + JSON.stringify({ rules: out, sha256: createHash("sha256").update(JSON.stringify(out)).digest("hex"), start: { net: best.net, caught: best.caught, fa: best.fa }, end: { net: gbest.net, caught: gbest.caught, fa: gbest.fa }, fitTest: paired(best, gbest, true), checkTest: paired(best, gbest, false) }));
+    console.log("GK3_SUMMARY " + JSON.stringify({ calls, spentUsd: Math.round(spent * 1e6) / 1e6, best: { net: gbest.net, caught: gbest.caught, fa: gbest.fa }, learned: out }));
+    return;
+  }
   for (let r = 1; r <= ROUNDS; r++) {
     const ms = tally(best.misses).slice(0, 14), fs = tally(best.fas).slice(0, 10);
     const ask = "Current instructions:\n" + rules + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n") +
