@@ -512,7 +512,11 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
       const PK = JSON.parse(process.env.GK3_PACK_JSON || "null"), bsha = createHash("sha256").update(BASE).digest("hex");
       if (!PK || PK.model !== GM || PK.base !== bsha) { console.error("GK3_PACK_MODEL_MISMATCH " + JSON.stringify({ runModel: GM, packModel: PK?.model ?? null, runBase: bsha, packBase: PK?.base ?? null })); process.exit(2); }
       const all = new Map(best.rows.map((r) => [r.k, r])), per = {}, every = [...new Set(ST.values())].sort();
-      for (const s of every) { const rules = PK.packs[s] || [], only = new Set(of(s).map((t) => t.id)), r1 = on(best.rows, s);
+      // GK3_PACK_CONTROL=1 (negative control): each language gets the next language's pack instead of its own, same model.
+      const named = Object.keys(PK.packs).filter((k) => PK.packs[k].length).sort(), CTRL = !!process.env.GK3_PACK_CONTROL;
+      const packFor = (s) => { if (!CTRL) return PK.packs[s] || []; const o = named[(named.indexOf(s) + 1) % named.length]; return o && o !== s ? PK.packs[o] : []; };
+      console.log("GK3_PACK_EVAL " + JSON.stringify({ model: GM, base: bsha, control: CTRL }));
+      for (const s of every) { const rules = packFor(s), only = new Set(of(s).map((t) => t.id)), r1 = on(best.rows, s);
         let r2 = r1; if (rules.length) { const e = await evalRules(`run2 ${s}`, withPack(s, rules), false, only); r2 = e.rows; for (const x of r2) all.set(x.k, x); }
         const cxr = on(cx.rows, s); per[s] = { tasks: only.size, rules: rules.length, run1: sum(r1), run2: sum(r2), codex: cx.rows.length ? sum(cxr) : null, run2VsRun1: pairedRows(r1, r2), run2VsCodex: cx.rows.length ? pairedRows(cxr, r2) : null };
         console.log("GK3_RUN2 " + JSON.stringify({ stack: s, ...per[s] })); }
