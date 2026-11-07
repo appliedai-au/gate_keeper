@@ -9,6 +9,10 @@ const CAP = Number(process.env.GK3_CAP_USD || "0.5"), TRIALS = Number(process.en
 const ARMS = (process.env.GK3_ARMS || "codex,qodo,gate_keeper").split(",");
 const CONC = Number(process.env.GK3_CONCURRENCY || "3");
 const P = JSON.parse(gunzipSync(Buffer.from(process.env.GK3_PAYLOAD_B64, "base64")).toString("utf8"));
+// GK3_GK_SYSTEM (set by the launcher from a prompt file at the pinned commit): replaces Gate Keeper's system prompt only.
+// Codex and Qodo prompts are untouched. The override's hash is logged so every run names the exact prompt it used.
+if (process.env.GK3_GK_SYSTEM) { P.agents.gate_keeper.system = process.env.GK3_GK_SYSTEM; P.sha256 = { ...(P.sha256 || {}), gate_keeper: createHash("sha256").update(process.env.GK3_GK_SYSTEM).digest("hex") };
+  console.log("GK3_GK_OVERRIDE " + JSON.stringify({ file: process.env.GK3_GK_FILE || null, sha256: P.sha256.gate_keeper, chars: process.env.GK3_GK_SYSTEM.length })); }
 const tf = new TrueForge({ baseUrl: process.env.TRUEFORGE_BASE_URL, token: process.env.TRUEFORGE_TOKEN, timeoutInSeconds: 60 });
 let spent = 0, reserved = 0, calls = 0;
 // Same for every agent. Reviews are non-interactive: no one can answer TrueForge's built-in ask_user_question
@@ -396,7 +400,10 @@ async function improve() {
   const GM = MODEL_B || MODEL, ROUNDS = Number(process.env.GK3_ROUNDS || "3"), GAIN = Number(process.env.GK3_MIN_GAIN ?? "1");
   const FOCUS = ["untrusted input (pass 2) and identity and access (pass 3)", "state and concurrency (pass 4) and failure paths (pass 5)", "boundaries (pass 1) and semantics (pass 6)"]
     .map((x) => `\n\nThis pass: hunt only ${x}, plus any rule stated in the context that the code breaks. Other defect types are covered by other passes; leave them out.`);
-  const toSpans = (r) => r.status === "done" ? (jsonFindings(r.text) || null)?.map((x) => { const l = Number(x?.line); return Number.isInteger(l) ? { start: l, end: l, comment: String(x?.comment || "").slice(0, 200) } : null; }).filter(Boolean) ?? null : null;
+  // Accepts both output shapes: v12's {line, comment} and v13's {code_location.line_range, title, why}.
+  const toSpans = (r) => r.status === "done" ? (jsonFindings(r.text) || null)?.map((x) => { const lr = x?.code_location?.line_range, l = Number(lr && Number.isInteger(lr.start) ? lr.start : x?.line);
+    const e = lr && Number.isInteger(lr.end) && lr.end >= l && lr.end - l <= 10 ? lr.end : l;
+    return Number.isInteger(l) ? { start: l, end: e, comment: String(x?.comment || [x?.title, x?.why].filter(Boolean).join(": ")).slice(0, 200) } : null; }).filter(Boolean) ?? null : null;
   const merge = (fs) => { if (!fs) return null; const out = []; for (const f of [...fs].sort((a, b) => a.start - b.start)) { if (out.length && f.start - out[out.length - 1].start <= 1) continue; out.push(f); } return out; };
   const codeOf = (t) => { const m = new Map(); for (const x of t.prompts.gate_keeper.matchAll(/^\s*(\d+) \| ?(.*)$/gm)) m.set(+x[1], x[2].trim()); return m; };
   const isFit = (t) => !t.id.startsWith("t6-");
@@ -430,8 +437,8 @@ async function improve() {
       res.rows.push({ k: `${task.id}/t${trial}`, fit: isFit(task), net: sc.caught - sc.extra, parsed: !!sc.parsed });
       res.caught += sc.caught; res.fa += sc.extra; res[isFit(task) ? "fit" : "val"] += sc.caught - sc.extra; res.n++; if (!sc.parsed) res.unparsed++;
       res.cost += rs.reduce((a, r) => a + (r.cost || 0), 0); res.sec += BAGMODE ? rs.reduce((a, r) => a + (r.seconds || 0), 0) : Math.max(...rs.map((r) => r.seconds || 0));
-      if (fs) { for (const w of task.why) if (!fs.some((f) => Math.abs(f.start - w.line) <= 1)) res.misses.push({ task: task.id, line: w.line, code: code.get(w.line) || "", why: w.why });
-        for (const f of fs) if (!task.expected.some((l) => Math.abs(l - f.start) <= 1) && !(task.benign || []).some((l) => Math.abs(l - f.start) <= 1)) res.fas.push({ task: task.id, line: f.start, code: code.get(f.start) || "", comment: f.comment }); }
+      if (fs) { for (const w of task.why) if (!fs.some((f) => w.line >= f.start - 1 && w.line <= (f.end ?? f.start) + 1)) res.misses.push({ task: task.id, line: w.line, code: code.get(w.line) || "", why: w.why });
+        for (const f of fs) if (!task.expected.some((l) => l >= f.start - 1 && l <= (f.end ?? f.start) + 1) && !(task.benign || []).some((l) => l >= f.start - 1 && l <= (f.end ?? f.start) + 1)) res.fas.push({ task: task.id, line: f.start, code: code.get(f.start) || "", comment: f.comment }); }
       console.log("GK3_ROW " + JSON.stringify({ arm: tag, task: task.id, trial, ...sc }));
     }
     await Promise.all(Array.from({ length: CONC }, async () => { while (q.length) await one(q.shift()); }));
@@ -448,7 +455,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   const BASE = P.agents.gate_keeper.system;
   const withRules = (list) => BASE.includes("\n\nExtra field:") ? BASE.replace("\n\nExtra field:", "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n") + "\n\nExtra field:") : BASE + "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
   let rules = BASE, learned = [], rejected = [];
-  let best = await evalRules(BAGMODE ? "round A (rule bag)" : "v12", rules);
+  let best = await evalRules(BAGMODE ? "round A (rule bag)" : (process.env.GK3_GK_FILE || "v12"), rules);
   // Paired sign-flip test on per-review net differences (same task, same trial), one split at a time.
   // Pairs where either side failed or did not parse are left out. Exact over all sign vectors of the non-zero
   // differences when there are at most 20 of them; otherwise 20000 draws from mulberry32 (exact 32-bit math).
@@ -463,7 +470,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
     const fired = P.tasks.map((t) => ({ task: t.id, rules: BAG.gate(t.prompts.gate_keeper).map((r) => r.id) })).filter((x) => x.rules.length);
     console.log("GK3_GATED " + JSON.stringify({ base: { net: best.net, caught: best.caught, fa: best.fa, fit: best.fitNet, check: best.checkNet }, gated: { net: g.net, caught: g.caught, fa: g.fa, fit: g.fitNet, check: g.checkNet }, fit: paired(best, g, true), check: paired(best, g, false), fired: fired.length, of: P.tasks.length, firedOn: fired }));
   }
-  const fq = BAGMODE ? { net: null } : await evalRules("v12 focused x3", rules, true);
+  const fq = BAGMODE || process.env.GK3_SKIP_FOCUSED ? { net: null } : await evalRules("v12 focused x3", rules, true);
   for (let r = 1; r <= ROUNDS; r++) {
     const ms = tally(best.misses).slice(0, 14), fs = tally(best.fas).slice(0, 10);
     const ask = "Current instructions:\n" + rules + "\n\nMissed bugs (missed in n of " + TRIALS + " runs):\n" + ms.map((m) => `- [${m.n}x] line ${m.line}: \`${m.code}\` — ${m.why}`).join("\n") +
