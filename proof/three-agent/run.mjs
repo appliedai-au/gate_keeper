@@ -514,7 +514,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
       const all = new Map(best.rows.map((r) => [r.k, r])), per = {}, every = [...new Set(ST.values())].sort();
       // GK3_PACK_CONTROL=1 (negative control): each language gets the next language's pack instead of its own, same model.
       const named = Object.keys(PK.packs).filter((k) => PK.packs[k].length).sort(), CTRL = !!process.env.GK3_PACK_CONTROL;
-      const packFor = (s) => { if (!CTRL) return PK.packs[s] || []; const o = named[(named.indexOf(s) + 1) % named.length]; return o && o !== s ? PK.packs[o] : []; };
+      const packFor = (s) => { if (!CTRL || !(PK.packs[s] || []).length) return PK.packs[s] || []; const o = named[(named.indexOf(s) + 1) % named.length]; return o && o !== s ? PK.packs[o] : []; };
       console.log("GK3_PACK_EVAL " + JSON.stringify({ model: GM, base: bsha, control: CTRL }));
       for (const s of every) { const rules = packFor(s), only = new Set(of(s).map((t) => t.id)), r1 = on(best.rows, s);
         let r2 = r1; if (rules.length) { const e = await evalRules(`run2 ${s}`, withPack(s, rules), false, only); r2 = e.rows; for (const x of r2) all.set(x.k, x); }
