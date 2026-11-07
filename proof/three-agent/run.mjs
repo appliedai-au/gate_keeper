@@ -487,7 +487,7 @@ Reply with only this JSON: {"rules":["...","..."],"why":"<= 30 words"}`;
   // task, only the pack this model learned for that task's language (GK3_PACK_JSON, from GK3_PACK_FILE). A pack learned
   // on another model, or on another base prompt, is refused: rules are model- and language-specific.
   if (process.env.GK3_LANG_PACKS || process.env.GK3_PACK_EVAL) {
-    const ST = new Map(P.tasks.map((t) => [t.id, BAG.stackOf(t.prompts.gate_keeper)])), MINT = Number(process.env.GK3_LANG_MIN_FIT || "4");
+    const ST = new Map(P.tasks.map((t) => [t.id, t.stack || BAG.stackOf(t.prompts.gate_keeper)])), MINT = Number(process.env.GK3_LANG_MIN_FIT || "4");
     const NAME = { node: "Node.js", react: "React", bun: "Bun", elysia: "Elysia (Bun)", ts: "TypeScript", go: "Go", rust: "Rust", erlang: "Erlang", php: "PHP", python: "Python", jvm: "JVM (Java/Kotlin)" };
     const of = (s) => P.tasks.filter((t) => ST.get(t.id) === s), stacks = [...new Set(ST.values())].filter((s) => of(s).filter(isFit).length >= MINT && of(s).some((t) => !isFit(t))).sort();
     const sum = (rows) => rows.reduce((a, r) => ({ net: a.net + r.net, caught: a.caught + r.caught, fa: a.fa + r.fa, n: a.n + 1 }), { net: 0, caught: 0, fa: 0, n: 0 });
