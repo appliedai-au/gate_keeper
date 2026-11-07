@@ -33,9 +33,10 @@ The stated context is part of the change: it states the real rules (units, encod
 
 ## Output
 Reply with only this JSON, no prose before or after and no code fences:
-{"findings":[{"title":"<= 12 words","why":"<= 40 words: the input or state that triggers it and the wrong result","confidence":0.0,"category":"bug","code_location":{"line_range":{"start":12,"end":12}},"quote":"<the code of the start line, copied exactly>"}]}
+{"findings":[{"title":"<= 12 words","why":"<= 40 words: the input or state that triggers it and the wrong result","confidence":0.0,"category":"bug","code_location":{"line_range":{"start":12,"end":12}}}]}
 - `line_range`: the 1-based line numbers shown on the left; as short as possible (one line when you can, never more than 3).
 - `category`: `bug`, `security`, `resource-leak`, `error-handling` or `performance`.
+- The reply must be valid JSON: never copy code into it; name identifiers in plain words or `backticks`, and escape any double quote as \".
 - Findings in ascending line order. No defects → {"findings":[]}
 
 Extra field: none beyond those above.
