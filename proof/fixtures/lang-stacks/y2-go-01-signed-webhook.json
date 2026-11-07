@@ -1,0 +1,99 @@
+{
+  "id": "y2-go-01-signed-webhook",
+  "title": "Go signed webhook receiver",
+  "holdout": false,
+  "language": "go",
+  "filename": "hooks/receiver.go",
+  "context": "Receives webhooks from a payment provider. X-Signature is hex(HMAC-SHA256(secret, raw body)) and must be compared in constant time. Bodies over 1 MiB are rejected. The provider retries deliveries, sometimes concurrently, and each event ID must be handled at most once.",
+  "code": [
+    "package hooks",
+    "",
+    "import (",
+    "\t\"crypto/hmac\"",
+    "\t\"crypto/sha256\"",
+    "\t\"encoding/hex\"",
+    "\t\"encoding/json\"",
+    "\t\"io\"",
+    "\t\"net/http\"",
+    "\t\"sync\"",
+    ")",
+    "",
+    "type Event struct {",
+    "\tID   string `json:\"id\"`",
+    "\tType string `json:\"type\"`",
+    "}",
+    "",
+    "type Receiver struct {",
+    "\tsecret []byte",
+    "\thandle func(Event) error",
+    "\tmu     sync.Mutex",
+    "\tseen   map[string]bool",
+    "}",
+    "",
+    "func NewReceiver(secret []byte, handle func(Event) error) *Receiver {",
+    "\treturn &Receiver{secret: secret, handle: handle, seen: make(map[string]bool)}",
+    "}",
+    "",
+    "func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {",
+    "\tbody, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))",
+    "\tif err != nil {",
+    "\t\thttp.Error(w, \"body too large\", http.StatusRequestEntityTooLarge)",
+    "\t\treturn",
+    "\t}",
+    "\tmac := hmac.New(sha256.New, rc.secret)",
+    "\tmac.Write(body)",
+    "\texpected := hex.EncodeToString(mac.Sum(nil))",
+    "\tif expected != r.Header.Get(\"X-Signature\") {",
+    "\t\thttp.Error(w, \"bad signature\", http.StatusUnauthorized)",
+    "\t\treturn",
+    "\t}",
+    "\tvar ev Event",
+    "\tif err := json.Unmarshal(body, &ev); err != nil {",
+    "\t\thttp.Error(w, \"bad json\", http.StatusBadRequest)",
+    "\t\treturn",
+    "\t}",
+    "\trc.mu.Lock()",
+    "\tdup := rc.seen[ev.ID]",
+    "\trc.mu.Unlock()",
+    "\tif dup {",
+    "\t\tw.WriteHeader(http.StatusOK)",
+    "\t\treturn",
+    "\t}",
+    "\tif err := rc.handle(ev); err != nil {",
+    "\t\thttp.Error(w, \"handler failed\", http.StatusInternalServerError)",
+    "\t\treturn",
+    "\t}",
+    "\trc.seen[ev.ID] = true",
+    "\tw.WriteHeader(http.StatusOK)",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 38,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "string comparison is not constant-time and leaks the signature byte by byte; use hmac.Equal on the decoded bytes"
+    },
+    {
+      "line": 49,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "the lock is released between checking and marking the ID, so two concurrent retries both see dup=false and both handle the event"
+    },
+    {
+      "line": 58,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "the map is written without holding mu, racing with other requests (concurrent map read/write)"
+    }
+  ],
+  "benign": [
+    30
+  ]
+}

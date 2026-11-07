@@ -1,0 +1,107 @@
+{
+  "id": "y1-rust-01-token-bucket",
+  "title": "Rust per-client token bucket",
+  "holdout": false,
+  "language": "rust",
+  "filename": "src/limiter.rs",
+  "context": "Per-client token-bucket rate limiter shared across threads. Each bucket holds at most `capacity` tokens and refills at `refill_per_sec` tokens per second; a request costs one whole token. Unknown clients start with a full bucket. `prune` removes buckets that have been idle for more than `idle_secs`.",
+  "code": [
+    "use std::collections::HashMap;",
+    "use std::sync::Mutex;",
+    "use std::time::Instant;",
+    "",
+    "pub struct Bucket {",
+    "    tokens: f64,",
+    "    last: Instant,",
+    "}",
+    "",
+    "pub struct Limiter {",
+    "    capacity: f64,",
+    "    refill_per_sec: f64,",
+    "    buckets: Mutex<HashMap<String, Bucket>>,",
+    "}",
+    "",
+    "impl Limiter {",
+    "    pub fn new(capacity: u32, refill_per_sec: u32) -> Self {",
+    "        Limiter {",
+    "            capacity: capacity as f64,",
+    "            refill_per_sec: refill_per_sec as f64,",
+    "            buckets: Mutex::new(HashMap::new()),",
+    "        }",
+    "    }",
+    "",
+    "    pub fn allow(&self, client: &str) -> bool {",
+    "        let mut map = self.buckets.lock().unwrap();",
+    "        let now = Instant::now();",
+    "        let bucket = map.entry(client.to_string()).or_insert(Bucket { tokens: 0.0, last: now });",
+    "        let last = bucket.last;",
+    "        let elapsed = now.duration_since(last).as_millis() as f64;",
+    "        bucket.last = now;",
+    "        bucket.tokens += elapsed * self.refill_per_sec;",
+    "",
+    "        if bucket.tokens > 0.0 {",
+    "            bucket.tokens -= 1.0;",
+    "            return true;",
+    "        }",
+    "        false",
+    "    }",
+    "",
+    "    pub fn remaining(&self, client: &str) -> u32 {",
+    "        let map = self.buckets.lock().unwrap();",
+    "        map.get(client).map(|b| b.tokens as u32).unwrap_or(self.capacity as u32)",
+    "    }",
+    "",
+    "    pub fn prune(&self, idle_secs: u64) {",
+    "        let mut map = self.buckets.lock().unwrap();",
+    "        let now = Instant::now();",
+    "        map.retain(|_, b| now.duration_since(b.last).as_secs() > idle_secs);",
+    "    }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 28,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "new clients must start with a full bucket, but tokens starts at 0 so their first request is rejected"
+    },
+    {
+      "line": 30,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "elapsed is measured in milliseconds but the rate is per second, so buckets refill 1000x too fast"
+    },
+    {
+      "line": 32,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "tokens are never capped at capacity, so an idle client accumulates an unlimited burst"
+    },
+    {
+      "line": 34,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "a request costs a whole token; with > 0.0 a fractional balance admits the request and drives tokens negative"
+    },
+    {
+      "line": 49,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "retain keeps the entries for which the closure is true, so this keeps idle buckets and deletes the active ones"
+    }
+  ],
+  "benign": [
+    26,
+    43
+  ]
+}

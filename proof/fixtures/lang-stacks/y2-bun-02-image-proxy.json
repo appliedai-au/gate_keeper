@@ -1,0 +1,79 @@
+{
+  "id": "y2-bun-02-image-proxy",
+  "title": "Bun forum image proxy",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/imgproxy.ts",
+  "context": "Proxies remote images for a forum and serves them from our own origin. Only hosts that are exactly, or subdomains of, ALLOWED_DOMAINS may be fetched, including after redirects. Only raster images (png, jpeg, gif, webp) may be served. Upstream fetches must time out after 5 seconds; the in-memory cache holds at most 500 entries.",
+  "code": [
+    "const MAX_BYTES = 2 * 1024 * 1024;",
+    "const ALLOWED_DOMAINS = [\"imgur.com\", \"forumcdn.net\"];",
+    "const RASTER = /^image\\/(png|jpeg|gif|webp)$/;",
+    "const cache = new Map<string, { type: string; body: ArrayBuffer }>();",
+    "const MAX_ENTRIES = 500;",
+    "",
+    "Bun.serve({",
+    "  port: 6060,",
+    "  async fetch(req) {",
+    "    const raw = new URL(req.url).searchParams.get(\"u\");",
+    "    if (!raw) return new Response(\"missing u\", { status: 400 });",
+    "    let target: URL;",
+    "    try { target = new URL(raw); } catch { return new Response(\"bad url\", { status: 400 }); }",
+    "    if (target.protocol !== \"https:\") return new Response(\"https only\", { status: 400 });",
+    "    if (!ALLOWED_DOMAINS.some((d) => target.hostname.endsWith(d))) return new Response(\"host not allowed\", { status: 403 });",
+    "    const hit = cache.get(target.href);",
+    "    if (hit) return new Response(hit.body, { headers: { \"content-type\": hit.type } });",
+    "    const upstream = await fetch(target, {",
+    "      headers: { accept: \"image/*\" },",
+    "      signal: AbortSignal.timeout(5),",
+    "    });",
+    "    if (!upstream.ok) return new Response(\"upstream error\", { status: 502 });",
+    "    const type = upstream.headers.get(\"content-type\") ?? \"\";",
+    "    if (!type.startsWith(\"image/\")) return new Response(\"not an image\", { status: 415 });",
+    "    const len = Number(upstream.headers.get(\"content-length\"));",
+    "    if (!Number.isFinite(len) || len <= 0 || len > MAX_BYTES) return new Response(\"too large\", { status: 413 });",
+    "    const body = await upstream.arrayBuffer();",
+    "    if (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value!);",
+    "    cache.set(target.href, { type, body });",
+    "    return new Response(body, { headers: { \"content-type\": type, \"cache-control\": \"public, max-age=86400\" } });",
+    "  },",
+    "});"
+  ],
+  "expected": [
+    {
+      "line": 15,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "endsWith accepts lookalike hosts such as evilimgur.com; must match the exact domain or a \".\" + domain suffix"
+    },
+    {
+      "line": 18,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "fetch follows redirects by default, so an allowed host can redirect to an internal or disallowed host (SSRF); use redirect: \"manual\" and re-check"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "AbortSignal.timeout takes milliseconds, so requests abort after 5 ms instead of 5 s"
+    },
+    {
+      "line": 24,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "accepts image/svg+xml, which can run script on our origin (stored XSS); only the RASTER types are allowed"
+    }
+  ],
+  "benign": [
+    28
+  ]
+}

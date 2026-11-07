@@ -1,0 +1,86 @@
+{
+  "id": "y2-react-02-infinite-feed",
+  "title": "React infinite scroll feed",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/Feed.tsx",
+  "context": "Infinite-scroll feed. GET /api/feed?cursor=... returns {items, nextCursor}; nextCursor is null after the last page, and then loading must stop. Pages are appended in order, oldest page first. The IntersectionObserver must be disconnected when it is replaced or on unmount.",
+  "code": [
+    "import { useCallback, useEffect, useRef, useState } from \"react\";",
+    "",
+    "type Post = { id: string; body: string };",
+    "",
+    "export function Feed() {",
+    "  const [posts, setPosts] = useState<Post[]>([]);",
+    "  const [cursor, setCursor] = useState<string | null>(\"\");",
+    "  const [loading, setLoading] = useState(false);",
+    "  const sentinel = useRef<HTMLDivElement>(null);",
+    "  const loadingRef = useRef(false);",
+    "",
+    "  const loadMore = useCallback(async () => {",
+    "    if (loadingRef.current || cursor === null) return;",
+    "    loadingRef.current = true;",
+    "    setLoading(true);",
+    "    try {",
+    "      const r = await fetch(`/api/feed?cursor=${encodeURIComponent(cursor)}`);",
+    "      if (!r.ok) throw new Error(String(r.status));",
+    "      const page: { items: Post[]; nextCursor: string | null } = await r.json();",
+    "      setCursor(page.nextCursor || \"\");",
+    "      if (page.items.length === 0) return;",
+    "      setPosts((prev) => [...page.items, ...prev]);",
+    "    } catch (e) {",
+    "      console.error(\"feed load failed\", e);",
+    "    } finally {",
+    "      loadingRef.current = false;",
+    "      setLoading(false);",
+    "    }",
+    "  }, [cursor]);",
+    "",
+    "  useEffect(() => {",
+    "    const el = sentinel.current;",
+    "    if (!el) return;",
+    "    const observer = new IntersectionObserver((entries) => {",
+    "      if (entries[0].isIntersecting) loadMore();",
+    "    });",
+    "    observer.observe(el);",
+    "  }, [loadMore]);",
+    "",
+    "  return (",
+    "    <div>",
+    "      {posts.map((p) => <article key={p.id}>{p.body}</article>)}",
+    "      {loading && <p>Loading…</p>}",
+    "      {cursor !== null && <div ref={sentinel} />}",
+    "    </div>",
+    "  );",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 20,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "null is turned into \"\", so after the last page the feed requests the first page again and loops forever"
+    },
+    {
+      "line": 22,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "new pages are prepended instead of appended, so the feed order is reversed per page"
+    },
+    {
+      "line": 38,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "no cleanup disconnects the observer; a new one is added on every cursor change and the old ones keep firing stale loadMore callbacks"
+    }
+  ],
+  "benign": [
+    24
+  ]
+}

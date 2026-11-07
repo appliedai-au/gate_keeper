@@ -1,0 +1,76 @@
+{
+  "id": "y2-bun-01-api-keys",
+  "title": "Bun API key store",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/apikeys.ts",
+  "context": "Issues and checks API keys on bun:sqlite. Only a SHA-256 hash of each key is stored and the full key is shown to the user once and never logged. Revoked keys must be rejected. Users may only revoke their own keys.",
+  "code": [
+    "import { Database } from \"bun:sqlite\";",
+    "",
+    "const db = new Database(\"keys.db\");",
+    "db.run(\"CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY, owner TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL UNIQUE, revoked_at INTEGER, last_used_at INTEGER, created_at INTEGER NOT NULL)\");",
+    "",
+    "function sha256(s: string) {",
+    "  return new Bun.CryptoHasher(\"sha256\").update(s).digest(\"hex\");",
+    "}",
+    "",
+    "export function issueKey(owner: string) {",
+    "  const bytes = crypto.getRandomValues(new Uint8Array(32));",
+    "  const key = `sk_${Buffer.from(bytes).toString(\"base64url\")}`;",
+    "  db.query(\"INSERT INTO api_keys (owner, prefix, hash, created_at) VALUES (?, ?, ?, ?)\").run(owner, key.slice(0, 10), sha256(key), Date.now());",
+    "  console.info(`issued key ${key} for ${owner}`);",
+    "  return key;",
+    "}",
+    "",
+    "export function authenticate(req: Request) {",
+    "  const header = req.headers.get(\"authorization\") ?? \"\";",
+    "  if (!header.startsWith(\"Bearer sk_\")) return null;",
+    "  const key = header.slice(\"Bearer \".length);",
+    "  const row = db.query(\"SELECT id, owner FROM api_keys WHERE hash = ?\").get(sha256(key)) as { id: number; owner: string } | null;",
+    "  if (!row) return null;",
+    "  db.query(\"UPDATE api_keys SET last_used_at = ? WHERE id = ?\").run(Date.now(), row.id);",
+    "  return row.owner;",
+    "}",
+    "",
+    "export function revokeKey(owner: string, prefix: string) {",
+    "  const res = db.query(\"UPDATE api_keys SET revoked_at = ? WHERE prefix = ? AND revoked_at IS NULL\").run(Date.now(), prefix);",
+    "  return res.changes > 0;",
+    "}",
+    "",
+    "export function listKeys(owner: string) {",
+    "  return db",
+    "    .query(\"SELECT id, prefix, revoked_at, last_used_at, created_at FROM api_keys WHERE owner = ? ORDER BY created_at DESC\")",
+    "    .all(owner);",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 14,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the full secret key is written to the logs"
+    },
+    {
+      "line": 22,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "revoked keys are still accepted; the query must also require revoked_at IS NULL"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "no owner filter, so any user can revoke another user's key by its prefix"
+    }
+  ],
+  "benign": [
+    7
+  ]
+}

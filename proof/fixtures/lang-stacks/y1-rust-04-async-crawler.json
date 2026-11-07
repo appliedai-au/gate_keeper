@@ -1,0 +1,104 @@
+{
+  "id": "y1-rust-04-async-crawler",
+  "title": "Rust async URL fetcher",
+  "holdout": false,
+  "language": "rust",
+  "filename": "src/crawl.rs",
+  "context": "Fetches a list of URLs concurrently with reqwest on tokio. At most MAX_IN_FLIGHT requests may run at once, each request must time out after 10 seconds, and a non-2xx status counts as failed. fetch_all must return only after every fetch has finished. success_rate may be called before anything was fetched and must then return 1.0.",
+  "code": [
+    "use std::sync::{Arc, Mutex};",
+    "use std::time::Duration;",
+    "use tokio::sync::Semaphore;",
+    "",
+    "const MAX_IN_FLIGHT: usize = 8;",
+    "",
+    "#[derive(Default)]",
+    "pub struct Stats {",
+    "    pub ok: u64,",
+    "    pub failed: u64,",
+    "    pub bytes: u64,",
+    "}",
+    "",
+    "pub async fn fetch_all(urls: Vec<String>) -> Arc<Mutex<Stats>> {",
+    "    let client = reqwest::Client::builder()",
+    "        .timeout(Duration::from_millis(10))",
+    "        .build()",
+    "        .expect(\"http client\");",
+    "    let stats = Arc::new(Mutex::new(Stats::default()));",
+    "    let sem = Arc::new(Semaphore::new(MAX_IN_FLIGHT));",
+    "    let mut handles = Vec::new();",
+    "    for url in urls {",
+    "        let client = client.clone();",
+    "        let stats = stats.clone();",
+    "        let sem = sem.clone();",
+    "        handles.push(tokio::spawn(async move {",
+    "            let _ = sem.acquire().await;",
+    "            let outcome = match client.get(&url).send().await {",
+    "                Ok(resp) => resp.bytes().await.map(|b| b.len() as u64),",
+    "                Err(e) => Err(e),",
+    "            };",
+    "            let mut s = stats.lock().unwrap();",
+    "            match outcome {",
+    "                Ok(n) => {",
+    "                    s.ok += 1;",
+    "                    s.bytes += n;",
+    "                }",
+    "                Err(_) => s.failed += 1,",
+    "            }",
+    "        }));",
+    "    }",
+    "    futures::future::join_all(handles);",
+    "    stats",
+    "}",
+    "",
+    "pub fn success_rate(stats: &Stats) -> f64 {",
+    "    let total = stats.ok + stats.failed;",
+    "    (stats.ok / total) as f64",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 16,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "10 milliseconds instead of 10 seconds, so almost every request times out"
+    },
+    {
+      "line": 27,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "binding to _ drops the permit immediately, so the semaphore never limits in-flight requests"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the status is never checked (error_for_status), so 404/500 responses are counted as ok"
+    },
+    {
+      "line": 42,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "join_all returns a lazy future that is never awaited, so fetch_all returns before the fetches finish"
+    },
+    {
+      "line": 48,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "integer division gives only 0 or 1, and with nothing fetched total is 0 and this panics instead of returning 1.0"
+    }
+  ],
+  "benign": [
+    32
+  ]
+}

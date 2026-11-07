@@ -1,0 +1,79 @@
+{
+  "id": "y1-ts-07-config-merge",
+  "title": "TypeScript deep config merge",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/configMerge.ts",
+  "context": "mergeConfig(defaults, override) returns a new object and must not modify either input. override is parsed from a JSON file uploaded by the user. Arrays in override replace the default arrays (no concatenation), and null in override deletes the key.",
+  "code": [
+    "type Json = null | boolean | number | string | Json[] | { [k: string]: Json };",
+    "type Obj = { [k: string]: Json };",
+    "",
+    "const isObj = (v: unknown): v is Obj => typeof v === \"object\" && v !== null && !Array.isArray(v);",
+    "",
+    "export function parseOverride(text: string): Obj {",
+    "  const v = JSON.parse(text);",
+    "  if (!isObj(v)) throw new TypeError(\"config must be a JSON object\");",
+    "  return v;",
+    "}",
+    "",
+    "export function mergeConfig(defaults: Obj, override: Obj): Obj {",
+    "  const out: Obj = defaults;",
+    "  if (!isObj(override)) throw new TypeError(\"override must be an object\");",
+    "  for (const key of Object.keys(override)) {",
+    "    const value = override[key];",
+    "    if (value === null) {",
+    "      delete out[key];",
+    "      continue;",
+    "    }",
+    "    const base = out[key];",
+    "    if (isObj(base) && isObj(value)) {",
+    "      out[key] = mergeConfig(base, value);",
+    "    } else if (Array.isArray(base) && Array.isArray(value)) {",
+    "      out[key] = [...base, ...value];",
+    "    } else {",
+    "      out[key] = value;",
+    "    }",
+    "  }",
+    "  return out;",
+    "}",
+    "",
+    "export function getPath(cfg: Obj, path: string): Json | undefined {",
+    "  let cur: Json | undefined = cfg;",
+    "  for (const part of path.split(\".\")) {",
+    "    if (!isObj(cur)) return undefined;",
+    "    cur = Object.hasOwn(cur, part) ? cur[part] : undefined;",
+    "  }",
+    "  return cur;",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 13,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "out is the defaults object itself, so merging modifies the caller's defaults; copy it ({ ...defaults })"
+    },
+    {
+      "line": 15,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "keys from user JSON such as __proto__ are not skipped; merging into out[\"__proto__\"] pollutes Object.prototype"
+    },
+    {
+      "line": 25,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "arrays are concatenated, but override arrays must replace the default ones"
+    }
+  ],
+  "benign": [
+    37
+  ]
+}

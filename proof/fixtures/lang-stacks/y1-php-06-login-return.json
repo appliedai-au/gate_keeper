@@ -1,0 +1,70 @@
+{
+  "id": "y1-php-06-login-return",
+  "title": "PHP post-login redirect and remember-me",
+  "holdout": false,
+  "language": "php",
+  "filename": "public/after_login.php",
+  "context": "Finishes a login: optionally sets a remember-me cookie and redirects to ?return=. Only same-site relative paths are allowed (a single leading \"/\" followed by a non-slash, non-backslash character); anything else goes to /dashboard. The remember-me cookie must be Secure and HttpOnly, and only a SHA-256 hash of the token may be stored in the database.",
+  "code": [
+    "<?php",
+    "require __DIR__ . '/../bootstrap.php';",
+    "",
+    "if (empty($_SESSION['user_id'])) {",
+    "    header('Location: /login');",
+    "    exit;",
+    "}",
+    "",
+    "$userId = (int) $_SESSION['user_id'];",
+    "if (!empty($_POST['remember'])) {",
+    "    $token = bin2hex(random_bytes(32));",
+    "    $pdo->prepare('INSERT INTO remember_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)')",
+    "        ->execute([$userId, $token, date('Y-m-d H:i:s', strtotime('+30 days'))]);",
+    "    setcookie('remember', $userId . ':' . $token, [",
+    "        'expires' => strtotime('+30 days'),",
+    "        'path' => '/',",
+    "        'secure' => true,",
+    "        'httponly' => false,",
+    "        'samesite' => 'Lax',",
+    "    ]);",
+    "}",
+    "",
+    "$return = $_GET['return'] ?? '/dashboard';",
+    "if (!str_starts_with($return, '/')) {",
+    "    $return = '/dashboard';",
+    "}",
+    "",
+    "$pdo->prepare('UPDATE users SET last_login_at = NOW() WHERE id = ?')->execute([$userId]);",
+    "header('Location: ' . $return);",
+    "exit;"
+  ],
+  "expected": [
+    {
+      "line": 13,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the raw token is stored in token_hash, so a database leak hands out working remember-me cookies; store hash('sha256', $token)"
+    },
+    {
+      "line": 18,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the cookie is readable from JavaScript, so any XSS can steal the long-lived login token"
+    },
+    {
+      "line": 24,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "\"//evil.example\" and \"/\\evil.example\" start with \"/\" but are protocol-relative URLs, so this is an open redirect"
+    }
+  ],
+  "benign": [
+    11,
+    29
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "id": "y1-php-05-payment-webhook",
+  "title": "PHP payment webhook receiver",
+  "holdout": false,
+  "language": "php",
+  "filename": "public/payment_webhook.php",
+  "context": "Receives payment provider webhooks. The provider signs the raw body with HMAC-SHA256 using WEBHOOK_SECRET and sends the hex digest in the X-Signature header; bad signatures get 401. Malformed JSON gets 400. The provider retries and may deliver the same event concurrently, and each event id must be processed exactly once (webhook_events.id is a primary key). bootstrap.php provides $pdo.",
+  "code": [
+    "<?php",
+    "require __DIR__ . '/../bootstrap.php';",
+    "",
+    "$payload = file_get_contents('php://input');",
+    "$sig = $_SERVER['HTTP_X_SIGNATURE'] ?? '';",
+    "$expected = hash_hmac('sha256', $payload, $_ENV['WEBHOOK_SECRET']);",
+    "",
+    "if ($sig != $expected) {",
+    "    http_response_code(401);",
+    "    exit;",
+    "}",
+    "",
+    "$event = json_decode($payload, true);",
+    "if ($event === false) {",
+    "    http_response_code(400);",
+    "    exit;",
+    "}",
+    "",
+    "$seen = $pdo->prepare('SELECT 1 FROM webhook_events WHERE id = ?');",
+    "$seen->execute([$event['id']]);",
+    "if ($seen->fetchColumn()) {",
+    "    http_response_code(200);",
+    "    exit;",
+    "}",
+    "",
+    "if ($event['type'] === 'payment.succeeded') {",
+    "    $pdo->prepare('UPDATE orders SET status = ? WHERE id = ?')",
+    "        ->execute(['paid', $event['data']['order_id']]);",
+    "}",
+    "$pdo->prepare('INSERT INTO webhook_events (id, received_at) VALUES (?, NOW())')",
+    "    ->execute([$event['id']]);",
+    "http_response_code(200);"
+  ],
+  "expected": [
+    {
+      "line": 8,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "loose != treats digests like \"0e123...\" as equal numbers and is not constant-time; use hash_equals"
+    },
+    {
+      "line": 14,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "json_decode returns null, not false, on invalid JSON, so malformed bodies are never rejected with 400"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "check-then-insert: two concurrent deliveries both see no row and both process the event; insert the id first and rely on the primary key"
+    }
+  ],
+  "benign": [
+    6
+  ]
+}

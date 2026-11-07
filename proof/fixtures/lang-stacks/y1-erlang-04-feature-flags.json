@@ -1,0 +1,69 @@
+{
+  "id": "y1-erlang-04-feature-flags",
+  "title": "Erlang feature flag loader",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/feature_flags.erl",
+  "context": "Loads feature flags from a terms file ({flag, Name, true|false}) and answers is_enabled/1 for flag names taken from HTTP query strings (untrusted binaries). Unknown names must return false. If the file is missing or malformed the error is logged and the previously loaded flags stay in effect.",
+  "code": [
+    "-module(feature_flags).",
+    "-export([load/1, is_enabled/1, enable/1]).",
+    "",
+    "-define(KEY, {?MODULE, flags}).",
+    "",
+    "load(Path) ->",
+    "    case file:consult(Path) of",
+    "        {ok, Terms} ->",
+    "            Flags = maps:from_list([{Name, Val} || {flag, Name, Val} <- Terms]),",
+    "            persistent_term:put(?KEY, Flags),",
+    "            ok;",
+    "        {error, Reason} ->",
+    "            logger:error(\"feature flags not loaded: ~p\", [Reason]),",
+    "            persistent_term:put(?KEY, #{}),",
+    "            {error, Reason}",
+    "    end.",
+    "",
+    "is_enabled(NameBin) when is_binary(NameBin) ->",
+    "    Name = binary_to_atom(NameBin, utf8),",
+    "    Flags = persistent_term:get(?KEY, #{}),",
+    "    case maps:get(Name, Flags) of",
+    "        true -> true;",
+    "        _ -> false",
+    "    end.",
+    "",
+    "enable(Name) when is_atom(Name) ->",
+    "    Flags = persistent_term:get(?KEY, #{}),",
+    "    persistent_term:put(?KEY, Flags#{Name => true}),",
+    "    logger:notice(\"feature flag ~p enabled\", [Name]),",
+    "    ok."
+  ],
+  "expected": [
+    {
+      "line": 14,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "on a load error the previously loaded flags are wiped instead of kept"
+    },
+    {
+      "line": 19,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "atoms are created from untrusted input and never garbage collected, so arbitrary names can exhaust the atom table; use binary_to_existing_atom with a catch"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "maps:get/2 raises badkey for an unknown flag instead of returning false; use maps:get/3 with a false default"
+    }
+  ],
+  "benign": [
+    10
+  ]
+}

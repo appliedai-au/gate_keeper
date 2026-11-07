@@ -1,0 +1,91 @@
+{
+  "id": "y2-ts-04-feature-flags",
+  "title": "TypeScript feature flag evaluation",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/flags.ts",
+  "context": "Feature flags. With rollout p (0-100) a flag is on when bucket(`${key}:${userId}`) < p, where bucket is 0..99, so rollout 0 is off for everyone. Admin overrides per user win over rollout, but a flag with enabled=false is off for everyone, overrides included. Query-string overrides (\"?ff=key:on\") are honoured only when allowQueryOverrides is true (dev builds).",
+  "code": [
+    "export interface Flag {",
+    "  key: string;",
+    "  enabled: boolean;",
+    "  rollout: number;",
+    "  overrides: Record<string, boolean>;",
+    "}",
+    "",
+    "export function fnv1a(s: string): number {",
+    "  let h = 0x811c9dc5;",
+    "  for (let i = 0; i < s.length; i++) {",
+    "    h ^= s.charCodeAt(i);",
+    "    h = Math.imul(h, 0x01000193);",
+    "  }",
+    "  return h >>> 0;",
+    "}",
+    "",
+    "export function bucket(seed: string): number {",
+    "  return fnv1a(seed) % 100;",
+    "}",
+    "",
+    "export function isOn(flag: Flag, userId: string): boolean {",
+    "  const override = flag.overrides[userId];",
+    "  if (override !== undefined) return override;",
+    "  if (!flag.enabled) return false;",
+    "  return bucket(`${flag.key}:${userId}`) <= flag.rollout;",
+    "}",
+    "",
+    "export function parseQueryOverrides(search: string, allowQueryOverrides: boolean): Record<string, boolean> {",
+    "  const out: Record<string, boolean> = {};",
+    "  const params = new URLSearchParams(search);",
+    "  for (const v of params.getAll(\"ff\")) {",
+    "    const [key, state] = v.split(\":\");",
+    "    if (key && (state === \"on\" || state === \"off\")) out[key] = state === \"on\";",
+    "  }",
+    "  return out;",
+    "}",
+    "",
+    "export function evaluateAll(flags: Flag[], userId: string, query: Record<string, boolean>): Record<string, boolean> {",
+    "  const result: Record<string, boolean> = {};",
+    "  for (const f of flags) {",
+    "    result[f.key] = Object.hasOwn(query, f.key) ? query[f.key] : isOn(f, userId);",
+    "  }",
+    "  return result;",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 23,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the override is returned before enabled is checked, so a disabled flag is still on for overridden users"
+    },
+    {
+      "line": 25,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "<= turns rollout 0 on for bucket 0 (1% of users) and gives p+1 percent; must be <"
+    },
+    {
+      "line": 31,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "allowQueryOverrides is never checked, so any visitor can switch flags in production via the URL"
+    },
+    {
+      "line": 41,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "a query override is applied even when the flag is disabled, which must stay off for everyone"
+    }
+  ],
+  "benign": [
+    14
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "id": "y1-ts-03-bill-split",
+  "title": "TypeScript bill splitting in cents",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/split.ts",
+  "context": "Splits a bill. All amounts are integer cents. taxPercent is a percentage such as 8.5, and tax is rounded to the nearest cent. split() divides a total by weight: shares are integer cents that must add up exactly to the total, and leftover cents go to the participants with the largest fractional remainders. parseAmount accepts user input like \"12\", \"12.5\" or \"12.50\" dollars.",
+  "code": [
+    "export interface Participant {",
+    "  id: string;",
+    "  weight: number;",
+    "}",
+    "",
+    "export interface Share {",
+    "  id: string;",
+    "  cents: number;",
+    "}",
+    "",
+    "export function parseAmount(input: string): number {",
+    "  const s = input.trim();",
+    "  if (!/^\\d+(\\.\\d{1,2})?$/.test(s)) throw new RangeError(`invalid amount: ${input}`);",
+    "  return parseInt(s.replace(\".\", \"\"), 10);",
+    "}",
+    "",
+    "export function withTax(subtotalCents: number, taxPercent: number): number {",
+    "  return subtotalCents + Math.round(subtotalCents * taxPercent);",
+    "}",
+    "",
+    "export function split(totalCents: number, people: Participant[]): Share[] {",
+    "  if (!Number.isInteger(totalCents) || totalCents < 0) throw new RangeError(\"total must be non-negative integer cents\");",
+    "  const weightSum = people.reduce((s, p) => s + p.weight, 0);",
+    "  if (weightSum <= 0) throw new RangeError(\"weights must sum to a positive number\");",
+    "  const raw = people.map((p) => (totalCents * p.weight) / weightSum);",
+    "  const shares = raw.map((r, i) => ({ id: people[i].id, cents: Math.round(r), rem: r - Math.floor(r) }));",
+    "  let left = totalCents - shares.reduce((s, x) => s + x.cents, 0);",
+    "  const order = [...shares].sort((a, b) => a.rem - b.rem);",
+    "  for (let i = 0; left > 0; i++, left--) {",
+    "    order[i % order.length].cents += 1;",
+    "  }",
+    "  return shares.map(({ id, cents }) => ({ id, cents }));",
+    "}",
+    "",
+    "export function formatCents(cents: number, currency = \"USD\"): string {",
+    "  return new Intl.NumberFormat(\"en-US\", { style: \"currency\", currency }).format(cents / 100);",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 14,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "\"12\" becomes 12 cents and \"12.5\" becomes 125 cents; the dollars part must be scaled by 100 and one decimal digit means tens of cents"
+    },
+    {
+      "line": 18,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "taxPercent is a percentage and is not divided by 100, so 8.5% tax adds 850%"
+    },
+    {
+      "line": 26,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "Math.round can already exceed the total (e.g. 3 x 0.5 rounds up), leftover goes negative and shares no longer add up; use Math.floor"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "sorted ascending, so leftover cents go to the smallest remainders instead of the largest"
+    }
+  ],
+  "benign": [
+    30,
+    36
+  ]
+}

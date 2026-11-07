@@ -1,0 +1,77 @@
+{
+  "id": "y1-php-01-avatar-upload",
+  "title": "PHP avatar upload",
+  "holdout": false,
+  "language": "php",
+  "filename": "public/avatar.php",
+  "context": "Lets a signed-in user upload a profile picture. Only real JPEG and PNG images up to 2 MB are accepted, files are stored in /var/www/uploads/avatars (served by the web server) under a server-generated name, and nothing uploaded may ever be executable. bootstrap.php starts the session and provides $pdo.",
+  "code": [
+    "<?php",
+    "require __DIR__ . '/../bootstrap.php';",
+    "",
+    "if (!isset($_SESSION['user_id'])) {",
+    "    http_response_code(401);",
+    "    exit;",
+    "}",
+    "",
+    "$file = $_FILES['avatar'] ?? null;",
+    "if ($file === null || $file['error'] !== UPLOAD_ERR_OK) {",
+    "    http_response_code(400);",
+    "    exit('upload failed');",
+    "}",
+    "",
+    "if ($file['size'] > 2 * 1024) {",
+    "    http_response_code(413);",
+    "    exit('file too large');",
+    "}",
+    "",
+    "$allowed = ['image/jpeg' => 'jpg', 'image/png' => 'png'];",
+    "$type = $file['type'];",
+    "if (!isset($allowed[$type])) {",
+    "    http_response_code(415);",
+    "    exit('only JPEG or PNG');",
+    "}",
+    "",
+    "$ext = pathinfo($file['name'], PATHINFO_EXTENSION);",
+    "$name = bin2hex(random_bytes(16)) . '.' . $ext;",
+    "$dest = '/var/www/uploads/avatars/' . $name;",
+    "if (!move_uploaded_file($file['tmp_name'], $dest)) {",
+    "    http_response_code(500);",
+    "    exit('could not save');",
+    "}",
+    "",
+    "$stmt = $pdo->prepare('UPDATE users SET avatar = ? WHERE id = ?');",
+    "$stmt->execute([$name, $_SESSION['user_id']]);",
+    "header('Content-Type: application/json');",
+    "echo json_encode(['avatar' => '/avatars/' . $name]);"
+  ],
+  "expected": [
+    {
+      "line": 15,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "2 * 1024 is 2 KB, not 2 MB, so almost every real photo is rejected"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the MIME type is the client-supplied header, not detected from the content (use finfo), so any file can claim to be image/png"
+    },
+    {
+      "line": 27,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the extension comes from the client file name, so shell.php sent as image/png is stored as an executable .php file; use $allowed[$type]"
+    }
+  ],
+  "benign": [
+    36
+  ]
+}

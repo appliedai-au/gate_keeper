@@ -1,0 +1,82 @@
+{
+  "id": "y1-php-02-login",
+  "title": "PHP login with lockout",
+  "holdout": false,
+  "language": "php",
+  "filename": "src/LoginController.php",
+  "context": "Handles POST /login. Passwords are stored with password_hash. Failures must not reveal whether an email is registered, the session id must be regenerated on success, and an account locks for 15 minutes once it reaches 5 consecutive failed attempts, even when attackers send attempts in parallel. The session is already started.",
+  "code": [
+    "<?php",
+    "",
+    "final class LoginController",
+    "{",
+    "    public function __construct(private PDO $db) {}",
+    "",
+    "    public function login(string $email, string $password): array",
+    "    {",
+    "        $stmt = $this->db->prepare('SELECT id, password_hash, failed_attempts, locked_until FROM users WHERE email = ?');",
+    "        $stmt->execute([$email]);",
+    "        $user = $stmt->fetch(PDO::FETCH_ASSOC);",
+    "        if (!$user) {",
+    "            return ['ok' => false, 'error' => 'unknown email'];",
+    "        }",
+    "",
+    "        if ($user['locked_until'] !== null && strtotime($user['locked_until']) > time()) {",
+    "            return ['ok' => false, 'error' => 'invalid credentials'];",
+    "        }",
+    "",
+    "        if (!password_verify($password, $user['password_hash'])) {",
+    "            $failed = (int) $user['failed_attempts'] + 1;",
+    "            $this->db->prepare('UPDATE users SET failed_attempts = ? WHERE id = ?')->execute([$failed, $user['id']]);",
+    "            if ($failed > 5) {",
+    "                $this->db->prepare('UPDATE users SET failed_attempts = 0, locked_until = ? WHERE id = ?')",
+    "                    ->execute([date('Y-m-d H:i:s', time() + 900), $user['id']]);",
+    "            }",
+    "            return ['ok' => false, 'error' => 'invalid credentials'];",
+    "        }",
+    "",
+    "        $this->db->prepare('UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?')",
+    "            ->execute([$user['id']]);",
+    "        $_SESSION['user_id'] = (int) $user['id'];",
+    "        return ['ok' => true];",
+    "    }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 13,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "a distinct error for unknown emails lets anyone enumerate registered accounts"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "the counter is read-modify-written from a stale SELECT, so parallel attempts overwrite each other and bypass the lockout; increment in SQL"
+    },
+    {
+      "line": 23,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the lock triggers on the 6th failure; it must lock once the count reaches 5 (>= 5)"
+    },
+    {
+      "line": 32,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "session_regenerate_id(true) is never called, leaving the login open to session fixation"
+    }
+  ],
+  "benign": [
+    16
+  ]
+}

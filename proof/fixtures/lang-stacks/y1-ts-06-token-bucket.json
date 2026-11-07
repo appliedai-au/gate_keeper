@@ -1,0 +1,94 @@
+{
+  "id": "y1-ts-06-token-bucket",
+  "title": "TypeScript token bucket rate limiter",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/tokenBucket.ts",
+  "context": "Per-key token bucket. Each bucket holds at most capacity tokens and refills at refillPerSec tokens per second; now() returns milliseconds. take(key, cost) consumes cost tokens and returns true only when enough are available; otherwise it consumes nothing and returns false. sweep() removes buckets that are full and have been idle for more than idleMs milliseconds.",
+  "code": [
+    "interface Bucket {",
+    "  tokens: number;",
+    "  updatedAt: number;",
+    "}",
+    "",
+    "export class TokenBucketLimiter {",
+    "  private buckets = new Map<string, Bucket>();",
+    "",
+    "  constructor(",
+    "    private readonly capacity: number,",
+    "    private readonly refillPerSec: number,",
+    "    private readonly idleMs: number,",
+    "    private readonly now: () => number = Date.now,",
+    "  ) {}",
+    "",
+    "  private refill(b: Bucket): void {",
+    "    const t = this.now();",
+    "    const elapsedSec = (t - b.updatedAt) / 1000;",
+    "    b.tokens = b.tokens + elapsedSec * this.refillPerSec;",
+    "    b.updatedAt = t;",
+    "  }",
+    "",
+    "  take(key: string, cost = 1): boolean {",
+    "    let b = this.buckets.get(key);",
+    "    if (!b) {",
+    "      b = { tokens: this.capacity, updatedAt: this.now() };",
+    "      this.buckets.set(key, b);",
+    "    }",
+    "    this.refill(b);",
+    "    b.tokens -= cost;",
+    "    if (b.tokens < 0) return false;",
+    "    return true;",
+    "  }",
+    "",
+    "  retryAfterMs(key: string, cost = 1): number {",
+    "    const b = this.buckets.get(key);",
+    "    if (!b) return 0;",
+    "    this.refill(b);",
+    "    const missing = cost - b.tokens;",
+    "    return missing <= 0 ? 0 : Math.ceil((missing / this.refillPerSec) * 1000);",
+    "  }",
+    "",
+    "  sweep(): number {",
+    "    const now = this.now();",
+    "    let removed = 0;",
+    "    for (const [key, b] of this.buckets) {",
+    "      const full = b.tokens + ((now - b.updatedAt) / 1000) * this.refillPerSec >= this.capacity;",
+    "      if (full && now - b.updatedAt > this.idleMs * 1000) {",
+    "        this.buckets.delete(key);",
+    "        removed++;",
+    "      }",
+    "    }",
+    "    return removed;",
+    "  }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 19,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "tokens are not capped at capacity, so an idle key builds up an unlimited burst"
+    },
+    {
+      "line": 30,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "tokens are subtracted before the check, so a rejected request still consumes tokens and drives the bucket negative"
+    },
+    {
+      "line": 48,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "idleMs is already milliseconds; multiplying by 1000 keeps idle buckets 1000 times too long (memory growth)"
+    }
+  ],
+  "benign": [
+    18
+  ]
+}

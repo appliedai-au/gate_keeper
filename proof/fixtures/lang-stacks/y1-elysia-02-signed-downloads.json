@@ -1,0 +1,75 @@
+{
+  "id": "y1-elysia-02-signed-downloads",
+  "title": "Elysia signed download links",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/downloads.ts",
+  "context": "Staff mint signed links of the form /dl/:name?exp=<unix seconds>&sig=<hex HMAC-SHA256 of \"name:exp\">. Links are rejected after exp. Files are served only from /data/exports, even for staff-supplied names. Downloads must not be stored by shared caches (Cache-Control private, no-store).",
+  "code": [
+    "import { Elysia, t } from \"elysia\";",
+    "import { createHmac, timingSafeEqual } from \"node:crypto\";",
+    "import { verifyStaff } from \"./staff\";",
+    "",
+    "const SECRET = process.env.DOWNLOAD_SECRET!;",
+    "const ROOT = \"/data/exports\";",
+    "",
+    "function sign(name: string, exp: number) {",
+    "  return createHmac(\"sha256\", SECRET).update(`${name}:${exp}`).digest(\"hex\");",
+    "}",
+    "",
+    "function safeEqualHex(a: string, b: string) {",
+    "  const ab = Buffer.from(a, \"hex\");",
+    "  const bb = Buffer.from(b, \"hex\");",
+    "  return ab.length === bb.length && timingSafeEqual(ab, bb);",
+    "}",
+    "",
+    "export const downloads = new Elysia()",
+    "  .derive(({ headers }) => ({ staff: verifyStaff(headers.authorization) }))",
+    "  .post(\"/links\", ({ body, staff, set }) => {",
+    "    if (!staff) { set.status = 403; return { error: \"staff only\" }; }",
+    "    const name = body.name.replace(\"../\", \"\");",
+    "    if (name.length === 0) { set.status = 400; return { error: \"bad name\" }; }",
+    "    const exp = Date.now() + body.ttlSeconds * 1000;",
+    "    return { url: `/dl/${encodeURIComponent(name)}?exp=${exp}&sig=${sign(name, exp)}` };",
+    "  }, { body: t.Object({ name: t.String({ minLength: 1 }), ttlSeconds: t.Integer({ minimum: 60, maximum: 86400 }) }) })",
+    "  .get(\"/dl/:name\", async ({ params, query, set }) => {",
+    "    const exp = Number(query.exp);",
+    "    if (!Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) { set.status = 410; return \"link expired\"; }",
+    "    if (!safeEqualHex(sign(params.name, exp), query.sig)) { set.status = 403; return \"bad signature\"; }",
+    "    const file = Bun.file(`${ROOT}/${params.name}`);",
+    "    if (!(await file.exists())) { set.status = 404; return \"not found\"; }",
+    "    set.headers[\"cache-control\"] = \"public, max-age=31536000, immutable\";",
+    "    set.headers[\"content-disposition\"] = \"attachment\";",
+    "    return file;",
+    "  }, { query: t.Object({ exp: t.String(), sig: t.String() }) });"
+  ],
+  "expected": [
+    {
+      "line": 22,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "replace strips only the first \"../\", so \"../../etc/passwd\" still escapes the export root"
+    },
+    {
+      "line": 24,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "exp must be unix seconds but this is milliseconds, so every link stays valid ~1000x longer than its TTL"
+    },
+    {
+      "line": 33,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "lets shared caches and CDNs keep and serve the file long after the link expires; must be private, no-store"
+    }
+  ],
+  "benign": [
+    15
+  ]
+}

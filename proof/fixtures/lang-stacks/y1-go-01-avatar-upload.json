@@ -1,0 +1,94 @@
+{
+  "id": "y1-go-01-avatar-upload",
+  "title": "Go avatar upload handler",
+  "holdout": false,
+  "language": "go",
+  "filename": "avatars/upload.go",
+  "context": "HTTP handler for avatar uploads. Uploads are limited to 2 MiB and must be PNG or JPEG as detected by content sniffing; the file is saved as /var/avatars/<userID>.png or .jpg according to the sniffed type, with userID taken from the authenticated request context. Every failure must produce an HTTP error response, and no partial file may be reported as saved.",
+  "code": [
+    "package avatars",
+    "",
+    "import (",
+    "\t\"io\"",
+    "\t\"net/http\"",
+    "\t\"os\"",
+    "\t\"path/filepath\"",
+    ")",
+    "",
+    "const maxAvatar = 2 << 20",
+    "const avatarDir = \"/var/avatars\"",
+    "",
+    "type ctxKey struct{}",
+    "",
+    "var ctxUserKey = ctxKey{}",
+    "",
+    "func userIDFrom(r *http.Request) (string, bool) {",
+    "\tid, ok := r.Context().Value(ctxUserKey).(string)",
+    "\treturn id, ok",
+    "}",
+    "",
+    "func Upload(w http.ResponseWriter, r *http.Request) {",
+    "\tuserID, ok := userIDFrom(r)",
+    "\tif !ok {",
+    "\t\thttp.Error(w, \"unauthorized\", http.StatusUnauthorized)",
+    "\t\treturn",
+    "\t}",
+    "\tr.Body = http.MaxBytesReader(w, r.Body, maxAvatar)",
+    "\tfile, header, err := r.FormFile(\"avatar\")",
+    "\tif err != nil {",
+    "\t\thttp.Error(w, \"bad upload\", http.StatusBadRequest)",
+    "\t\treturn",
+    "\t}",
+    "\thead := make([]byte, 512)",
+    "\tn, _ := io.ReadFull(file, head)",
+    "\tkind := http.DetectContentType(head[:n])",
+    "\tif kind != \"image/png\" && kind != \"image/jpeg\" {",
+    "\t\thttp.Error(w, \"unsupported type\", http.StatusUnsupportedMediaType)",
+    "\t\treturn",
+    "\t}",
+    "\text := filepath.Ext(header.Filename)",
+    "\tdst, err := os.Create(filepath.Join(avatarDir, userID+ext))",
+    "\tif err != nil {",
+    "\t\thttp.Error(w, \"cannot save\", http.StatusInternalServerError)",
+    "\t\treturn",
+    "\t}",
+    "\tdefer dst.Close()",
+    "\tif _, err := dst.Write(head[:n]); err != nil {",
+    "\t\thttp.Error(w, \"cannot save\", http.StatusInternalServerError)",
+    "\t\treturn",
+    "\t}",
+    "\tio.Copy(dst, file)",
+    "\tw.WriteHeader(http.StatusNoContent)",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 29,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "the multipart file is never closed (no defer file.Close()), leaking a file handle or temp file per upload"
+    },
+    {
+      "line": 41,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the extension comes from the client file name, not the sniffed type, so a PNG can be stored as .html or .svg and served with that type"
+    },
+    {
+      "line": 52,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the copy error is ignored, so an over-limit body or a disk error leaves a truncated file and still returns 204"
+    }
+  ],
+  "benign": [
+    10,
+    35
+  ]
+}

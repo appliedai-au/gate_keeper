@@ -1,0 +1,903 @@
+=== y1-bun-01-shortlinks|Bun URL shortener|typescript|src/links.ts
+CONTEXT: URL shortener on Bun.serve and bun:sqlite. Short codes must be unguessable. Only http: and https: targets may be stored (allowlist). expires_at is stored as Unix seconds; expired links return 410. ttlDays is 1-365.
+---
+import { Database } from "bun:sqlite";
+
+const db = new Database("links.db");
+db.run("CREATE TABLE IF NOT EXISTS links (code TEXT PRIMARY KEY, target TEXT NOT NULL, expires_at INTEGER NOT NULL, hits INTEGER NOT NULL DEFAULT 0)");
+
+const ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789";
+const insert = db.query("INSERT INTO links (code, target, expires_at) VALUES (?, ?, ?)");
+const lookup = db.query("SELECT target, expires_at FROM links WHERE code = ?");
+const bump = db.query("UPDATE links SET hits = hits + 1 WHERE code = ?"); ⟦OK⟧
+
+function newCode(len = 8) {
+  let out = "";
+  for (let i = 0; i < len; i++) out += ALPHABET[Math.floor(Math.random() * ALPHABET.length)]; ⟦BUG security|Math.random is not a CSPRNG, so short codes are predictable; use crypto.getRandomValues⟧
+  return out;
+}
+
+Bun.serve({
+  port: 8080,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (req.method === "POST" && url.pathname === "/links") {
+      const { target, ttlDays } = await req.json();
+      if (!Number.isInteger(ttlDays) || ttlDays < 1 || ttlDays > 365) return new Response("bad ttl", { status: 400 });
+      let parsed: URL;
+      try { parsed = new URL(target); } catch { return new Response("bad url", { status: 400 }); }
+      if (parsed.protocol === "javascript:") return new Response("bad scheme", { status: 400 }); ⟦BUG security|blocklists one scheme instead of allowing only http:/https:, so data:, file: and vbscript: targets are accepted⟧
+      const code = newCode();
+      const expires = Date.now() + ttlDays * 86400; ⟦BUG correctness|expires_at is Unix seconds but Date.now() is milliseconds, so links effectively never expire⟧
+      insert.run(code, parsed.href, expires);
+      return Response.json({ code }, { status: 201 });
+    }
+    if (req.method === "GET" && url.pathname.length > 1) {
+      const code = url.pathname.slice(1);
+      const row = lookup.get(code) as { target: string; expires_at: number } | null;
+      if (!row) return new Response("not found", { status: 404 });
+      if (row.expires_at < Math.floor(Date.now() / 1000)) return new Response("gone", { status: 410 }); ⟦OK⟧
+      bump.run(code);
+      return Response.redirect(row.target, 302);
+    }
+    return new Response("not found", { status: 404 });
+  },
+});
+=== y1-bun-02-job-queue|Bun SQLite job queue|typescript|src/queue.ts
+CONTEXT: Background job queue on bun:sqlite shared by several worker processes; each job must be claimed by exactly one worker. A job runs at most MAX_ATTEMPTS times in total, then becomes dead. Dead jobs must be kept for inspection; purgeOld only removes done jobs. All times are milliseconds.
+---
+import { Database } from "bun:sqlite";
+
+const db = new Database("/var/lib/app/jobs.db");
+db.run("PRAGMA journal_mode = WAL");
+const MAX_ATTEMPTS = 3;
+
+type Job = { id: number; kind: string; payload: string; attempts: number };
+type Handler = (payload: unknown) => Promise<void>;
+
+const pick = db.query("SELECT id, kind, payload, attempts FROM jobs WHERE status = 'queued' AND run_at <= ? ORDER BY run_at LIMIT 1");
+const markRunning = db.query("UPDATE jobs SET status = 'running', attempts = attempts + 1 WHERE id = ?");
+const markDone = db.query("UPDATE jobs SET status = 'done', finished_at = ? WHERE id = ?");
+const reschedule = db.query("UPDATE jobs SET status = 'queued', run_at = ?, last_error = ? WHERE id = ?");
+const markDead = db.query("UPDATE jobs SET status = 'dead', finished_at = ?, last_error = ? WHERE id = ?");
+
+export function claim(): Job | null {
+  const job = pick.get(Date.now()) as Job | null;
+  if (!job) return null;
+  markRunning.run(job.id); ⟦BUG concurrency|select and update are separate statements outside a transaction, so two worker processes can claim the same job; use BEGIN IMMEDIATE or an UPDATE ... WHERE status = 'queued' RETURNING⟧
+  return job;
+}
+
+export async function runOne(handlers: Map<string, Handler>) {
+  const job = claim();
+  if (!job) return false;
+  const handler = handlers.get(job.kind);
+  if (!handler) { markDead.run(Date.now(), `no handler for ${job.kind}`, job.id); return true; } ⟦OK⟧
+  try {
+    await handler(JSON.parse(job.payload));
+    markDone.run(Date.now(), job.id);
+  } catch (err) {
+    const attempts = job.attempts + 1;
+    if (attempts > MAX_ATTEMPTS) { ⟦BUG correctness|attempts already counts this run, so > lets a job run MAX_ATTEMPTS + 1 times; must be >=⟧
+      markDead.run(Date.now(), String(err), job.id);
+    } else {
+      reschedule.run(Date.now() + 1000 * 2 ** attempts, String(err), job.id);
+    }
+  }
+  return true;
+}
+
+export function purgeOld(olderThanMs: number) {
+  return db.query("DELETE FROM jobs WHERE finished_at < ?").run(Date.now() - olderThanMs).changes; ⟦BUG data-integrity|no status = 'done' filter, so dead jobs (which also get finished_at) are deleted too⟧
+}
+
+export async function workLoop(handlers: Map<string, Handler>, signal: AbortSignal) {
+  while (!signal.aborted) {
+    const worked = await runOne(handlers);
+    if (!worked) await Bun.sleep(500);
+  }
+}
+=== y1-bun-03-thumbnailer|Bun thumbnail service|typescript|src/thumbs.ts
+CONTEXT: Generates thumbnails by running ImageMagick via Bun.spawn. Width must be a number from 16 to 1024. convert must be killed if it runs longer than 10 seconds. Temp files under /tmp/thumbs must be removed after every request, on success and on failure.
+---
+import { unlink } from "node:fs/promises";
+
+const TMP = "/tmp/thumbs";
+const FORMATS = new Set(["png", "jpeg", "webp"]);
+
+async function runConvert(src: string, dest: string, width: number) {
+  const proc = Bun.spawn(["convert", src, "-resize", `${width}x`, dest], { stdout: "ignore", stderr: "pipe" }); ⟦OK⟧
+  const timer = setTimeout(() => proc.kill(), 10); ⟦BUG correctness|setTimeout takes milliseconds, so convert is killed after 10 ms instead of 10 s⟧
+  const stderr = await new Response(proc.stderr).text();
+  await proc.exited;
+  clearTimeout(timer);
+  return { code: proc.exitCode, stderr };
+}
+
+Bun.serve({
+  port: 7070,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (req.method !== "POST" || url.pathname !== "/thumb") return new Response("not found", { status: 404 });
+    const width = Number(url.searchParams.get("w"));
+    if (width < 16 || width > 1024) return new Response("bad width", { status: 400 }); ⟦BUG correctness|NaN (missing or non-numeric w) fails both comparisons, so an invalid width reaches convert⟧
+    const format = url.searchParams.get("fmt") ?? "png";
+    if (!FORMATS.has(format)) return new Response("bad format", { status: 400 });
+    const id = crypto.randomUUID();
+    const src = `${TMP}/${id}.in`;
+    const dest = `${TMP}/${id}.${format}`;
+    await Bun.write(src, await req.arrayBuffer());
+    const { code, stderr } = await runConvert(src, dest, width);
+    if (code !== 0) {
+      console.error("convert failed", stderr);
+      return new Response("conversion failed", { status: 500 }); ⟦BUG resource|returns without deleting the src temp file (and any partial dest), leaking temp files on every failure⟧
+    }
+    const out = await Bun.file(dest).arrayBuffer();
+    await unlink(src);
+    await unlink(dest);
+    return new Response(out, { headers: { "content-type": `image/${format}` } });
+  },
+});
+=== y1-bun-04-csv-export|Bun streaming orders CSV export|typescript|src/export.ts
+CONTEXT: Streams an orders CSV export from bun:sqlite; several admins may export at the same time. Per RFC 4180, fields containing a comma, quote or line break are quoted with every inner quote doubled; fields beginning with = + - @ get a ' prefix against formula injection. from/to are YYYY-MM-DD UTC days and the range includes both whole days. created_at is epoch milliseconds; totals are never negative.
+---
+import { Database } from "bun:sqlite";
+import { isAdmin } from "./auth";
+
+const db = new Database("shop.db", { readonly: true });
+const rows = db.query("SELECT id, customer, email, total_cents, created_at FROM orders WHERE created_at >= ? AND created_at < ? ORDER BY id");
+const DAY_MS = 86_400_000;
+
+function cell(v: unknown): string {
+  let s = v == null ? "" : String(v);
+  if (/^[=+\-@]/.test(s)) s = "'" + s; ⟦OK⟧
+  if (/[",\r\n]/.test(s)) s = '"' + s.replace('"', '""') + '"'; ⟦BUG correctness|String.replace with a string pattern only doubles the first quote; must use replaceAll or /"/g⟧
+  return s;
+}
+
+function dayStart(d: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? Date.parse(`${d}T00:00:00Z`) : NaN;
+}
+
+Bun.serve({
+  port: 3100,
+  fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname !== "/export/orders.csv") return new Response("not found", { status: 404 });
+    if (!isAdmin(req)) return new Response("forbidden", { status: 403 });
+    const from = dayStart(url.searchParams.get("from") ?? "");
+    const to = dayStart(url.searchParams.get("to") ?? ""); ⟦BUG correctness|`to` is the start of the last day and the query uses created_at < ?, so the whole `to` day is excluded; it must be dayStart(to) + DAY_MS⟧
+    if (Number.isNaN(from) || Number.isNaN(to)) return new Response("bad range", { status: 400 });
+    const iter = rows.iterate(from, to); ⟦BUG concurrency|one shared prepared statement is iterated by every export; a concurrent export re-binds and resets it, corrupting the other stream; prepare a statement per request⟧
+    const enc = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(enc.encode("id,customer,email,total,created_at\r\n"));
+      },
+      pull(controller) {
+        const next = iter.next();
+        if (next.done) { controller.close(); return; }
+        const r = next.value as { id: number; customer: string; email: string; total_cents: number; created_at: number };
+        const total = (r.total_cents / 100).toFixed(2);
+        controller.enqueue(enc.encode([r.id, r.customer, r.email, total, new Date(r.created_at).toISOString()].map(cell).join(",") + "\r\n"));
+      },
+    });
+    return new Response(stream, { headers: { "content-type": "text/csv", "content-disposition": "attachment; filename=orders.csv" } });
+  },
+});
+=== y1-bun-05-sms-otp|Bun SMS one-time codes on Redis|typescript|src/otp.ts
+CONTEXT: SMS login codes stored with Bun's built-in Redis client. Codes are 6 digits, valid for 5 minutes, single-use, and a phone gets at most 5 verification attempts per code window. sendSms returns a Promise that rejects when the provider fails; requestCode must fail in that case.
+---
+import { redis } from "bun";
+import { sendSms } from "./sms";
+
+const TTL_SECONDS = 300;
+const MAX_TRIES = 5;
+
+function normalize(phone: string) {
+  const p = phone.replace(/[^\d+]/g, "");
+  if (!/^\+\d{8,15}$/.test(p)) throw new Error("invalid phone");
+  return p;
+}
+
+function sixDigits() {
+  const n = crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000; ⟦OK⟧
+  return n.toString().padStart(6, "0");
+}
+
+export async function requestCode(phone: string) {
+  const p = normalize(phone);
+  const code = sixDigits();
+  await redis.set(`otp:${p}`, code);
+  await redis.expire(`otp:${p}`, TTL_SECONDS * 1000); ⟦BUG correctness|EXPIRE takes seconds; multiplying by 1000 keeps codes alive ~3.5 days instead of 5 minutes⟧
+  await redis.expire(`otp-tries:${p}`, TTL_SECONDS);
+  sendSms(p, `Your login code is ${code}`); ⟦BUG error-handling|the sendSms promise is not awaited, so a provider failure is an unhandled rejection and the caller is told the code was sent⟧
+}
+
+export async function verifyCode(phone: string, input: string) {
+  const p = normalize(phone);
+  const tries = await redis.incr(`otp-tries:${p}`);
+  if (tries === 1) await redis.expire(`otp-tries:${p}`, TTL_SECONDS);
+  if (tries >= MAX_TRIES) return { ok: false, reason: "locked" }; ⟦BUG correctness|>= locks on the 5th attempt, so only 4 attempts are allowed; must be > MAX_TRIES⟧
+  const stored = await redis.get(`otp:${p}`);
+  if (stored === null) return { ok: false, reason: "expired" };
+  if (stored !== input) return { ok: false, reason: "wrong" };
+  return { ok: true }; ⟦BUG security|the code is never deleted after a successful check, so it can be replayed until it expires (must be single-use)⟧
+}
+=== y1-bun-06-feature-flags|Bun feature flag service|typescript|src/flags.ts
+CONTEXT: Feature flags reloaded from a JSON file every 30 s. A failed reload must keep the last good flags. rollout is an integer percentage 0-100 of users; buckets are 0-99. PUT requires the admin token from FLAGS_ADMIN_TOKEN, compared in constant time; if the variable is unset, all writes must be refused.
+---
+import { timingSafeEqual } from "node:crypto";
+
+type Flag = { enabled: boolean; rollout: number };
+let flags = new Map<string, Flag>();
+const FLAGS_PATH = "/etc/app/flags.json";
+const ADMIN_TOKEN = Bun.env.FLAGS_ADMIN_TOKEN ?? "";
+
+async function reload() {
+  try {
+    flags = new Map(Object.entries(await Bun.file(FLAGS_PATH).json()));
+  } catch (err) {
+    console.error("flag reload failed", err);
+    flags = new Map(); ⟦BUG error-handling|a failed reload wipes every flag; the last good set must be kept⟧
+  }
+}
+await reload();
+setInterval(reload, 30_000);
+
+function isOn(name: string, userId: string) {
+  const f = flags.get(name);
+  if (!f || !f.enabled) return false;
+  return Bun.hash.crc32(`${name}:${userId}`) % 100 <= f.rollout; ⟦BUG correctness|buckets are 0-99, so <= enables rollout+1 percent (rollout 0 still turns the flag on for 1% of users); must be <⟧
+}
+
+function authorized(header: string | null) {
+  const a = Buffer.from(header ?? "");
+  const b = Buffer.from(`Bearer ${ADMIN_TOKEN}`);
+  return a.length === b.length && timingSafeEqual(a, b); ⟦BUG security|when FLAGS_ADMIN_TOKEN is unset, the header "Bearer " matches and anyone can write flags; an empty token must refuse all writes⟧
+}
+
+Bun.serve({
+  port: 9100,
+  routes: {
+    "/flags/:name": {
+      GET: (req) => {
+        const user = new URL(req.url).searchParams.get("user");
+        if (!user) return new Response("user required", { status: 400 });
+        return Response.json({ on: isOn(req.params.name, user) });
+      },
+      PUT: async (req) => {
+        if (!authorized(req.headers.get("authorization"))) return new Response("forbidden", { status: 403 });
+        const body = (await req.json()) as Flag;
+        if (typeof body.enabled !== "boolean" || body.rollout < 0 || body.rollout > 100) return new Response("bad flag", { status: 400 }); ⟦BUG correctness|rollout is never checked to be an integer number; a string, null or missing rollout passes both comparisons and is saved⟧
+        flags.set(req.params.name, body);
+        await Bun.write(FLAGS_PATH, JSON.stringify(Object.fromEntries(flags), null, 2));
+        return Response.json(body);
+      },
+    },
+  },
+});
+=== y1-bun-07-migrations|Bun SQLite migration runner|typescript|src/migrate.ts
+CONTEXT: Applies SQL migration files named <version>_<name>.sql (versions are unpadded integers: 1, 2, ... 10, 11) in ascending numeric version order. Each migration and its schema_migrations record must be applied atomically. If a migration fails, migrate must stop and throw so nothing later runs.
+---
+import { Database } from "bun:sqlite";
+import { Glob } from "bun";
+
+export async function migrate(dbPath: string, dir: string) {
+  const db = new Database(dbPath);
+  db.run("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)");
+  const applied = new Set(
+    (db.query("SELECT version FROM schema_migrations").all() as { version: number }[]).map((r) => r.version),
+  );
+  const files: string[] = [];
+  for await (const f of new Glob("*.sql").scan(dir)) files.push(f);
+  files.sort(); ⟦BUG correctness|lexicographic sort runs 10_x before 2_y; unpadded versions must be sorted numerically⟧
+  const record = db.query("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)");
+  let count = 0;
+  for (const file of files) {
+    const m = file.match(/^(\d+)_(.+)\.sql$/);
+    if (!m) continue; ⟦OK⟧
+    const version = Number(m[1]);
+    if (applied.has(version)) continue;
+    const sql = await Bun.file(`${dir}/${file}`).text();
+    try {
+      db.run(sql); ⟦BUG data-integrity|the migration and its record are not wrapped in one transaction, so a failure partway leaves a half-applied, unrecorded migration⟧
+      record.run(version, m[2], Date.now());
+    } catch (err) {
+      console.error(`migration ${file} failed`, err);
+      continue; ⟦BUG error-handling|a failed migration is logged and skipped, so later migrations run against a broken schema; it must stop and rethrow⟧
+    }
+    count++;
+  }
+  db.close();
+  return count;
+}
+=== y1-bun-08-sse-notify|Bun server-sent notifications|typescript|src/events.ts
+CONTEXT: Pushes notifications to logged-in users over server-sent events. verifyToken resolves to a user id or null; isAdmin(userId) returns Promise<boolean>. Notification messages are free text and may contain line breaks. Disconnected clients must be cleaned up.
+---
+import { verifyToken, isAdmin } from "./auth";
+
+type Sub = { userId: string; send: (event: string, data: string) => void };
+const subs = new Set<Sub>();
+const enc = new TextEncoder();
+
+export function notify(userId: string, event: string, message: string) {
+  for (const s of subs) if (s.userId === userId) s.send(event, message);
+}
+
+Bun.serve({
+  port: 5050,
+  idleTimeout: 0, ⟦OK⟧
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/broadcast" && req.method === "POST") {
+      const caller = await verifyToken(req.headers.get("authorization"));
+      if (!caller || !isAdmin(caller)) return new Response("forbidden", { status: 403 }); ⟦BUG security|isAdmin returns a Promise, which is always truthy, so any logged-in user can broadcast⟧
+      const { message } = await req.json();
+      for (const s of subs) s.send("broadcast", String(message));
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname !== "/events") return new Response("not found", { status: 404 });
+    const userId = await verifyToken(req.headers.get("authorization"));
+    if (!userId) return new Response("unauthorized", { status: 401 });
+    let sub: Sub;
+    let timer: Timer;
+    const stream = new ReadableStream({
+      start(controller) {
+        sub = {
+          userId,
+          send: (event, data) => controller.enqueue(enc.encode(`event: ${event}\ndata: ${data}\n\n`)), ⟦BUG correctness|a message containing a line break ends the data field early and corrupts SSE framing; each line needs its own data: prefix⟧
+        };
+        subs.add(sub);
+        timer = setInterval(() => controller.enqueue(enc.encode(": ping\n\n")), 15_000);
+      },
+      cancel() {
+        clearInterval(timer); ⟦BUG resource|the subscriber is never removed from subs on disconnect, so the set grows forever and notify keeps writing to closed streams⟧
+      },
+    });
+    return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } });
+  },
+});
+=== y2-bun-01-api-keys|Bun API key store|typescript|src/apikeys.ts
+CONTEXT: Issues and checks API keys on bun:sqlite. Only a SHA-256 hash of each key is stored and the full key is shown to the user once and never logged. Revoked keys must be rejected. Users may only revoke their own keys.
+---
+import { Database } from "bun:sqlite";
+
+const db = new Database("keys.db");
+db.run("CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY, owner TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT NOT NULL UNIQUE, revoked_at INTEGER, last_used_at INTEGER, created_at INTEGER NOT NULL)");
+
+function sha256(s: string) {
+  return new Bun.CryptoHasher("sha256").update(s).digest("hex"); ⟦OK⟧
+}
+
+export function issueKey(owner: string) {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const key = `sk_${Buffer.from(bytes).toString("base64url")}`;
+  db.query("INSERT INTO api_keys (owner, prefix, hash, created_at) VALUES (?, ?, ?, ?)").run(owner, key.slice(0, 10), sha256(key), Date.now());
+  console.info(`issued key ${key} for ${owner}`); ⟦BUG security|the full secret key is written to the logs⟧
+  return key;
+}
+
+export function authenticate(req: Request) {
+  const header = req.headers.get("authorization") ?? "";
+  if (!header.startsWith("Bearer sk_")) return null;
+  const key = header.slice("Bearer ".length);
+  const row = db.query("SELECT id, owner FROM api_keys WHERE hash = ?").get(sha256(key)) as { id: number; owner: string } | null; ⟦BUG security|revoked keys are still accepted; the query must also require revoked_at IS NULL⟧
+  if (!row) return null;
+  db.query("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(Date.now(), row.id);
+  return row.owner;
+}
+
+export function revokeKey(owner: string, prefix: string) {
+  const res = db.query("UPDATE api_keys SET revoked_at = ? WHERE prefix = ? AND revoked_at IS NULL").run(Date.now(), prefix); ⟦BUG security|no owner filter, so any user can revoke another user's key by its prefix⟧
+  return res.changes > 0;
+}
+
+export function listKeys(owner: string) {
+  return db
+    .query("SELECT id, prefix, revoked_at, last_used_at, created_at FROM api_keys WHERE owner = ? ORDER BY created_at DESC")
+    .all(owner);
+}
+=== y2-bun-02-image-proxy|Bun forum image proxy|typescript|src/imgproxy.ts
+CONTEXT: Proxies remote images for a forum and serves them from our own origin. Only hosts that are exactly, or subdomains of, ALLOWED_DOMAINS may be fetched, including after redirects. Only raster images (png, jpeg, gif, webp) may be served. Upstream fetches must time out after 5 seconds; the in-memory cache holds at most 500 entries.
+---
+const MAX_BYTES = 2 * 1024 * 1024;
+const ALLOWED_DOMAINS = ["imgur.com", "forumcdn.net"];
+const RASTER = /^image\/(png|jpeg|gif|webp)$/;
+const cache = new Map<string, { type: string; body: ArrayBuffer }>();
+const MAX_ENTRIES = 500;
+
+Bun.serve({
+  port: 6060,
+  async fetch(req) {
+    const raw = new URL(req.url).searchParams.get("u");
+    if (!raw) return new Response("missing u", { status: 400 });
+    let target: URL;
+    try { target = new URL(raw); } catch { return new Response("bad url", { status: 400 }); }
+    if (target.protocol !== "https:") return new Response("https only", { status: 400 });
+    if (!ALLOWED_DOMAINS.some((d) => target.hostname.endsWith(d))) return new Response("host not allowed", { status: 403 }); ⟦BUG security|endsWith accepts lookalike hosts such as evilimgur.com; must match the exact domain or a "." + domain suffix⟧
+    const hit = cache.get(target.href);
+    if (hit) return new Response(hit.body, { headers: { "content-type": hit.type } });
+    const upstream = await fetch(target, { ⟦BUG security|fetch follows redirects by default, so an allowed host can redirect to an internal or disallowed host (SSRF); use redirect: "manual" and re-check⟧
+      headers: { accept: "image/*" },
+      signal: AbortSignal.timeout(5), ⟦BUG correctness|AbortSignal.timeout takes milliseconds, so requests abort after 5 ms instead of 5 s⟧
+    });
+    if (!upstream.ok) return new Response("upstream error", { status: 502 });
+    const type = upstream.headers.get("content-type") ?? "";
+    if (!type.startsWith("image/")) return new Response("not an image", { status: 415 }); ⟦BUG security|accepts image/svg+xml, which can run script on our origin (stored XSS); only the RASTER types are allowed⟧
+    const len = Number(upstream.headers.get("content-length"));
+    if (!Number.isFinite(len) || len <= 0 || len > MAX_BYTES) return new Response("too large", { status: 413 });
+    const body = await upstream.arrayBuffer();
+    if (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value!); ⟦OK⟧
+    cache.set(target.href, { type, body });
+    return new Response(body, { headers: { "content-type": type, "cache-control": "public, max-age=86400" } });
+  },
+});
+=== y2-bun-03-leaderboard|Bun SQLite leaderboard|typescript|src/leaderboard.ts
+CONTEXT: Leaderboard on bun:sqlite. A player's best score is kept; a lower new score must not overwrite it. Rank 1 is the highest score and tied players share a rank. order may only be "asc" or "desc"; limit is 1-100. Only the game server (x-game-key header equal to GAME_KEY) submits scores.
+---
+import { Database } from "bun:sqlite";
+import { timingSafeEqual } from "node:crypto";
+
+const db = new Database("board.db");
+db.run("CREATE TABLE IF NOT EXISTS scores (player TEXT PRIMARY KEY, score INTEGER NOT NULL, updated_at INTEGER NOT NULL)");
+const GAME_KEY = Bun.env.GAME_KEY ?? "";
+
+const upsert = db.query(
+  "INSERT INTO scores (player, score, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(player) DO UPDATE SET score = excluded.score, updated_at = excluded.updated_at", ⟦BUG data-integrity|always overwrites, so a lower score replaces the player's best; needs WHERE excluded.score > scores.score⟧
+);
+const scoreOf = db.query("SELECT score FROM scores WHERE player = ?");
+const higherThan = db.query("SELECT COUNT(*) AS n FROM scores WHERE score >= ?"); ⟦BUG correctness|>= counts the player and everyone tied with them, so rank = n + 1 is too low by at least one and ties do not share a rank; must be >⟧
+
+function keyOk(h: string | null) {
+  const a = Buffer.from(h ?? ""), b = Buffer.from(GAME_KEY);
+  return GAME_KEY.length > 0 && a.length === b.length && timingSafeEqual(a, b); ⟦OK⟧
+}
+
+function top(order: string, limit: number) {
+  return db.query(`SELECT player, score FROM scores ORDER BY score ${order} LIMIT ?`).all(limit); ⟦BUG security|order is interpolated unchecked into the SQL text (injection); it must be validated against asc/desc⟧
+}
+
+Bun.serve({
+  port: 4400,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (req.method === "POST" && url.pathname === "/scores") {
+      if (!keyOk(req.headers.get("x-game-key"))) return new Response("forbidden", { status: 403 });
+      const { player, score } = await req.json();
+      if (typeof player !== "string" || !Number.isSafeInteger(score) || score < 0) return new Response("bad score", { status: 400 });
+      upsert.run(player, score, Date.now());
+      return new Response(null, { status: 204 });
+    }
+    if (req.method === "GET" && url.pathname === "/top") {
+      const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "", 10) || 10, 100); ⟦BUG performance|a negative limit is kept, and LIMIT -1 means no limit in SQLite, so one request dumps the whole table; clamp to at least 1⟧
+      return Response.json(top(url.searchParams.get("order") ?? "desc", limit));
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/rank/")) {
+      const player = decodeURIComponent(url.pathname.slice("/rank/".length));
+      const row = scoreOf.get(player) as { score: number } | null;
+      if (!row) return new Response("unknown player", { status: 404 });
+      const { n } = higherThan.get(row.score) as { n: number };
+      return Response.json({ player, rank: n + 1 });
+    }
+    return new Response("not found", { status: 404 });
+  },
+});
+=== y1-elysia-01-team-invites|Elysia team invitations|typescript|src/invites.ts
+CONTEXT: Team invitations. Only team admins create invites. An invite joins the team it was created for, may be accepted once, only by the user whose email it was sent to (emails compare case-insensitively), and only before expires_at (a Date). `db` is a pg-promise client; `tx` runs its callback in a transaction.
+---
+import { Elysia, t } from "elysia";
+import { db } from "./db";
+import { auth } from "./auth";
+import { sendInviteEmail } from "./mail";
+
+export const invites = new Elysia({ prefix: "/teams/:teamId/invites" })
+  .use(auth)
+  .post("/", async ({ params, body, currentUser, set }) => {
+    const member = await db.oneOrNone("SELECT role FROM memberships WHERE team_id = $1 AND user_id = $2", [params.teamId, currentUser.id]);
+    if (!member || member.role !== "admin") { set.status = 403; return "forbidden"; }
+    const token = crypto.randomUUID(); ⟦OK⟧
+    const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+    await db.none("INSERT INTO invites (token, team_id, email, expires_at) VALUES ($1, $2, $3, $4)", [token, params.teamId, body.email, expiresAt]);
+    await sendInviteEmail(body.email, token);
+    set.status = 201;
+    return { token };
+  }, { body: t.Object({ email: t.String({ format: "email" }) }) })
+  .post("/:token/accept", async ({ params, currentUser, set }) => {
+    const invite = await db.oneOrNone("SELECT * FROM invites WHERE token = $1", [params.token]); ⟦BUG security|lookup ignores team_id, so a valid invite for one team can be used to join any :teamId in the URL⟧
+    if (!invite || invite.accepted_at) { set.status = 404; return "invalid invite"; }
+    if (invite.expires_at < Date.now()) { set.status = 410; return "expired"; } ⟦OK⟧
+    if (invite.email !== currentUser.email) { set.status = 403; return "wrong account"; } ⟦BUG correctness|emails must compare case-insensitively; a different-case address is wrongly refused⟧
+    await db.tx(async (tx) => {
+      await tx.none("INSERT INTO memberships (team_id, user_id, role) VALUES ($1, $2, 'member')", [params.teamId, currentUser.id]);
+      await tx.none("UPDATE invites SET accepted_at = now() WHERE token = $1", [params.token]); ⟦BUG concurrency|accepted_at is checked outside the transaction and this update has no AND accepted_at IS NULL / row-count check, so parallel accepts all succeed⟧
+    });
+    return { joined: params.teamId };
+  });
+=== y1-elysia-02-signed-downloads|Elysia signed download links|typescript|src/downloads.ts
+CONTEXT: Staff mint signed links of the form /dl/:name?exp=<unix seconds>&sig=<hex HMAC-SHA256 of "name:exp">. Links are rejected after exp. Files are served only from /data/exports, even for staff-supplied names. Downloads must not be stored by shared caches (Cache-Control private, no-store).
+---
+import { Elysia, t } from "elysia";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { verifyStaff } from "./staff";
+
+const SECRET = process.env.DOWNLOAD_SECRET!;
+const ROOT = "/data/exports";
+
+function sign(name: string, exp: number) {
+  return createHmac("sha256", SECRET).update(`${name}:${exp}`).digest("hex");
+}
+
+function safeEqualHex(a: string, b: string) {
+  const ab = Buffer.from(a, "hex");
+  const bb = Buffer.from(b, "hex");
+  return ab.length === bb.length && timingSafeEqual(ab, bb); ⟦OK⟧
+}
+
+export const downloads = new Elysia()
+  .derive(({ headers }) => ({ staff: verifyStaff(headers.authorization) }))
+  .post("/links", ({ body, staff, set }) => {
+    if (!staff) { set.status = 403; return { error: "staff only" }; }
+    const name = body.name.replace("../", ""); ⟦BUG security|replace strips only the first "../", so "../../etc/passwd" still escapes the export root⟧
+    if (name.length === 0) { set.status = 400; return { error: "bad name" }; }
+    const exp = Date.now() + body.ttlSeconds * 1000; ⟦BUG correctness|exp must be unix seconds but this is milliseconds, so every link stays valid ~1000x longer than its TTL⟧
+    return { url: `/dl/${encodeURIComponent(name)}?exp=${exp}&sig=${sign(name, exp)}` };
+  }, { body: t.Object({ name: t.String({ minLength: 1 }), ttlSeconds: t.Integer({ minimum: 60, maximum: 86400 }) }) })
+  .get("/dl/:name", async ({ params, query, set }) => {
+    const exp = Number(query.exp);
+    if (!Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) { set.status = 410; return "link expired"; }
+    if (!safeEqualHex(sign(params.name, exp), query.sig)) { set.status = 403; return "bad signature"; }
+    const file = Bun.file(`${ROOT}/${params.name}`);
+    if (!(await file.exists())) { set.status = 404; return "not found"; }
+    set.headers["cache-control"] = "public, max-age=31536000, immutable"; ⟦BUG security|lets shared caches and CDNs keep and serve the file long after the link expires; must be private, no-store⟧
+    set.headers["content-disposition"] = "attachment";
+    return file;
+  }, { query: t.Object({ exp: t.String(), sig: t.String() }) });
+=== y1-elysia-03-checkout|Elysia checkout endpoint|typescript|src/checkout.ts
+CONTEXT: Checkout. Prices come only from the catalog (getProducts returns a Map of sku to { priceCents }), never from the client. Money is integer cents; tax is 8.25% of the subtotal before discount. couponPercent returns 0-100. Stock is decremented in the order transaction, and the order must fail if any item lacks stock.
+---
+import { Elysia, t } from "elysia";
+import { getProducts, couponPercent, createOrderTx } from "./store";
+import { session } from "./session";
+
+const Item = t.Object({
+  sku: t.String(),
+  qty: t.Integer({ minimum: 1, maximum: 99 }),
+  price: t.Integer(),
+});
+
+export const checkout = new Elysia()
+  .use(session)
+  .post("/checkout", async ({ body, user, set }) => {
+    if (!user) { set.status = 401; return { error: "login required" }; }
+    const products = await getProducts(body.items.map((i) => i.sku));
+    let subtotal = 0;
+    for (const item of body.items) {
+      const p = products.get(item.sku);
+      if (!p) { set.status = 400; return { error: `unknown sku ${item.sku}` }; }
+      subtotal += item.price * item.qty; ⟦BUG security|uses the client-sent price instead of p.priceCents, so buyers can set their own price⟧
+    }
+    const tax = Math.round(subtotal * 0.0825); ⟦OK⟧
+    const pct = body.coupon ? await couponPercent(body.coupon) : 0;
+    const discount = (subtotal * pct) / 100; ⟦BUG correctness|discount is not rounded, so totals become fractional cents; must be Math.round⟧
+    const total = subtotal + tax - discount;
+    const order = await createOrderTx(user.id, body.items, total, async (tx) => {
+      for (const item of body.items) {
+        await tx.query("UPDATE inventory SET stock = stock - $1 WHERE sku = $2", [item.qty, item.sku]); ⟦BUG data-integrity|no stock >= qty guard or row-count check, so stock goes negative and oversold orders succeed⟧
+      }
+    });
+    set.status = 201;
+    return { orderId: order.id, total };
+  }, {
+    body: t.Object({
+      items: t.Array(Item, { minItems: 1, maxItems: 50 }),
+      coupon: t.Optional(t.String({ maxLength: 32 })),
+    }),
+  });
+=== y1-elysia-04-cookie-login|Elysia cookie session login|typescript|src/session.ts
+CONTEXT: Cookie login backed by a server-side `sessions` store (get/set(id, data, ttlSeconds)/del). The session id must be freshly generated at every login. The cookie must be httpOnly, secure, sameSite lax and expire together with the 8-hour session. Logout must destroy the server-side session.
+---
+import { Elysia, t } from "elysia";
+import { sessions } from "./sessionStore";
+import { verifyPassword, findUserByEmail } from "./users";
+
+const EIGHT_HOURS = 8 * 60 * 60;
+
+export const auth = new Elysia({ name: "auth" })
+  .derive({ as: "global" }, async ({ cookie: { sid } }) => { ⟦OK⟧
+    if (!sid.value) return { user: null };
+    const s = await sessions.get(sid.value);
+    return { user: s ? s.user : null };
+  })
+  .post("/login", async ({ body, cookie: { sid }, set }) => {
+    const user = await findUserByEmail(body.email.toLowerCase());
+    if (!user || !(await verifyPassword(body.password, user.passwordHash))) {
+      set.status = 401;
+      return { error: "invalid credentials" };
+    }
+    const id = sid.value ?? crypto.randomUUID(); ⟦BUG security|reuses a pre-existing session id (session fixation); a new id must be issued on every login⟧
+    await sessions.set(id, { user: { id: user.id, role: user.role } }, EIGHT_HOURS);
+    sid.set({ value: id, httpOnly: true, secure: true, sameSite: "lax", maxAge: EIGHT_HOURS * 1000, path: "/" }); ⟦BUG correctness|cookie maxAge is in seconds; * 1000 makes the cookie last about 11 months instead of 8 hours⟧
+    return { id: user.id };
+  }, { body: t.Object({ email: t.String(), password: t.String() }) })
+  .post("/logout", ({ cookie: { sid } }) => {
+    sid.remove(); ⟦BUG security|only the cookie is cleared; the server-side session is never deleted, so a stolen sid keeps working⟧
+    return { ok: true };
+  })
+  .get("/me", ({ user, set }) => {
+    if (!user) { set.status = 401; return { error: "not logged in" }; }
+    return user;
+  });
+=== y1-elysia-05-product-search|Elysia product search with cursor|typescript|src/search.ts
+CONTEXT: Product search on bun:sqlite ordered by id. q matches as a substring of name and LIKE wildcards (% and _) in q must match literally. The cursor is the last id of the previous page; nextCursor is returned only when more rows exist after this page.
+---
+import { Elysia, t } from "elysia";
+import { Database } from "bun:sqlite";
+
+const db = new Database("catalog.db", { readonly: true });
+
+function likeEscape(s: string) {
+  return s.replace(/[\\%_]/g, (c) => "\\" + c); ⟦OK⟧
+}
+
+export const search = new Elysia()
+  .get("/products", ({ query }) => {
+    const limit = query.limit ?? 20;
+    const pattern = `%${likeEscape(query.q ?? "")}%`;
+    const where = ["name LIKE ?", "id > ?"]; ⟦BUG correctness|SQLite LIKE has no default escape character, so the backslash escapes do nothing without ESCAPE '\\'⟧
+    const args: (string | number)[] = [pattern, query.cursor ?? 0];
+    if (query.category) where.push(`category = '${query.category}'`); ⟦BUG security|category is interpolated into the SQL text (injection); it must be a bound parameter⟧
+    const rows = db
+      .query(`SELECT id, name, price FROM products WHERE ${where.join(" AND ")} ORDER BY id LIMIT ?`)
+      .all(...args, limit) as { id: number; name: string; price: number }[];
+    const nextCursor = rows.length === limit ? rows[rows.length - 1].id : null; ⟦BUG correctness|when exactly `limit` rows remain it returns a cursor to an empty page; fetch limit + 1 rows to know if more exist⟧
+    return { items: rows, nextCursor };
+  }, {
+    query: t.Object({
+      q: t.Optional(t.String({ maxLength: 100 })),
+      category: t.Optional(t.String({ maxLength: 40 })),
+      cursor: t.Optional(t.Numeric({ minimum: 0 })),
+      limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100 })),
+    }),
+  });
+
+export const app = new Elysia().use(search).listen(3000);
+=== y1-elysia-06-ws-cursors|Elysia live cursor presence|typescript|src/presence.ts
+CONTEXT: Shared-document cursor presence over Elysia WebSockets. verifyToken(token) resolves to { userId } or null; canRead(userId, docId) resolves to a boolean, and only readers may join. On join a client receives the cursors of that document only. Each connection may publish at most 20 updates per second. All per-connection state must be dropped on close.
+---
+import { Elysia, t } from "elysia";
+import { verifyToken, canRead } from "./auth";
+
+type Cursor = { docId: string; userId: string; x: number; y: number };
+const cursors = new Map<string, Cursor>();
+const lastSent = new Map<string, number>();
+const MIN_INTERVAL_MS = 1000 / 20;
+
+export const presence = new Elysia()
+  .ws("/docs/:docId/live", {
+    query: t.Object({ token: t.String() }),
+    body: t.Object({ x: t.Number({ minimum: 0, maximum: 1 }), y: t.Number({ minimum: 0, maximum: 1 }) }),
+    async open(ws) {
+      const { docId } = ws.data.params;
+      const session = await verifyToken(ws.data.query.token);
+      if (!session) { ws.close(4401, "unauthorized"); return; }
+      if (!(await canRead(docId, session.userId))) { ws.close(4403, "forbidden"); return; } ⟦BUG security|arguments are swapped (canRead takes userId, docId), so the permission check tests the wrong pair⟧
+      cursors.set(ws.id, { docId, userId: session.userId, x: 0, y: 0 });
+      ws.subscribe(`doc:${docId}`);
+      ws.send([...cursors.values()].filter((c) => (c.docId = docId))); ⟦BUG correctness|assignment instead of comparison: every cursor passes the filter and has its docId overwritten, leaking other documents' cursors⟧
+    },
+    message(ws, { x, y }) {
+      const c = cursors.get(ws.id);
+      if (!c) return; ⟦OK⟧
+      const now = Date.now();
+      if (now - (lastSent.get(ws.id) ?? 0) < MIN_INTERVAL_MS) return;
+      lastSent.set(ws.id, now);
+      c.x = x;
+      c.y = y;
+      ws.publish(`doc:${c.docId}`, c); ⟦OK⟧
+    },
+    close(ws) {
+      cursors.delete(ws.id); ⟦BUG resource|the lastSent entry is never removed, so the map grows with every connection ever made⟧
+    },
+  });
+=== y1-elysia-07-admin-plugin|Elysia admin API with guard plugin|typescript|src/app.ts
+CONTEXT: Admin API. The adminOnly plugin must reject every /admin route for non-admins (target: Elysia 1.x, where plugin hooks are local unless scoped). 500 responses must not leak internal error messages. deleteUser returns a Promise that rejects on failure, and a failed delete must not report success.
+---
+import { Elysia, t } from "elysia";
+import { getSessionUser } from "./session";
+import { listUsers, deleteUser, setRole } from "./users";
+
+const adminOnly = new Elysia({ name: "admin-only" })
+  .derive(async ({ headers }) => ({ user: await getSessionUser(headers.authorization) }))
+  .onBeforeHandle(({ user, set }) => { ⟦BUG security|without { as: "scoped" } (on derive too) this hook is local to the plugin and never runs for the /admin routes registered on the parent⟧
+    if (!user || user.role !== "admin") {
+      set.status = 403;
+      return { error: "admin only" };
+    }
+  });
+
+export const app = new Elysia()
+  .onError(({ code, error, set }) => {
+    if (code === "VALIDATION") { set.status = 400; return { error: "invalid input" }; }
+    if (code === "NOT_FOUND") { set.status = 404; return { error: "not found" }; }
+    console.error(error);
+    set.status = 500;
+    return { error: (error as Error).message }; ⟦BUG security|returns the internal error message to the client on 500⟧
+  })
+  .group("/admin", (g) =>
+    g
+      .use(adminOnly)
+      .get("/users", ({ query }) => listUsers(query.page ?? 1), {
+        query: t.Object({ page: t.Optional(t.Numeric({ minimum: 1 })) }), ⟦OK⟧
+      })
+      .delete("/users/:id", ({ params }) => {
+        deleteUser(params.id); ⟦BUG error-handling|not awaited: a failed delete becomes an unhandled rejection while the client gets 204⟧
+        return new Response(null, { status: 204 });
+      })
+      .patch("/users/:id/role", ({ params, body }) => setRole(params.id, body.role), {
+        body: t.Object({ role: t.Union([t.Literal("user"), t.Literal("admin")]) }),
+      }),
+  )
+  .listen(3000);
+=== y1-elysia-08-bulk-import|Elysia bulk contact import|typescript|src/import.ts
+CONTEXT: Bulk contact import of up to 1000 contacts. The geocoding provider allows at most 10 requests in flight. All contacts are inserted in one transaction, so a failed import leaves nothing behind and the pooled connection is clean. Emails are deduplicated case-insensitively within the batch.
+---
+import { Elysia, t } from "elysia";
+import { geocode } from "./geo";
+import { pool } from "./db";
+
+const Contact = t.Object({
+  name: t.String({ minLength: 1 }),
+  email: t.String({ format: "email" }),
+  address: t.String({ minLength: 1 }),
+});
+
+export const importer = new Elysia()
+  .post("/contacts/import", async ({ body, set }) => {
+    const seen = new Set<string>();
+    const unique = body.contacts.filter((c) => {
+      const key = c.email.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(c.email); ⟦BUG correctness|stores the original-case email, so case variants are never detected as duplicates⟧
+      return true;
+    });
+    const located = await Promise.all(unique.map((c) => geocode(c.address))); ⟦BUG performance|fires up to 1000 geocoding requests at once, breaking the 10-in-flight provider limit⟧
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (let i = 0; i <= unique.length; i++) { ⟦BUG correctness|off-by-one: the last iteration reads unique[length] (undefined) and throws, so every import fails⟧
+        const c = unique[i];
+        await client.query("INSERT INTO contacts (name, email, lat, lng) VALUES ($1, $2, $3, $4)", [c.name, c.email, located[i].lat, located[i].lng]);
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      console.error("import failed", err);
+      set.status = 500;
+      return { error: "import failed" }; ⟦BUG data-integrity|no ROLLBACK: the connection goes back to the pool inside an open, failed transaction⟧
+    } finally {
+      client.release(); ⟦OK⟧
+    }
+    return { imported: unique.length };
+  }, { body: t.Object({ contacts: t.Array(Contact, { maxItems: 1000 }) }) });
+=== y2-elysia-01-coupon-redeem|Elysia coupon redemption|typescript|src/coupons.ts
+CONTEXT: Coupon redemption under concurrent load (Postgres, READ COMMITTED). A coupon may be used at most max_uses times and once per user. Codes are case-insensitive and stored upper-case. A user may only cancel their own redemptions. `sql` is a postgres.js tagged-template client; sql.begin runs a transaction.
+---
+import { Elysia, t } from "elysia";
+import { sql } from "./db";
+import { requireUser } from "./auth";
+
+export const coupons = new Elysia({ prefix: "/coupons" })
+  .use(requireUser)
+  .post("/redeem", async ({ body, user, set }) => {
+    const code = body.code.trim(); ⟦BUG correctness|not upper-cased, so lower-case input never matches the stored codes⟧
+    return await sql.begin(async (tx) => {
+      const [coupon] = await tx`SELECT id, max_uses, uses, expires_at FROM coupons WHERE code = ${code}`; ⟦BUG concurrency|no FOR UPDATE, so concurrent redemptions read the same uses value and exceed max_uses⟧
+      if (!coupon) { set.status = 404; return { error: "unknown coupon" }; }
+      if (coupon.expires_at && coupon.expires_at < new Date()) { set.status = 410; return { error: "expired" }; }
+      if (coupon.uses > coupon.max_uses) { set.status = 409; return { error: "fully redeemed" }; } ⟦BUG correctness|> allows one redemption beyond max_uses; must be >=⟧
+      const [dup] = await tx`SELECT 1 FROM redemptions WHERE coupon_id = ${coupon.id} AND user_id = ${user.id}`; ⟦OK⟧
+      if (dup) { set.status = 409; return { error: "already redeemed" }; }
+      await tx`UPDATE coupons SET uses = uses + 1 WHERE id = ${coupon.id}`;
+      await tx`INSERT INTO redemptions (coupon_id, user_id) VALUES (${coupon.id}, ${user.id})`;
+      return { ok: true, couponId: coupon.id };
+    });
+  }, { body: t.Object({ code: t.String({ minLength: 3, maxLength: 32 }) }) })
+  .get("/mine", async ({ user }) => {
+    return await sql`
+      SELECT r.id, c.code, r.created_at FROM redemptions r
+      JOIN coupons c ON c.id = r.coupon_id
+      WHERE r.user_id = ${user.id} ORDER BY r.created_at DESC`;
+  })
+  .delete("/redemptions/:id", async ({ params, user, set }) => {
+    return await sql.begin(async (tx) => {
+      const rows = await tx`DELETE FROM redemptions WHERE id = ${params.id} RETURNING coupon_id`; ⟦BUG security|no user_id = ${user.id} filter, so any user can cancel anyone's redemption⟧
+      if (rows.length === 0) { set.status = 404; return { error: "not found" }; }
+      await tx`UPDATE coupons SET uses = uses - 1 WHERE id = ${rows[0].coupon_id}`;
+      return { ok: true };
+    });
+  });
+=== y2-elysia-02-report-jobs|Elysia background report jobs|typescript|src/reports.ts
+CONTEXT: Starts report generation in the background; the requesting user polls for it. Only the user who started a job may see its status or download it. A failed job must show status "failed". Finished jobs (done or failed) are kept for one hour after finishing, then dropped.
+---
+import { Elysia, t } from "elysia";
+import { buildReport } from "./reports-engine";
+import { auth } from "./auth";
+
+type Job = { owner: string; status: "running" | "done" | "failed"; file?: string; finishedAt?: number };
+const jobs = new Map<string, Job>();
+const KEEP_MS = 60 * 60 * 1000;
+
+setInterval(() => {
+  const cutoff = Date.now() - KEEP_MS;
+  for (const [id, job] of jobs) if (job.finishedAt && job.finishedAt > cutoff) jobs.delete(id); ⟦BUG correctness|comparison is inverted: it deletes jobs finished within the last hour and keeps old ones forever; must be < cutoff⟧
+}, 60_000);
+
+export const reports = new Elysia({ prefix: "/reports" })
+  .use(auth)
+  .post("/", ({ body, user, set }) => {
+    const id = crypto.randomUUID();
+    const job: Job = { owner: user.id, status: "running" };
+    jobs.set(id, job);
+    buildReport(body.kind, body.from, body.to)
+      .then((file) => { job.status = "done"; job.file = file; job.finishedAt = Date.now(); })
+      .catch((err) => { console.error("report failed", id, err); }); ⟦BUG error-handling|the failure is only logged: status stays "running" forever and finishedAt is never set, so the job is never cleaned up⟧
+    set.status = 202;
+    return { id };
+  }, {
+    body: t.Object({
+      kind: t.Union([t.Literal("sales"), t.Literal("refunds")]),
+      from: t.String({ format: "date" }),
+      to: t.String({ format: "date" }),
+    }),
+  })
+  .get("/:id", ({ params, user, set }) => {
+    const job = jobs.get(params.id);
+    if (!job) { set.status = 404; return { error: "not found" }; } ⟦BUG security|no job.owner === user.id check, so any user can read another user's job status⟧
+    return { status: job.status };
+  })
+  .get("/:id/download", ({ params, user, set }) => {
+    const job = jobs.get(params.id);
+    if (!job || job.owner !== user.id) { set.status = 404; return { error: "not found" }; } ⟦OK⟧
+    if (job.status !== "done") { set.status = 409; return { error: "not ready" }; }
+    set.headers["content-disposition"] = `attachment; filename="report-${params.id}.csv"`;
+    return Bun.file(job.file!);
+  });
+=== y2-elysia-03-github-oauth|Elysia GitHub OAuth login|typescript|src/oauth.ts
+CONTEXT: GitHub OAuth login. The state sent to GitHub is kept in a short-lived httpOnly cookie and must be present and match on callback. returnTo must be a same-site relative path. The GitHub access token must never reach the browser. A failed GitHub API call must not create a session.
+---
+import { Elysia, t } from "elysia";
+import { createSession } from "./sessions";
+
+const CLIENT_ID = process.env.GH_CLIENT_ID!;
+const CLIENT_SECRET = process.env.GH_CLIENT_SECRET!;
+
+export const oauth = new Elysia({ prefix: "/auth/github" })
+  .get("/start", ({ query, cookie: { oauth_state, return_to }, redirect }) => {
+    const state = crypto.randomUUID();
+    oauth_state.set({ value: state, httpOnly: true, secure: true, sameSite: "lax", maxAge: 600, path: "/auth/github" }); ⟦OK⟧
+    return_to.set({ value: query.returnTo ?? "/", httpOnly: true, secure: true, sameSite: "lax", maxAge: 600, path: "/auth/github" });
+    const url = new URL("https://github.com/login/oauth/authorize");
+    url.searchParams.set("client_id", CLIENT_ID);
+    url.searchParams.set("state", state);
+    url.searchParams.set("scope", "read:user user:email");
+    return redirect(url.href);
+  }, { query: t.Object({ returnTo: t.Optional(t.String({ maxLength: 200 })) }) })
+  .get("/callback", async ({ query, cookie: { oauth_state, return_to, sid, gh_token }, redirect, set }) => {
+    if (oauth_state.value && query.state !== oauth_state.value) { set.status = 400; return "bad state"; } ⟦BUG security|when the state cookie is missing the check is skipped entirely, allowing login CSRF⟧
+    oauth_state.remove();
+    const res = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, code: query.code }),
+    });
+    const tokenJson = (await res.json()) as { access_token?: string };
+    if (!res.ok || !tokenJson.access_token) { set.status = 502; return "token exchange failed"; }
+    const user = await fetch("https://api.github.com/user", { headers: { authorization: `Bearer ${tokenJson.access_token}` } }).then((r) => r.json()); ⟦BUG error-handling|the response status is never checked, so an error body (no id) still creates a session for an undefined GitHub user⟧
+    const id = await createSession({ githubId: user.id, login: user.login });
+    sid.set({ value: id, httpOnly: true, secure: true, sameSite: "lax", path: "/" });
+    gh_token.set({ value: tokenJson.access_token, secure: true, sameSite: "lax", path: "/" }); ⟦BUG security|puts the GitHub access token in a script-readable cookie sent to the browser⟧
+    const dest = return_to.value ?? "/";
+    return_to.remove();
+    if (!dest.startsWith("/")) return redirect("/"); ⟦BUG security|"//evil.example" starts with "/" and is a protocol-relative open redirect⟧
+    return redirect(dest);
+  }, { query: t.Object({ code: t.String(), state: t.String() }) });

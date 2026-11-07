@@ -1,0 +1,71 @@
+{
+  "id": "y2-node-01-api-proxy",
+  "title": "Node HTTP reverse proxy",
+  "holdout": false,
+  "language": "javascript",
+  "filename": "src/proxy.js",
+  "context": "node:http reverse proxy in front of an internal API on 127.0.0.1:9000. Only paths under /api/ may be forwarded. verifyToken rejects for invalid tokens and resolves to the user otherwise; the proxy sets X-Internal-User from that user and clients must not be able to set it themselves. Upstream calls time out after 5 seconds, and any upstream failure or timeout must answer the client with 502.",
+  "code": [
+    "const http = require(\"node:http\");",
+    "const { verifyToken } = require(\"./auth\");",
+    "",
+    "const UPSTREAM = { host: \"127.0.0.1\", port: 9000 };",
+    "",
+    "const server = http.createServer(async (req, res) => {",
+    "  const started = Date.now();",
+    "  res.on(\"finish\", () => console.log(req.method, req.url, res.statusCode, Date.now() - started, \"ms\"));",
+    "  if (!req.url.startsWith(\"/api\")) {",
+    "    res.writeHead(404).end();",
+    "    return;",
+    "  }",
+    "  let user;",
+    "  try {",
+    "    user = await verifyToken(req.headers.authorization);",
+    "  } catch {",
+    "    res.writeHead(401).end();",
+    "    return;",
+    "  }",
+    "  const headers = { ...req.headers, \"x-internal-user\": user.id };",
+    "  const upstream = http.request({ ...UPSTREAM, path: req.url, method: req.method, headers }, (up) => {",
+    "    res.writeHead(up.statusCode, up.headers);",
+    "    up.pipe(res);",
+    "  });",
+    "  upstream.setTimeout(5000);",
+    "  upstream.on(\"error\", (err) => {",
+    "    console.error(\"upstream error\", err.message);",
+    "  });",
+    "  req.pipe(upstream);",
+    "});",
+    "",
+    "server.listen(8080);"
+  ],
+  "expected": [
+    {
+      "line": 9,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the prefix check also accepts /apiadmin, /api-internal and similar paths; it must require \"/api/\""
+    },
+    {
+      "line": 25,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "setTimeout only emits a timeout event; with no handler that destroys the request and sends 502, a slow upstream hangs the client"
+    },
+    {
+      "line": 27,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the error is only logged; the client never gets a 502 and its request hangs until it times out"
+    }
+  ],
+  "benign": [
+    20
+  ]
+}

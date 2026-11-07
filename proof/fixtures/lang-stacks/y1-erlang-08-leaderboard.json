@@ -1,0 +1,69 @@
+{
+  "id": "y1-erlang-08-leaderboard",
+  "title": "Erlang game leaderboard",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/leaderboard.erl",
+  "context": "Leaderboard helpers over a list of {PlayerId, Points} in submission order. ranked/1 sorts by points descending and ties keep submission order; top/2 returns the N best; page/3 returns 1-based page P of size Size; rank/2 returns a player's 1-based position or not_found.",
+  "code": [
+    "-module(leaderboard).",
+    "-export([submit/2, ranked/1, top/2, page/3, rank/2]).",
+    "",
+    "submit({_Id, Points} = Entry, Scores) when is_integer(Points), Points >= 0 ->",
+    "    Scores ++ [Entry].",
+    "",
+    "ranked(Scores) ->",
+    "    lists:sort(fun({_, A}, {_, B}) -> A > B end, Scores).",
+    "",
+    "top(N, Scores) ->",
+    "    lists:sublist(ranked(Scores), N).",
+    "",
+    "page(P, Size, Scores) when P >= 1, Size >= 1 ->",
+    "    Ranked = ranked(Scores),",
+    "    Start = P * Size,",
+    "    case Start > length(Ranked) of",
+    "        true -> [];",
+    "        false -> lists:sublist(Ranked, Start, Size)",
+    "    end.",
+    "",
+    "rank(PlayerId, Scores) ->",
+    "    rank(PlayerId, ranked(Scores), 0).",
+    "",
+    "rank(_PlayerId, [], _Pos) ->",
+    "    not_found;",
+    "rank(PlayerId, [{PlayerId, _} | _], Pos) ->",
+    "    Pos;",
+    "rank(PlayerId, [_ | Rest], Pos) ->",
+    "    rank(PlayerId, Rest, Pos + 1)."
+  ],
+  "expected": [
+    {
+      "line": 8,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "lists:sort/2 is only stable when the fun returns true for equal elements; with strict > ties are reordered, so use >="
+    },
+    {
+      "line": 15,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "pages are 1-based, so page P starts at (P - 1) * Size + 1; this skips the first page and is off by one"
+    },
+    {
+      "line": 22,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the position counter starts at 0, so ranks come out 0-based instead of 1-based"
+    }
+  ],
+  "benign": [
+    5,
+    11
+  ]
+}

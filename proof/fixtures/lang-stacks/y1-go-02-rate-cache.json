@@ -1,0 +1,100 @@
+{
+  "id": "y1-go-02-rate-cache",
+  "title": "Go TTL cache for exchange rates",
+  "holdout": false,
+  "language": "go",
+  "filename": "rates/cache.go",
+  "context": "In-memory TTL cache for exchange rates, used by concurrent HTTP handlers. Get returns ok=false for missing or expired entries. A janitor goroutine deletes expired entries every minute for the life of the process. GetOrFetch must not cache anything when fetch fails.",
+  "code": [
+    "package rates",
+    "",
+    "import (",
+    "\t\"sync\"",
+    "\t\"time\"",
+    ")",
+    "",
+    "type entry struct {",
+    "\tvalue   float64",
+    "\texpires time.Time",
+    "}",
+    "",
+    "type Cache struct {",
+    "\tmu    sync.RWMutex",
+    "\titems map[string]entry",
+    "\tttl   time.Duration",
+    "}",
+    "",
+    "func New(ttl time.Duration) *Cache {",
+    "\tc := &Cache{items: make(map[string]entry), ttl: ttl}",
+    "\tgo c.janitor()",
+    "\treturn c",
+    "}",
+    "",
+    "func (c *Cache) Get(key string) (float64, bool) {",
+    "\tc.mu.RLock()",
+    "\tdefer c.mu.RUnlock()",
+    "\te, ok := c.items[key]",
+    "\tif !ok || e.expires.Before(time.Now()) {",
+    "\t\treturn 0, false",
+    "\t}",
+    "\treturn e.value, true",
+    "}",
+    "",
+    "func (c *Cache) Set(key string, v float64) {",
+    "\tc.mu.RLock()",
+    "\tc.items[key] = entry{value: v, expires: time.Now().Add(c.ttl)}",
+    "\tc.mu.RUnlock()",
+    "}",
+    "",
+    "func (c *Cache) GetOrFetch(key string, fetch func(string) (float64, error)) (float64, error) {",
+    "\tif v, ok := c.Get(key); ok {",
+    "\t\treturn v, nil",
+    "\t}",
+    "\tv, err := fetch(key)",
+    "\tc.Set(key, v)",
+    "\treturn v, err",
+    "}",
+    "",
+    "func (c *Cache) janitor() {",
+    "\tfor range time.Tick(time.Minute) {",
+    "\t\tc.mu.Lock()",
+    "\t\tfor k, e := range c.items {",
+    "\t\t\tif e.expires.After(time.Now()) {",
+    "\t\t\t\tdelete(c.items, k)",
+    "\t\t\t}",
+    "\t\t}",
+    "\t\tc.mu.Unlock()",
+    "\t}",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 36,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "writing the map under a read lock lets concurrent Sets write at once (fatal concurrent map writes); Set needs mu.Lock"
+    },
+    {
+      "line": 46,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the result is cached even when fetch failed, so a zero rate is served for the whole TTL"
+    },
+    {
+      "line": 54,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "condition is inverted: it deletes entries that are still valid and keeps the expired ones"
+    }
+  ],
+  "benign": [
+    29,
+    51
+  ]
+}

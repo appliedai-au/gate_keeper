@@ -1,0 +1,81 @@
+{
+  "id": "y2-elysia-01-coupon-redeem",
+  "title": "Elysia coupon redemption",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/coupons.ts",
+  "context": "Coupon redemption under concurrent load (Postgres, READ COMMITTED). A coupon may be used at most max_uses times and once per user. Codes are case-insensitive and stored upper-case. A user may only cancel their own redemptions. `sql` is a postgres.js tagged-template client; sql.begin runs a transaction.",
+  "code": [
+    "import { Elysia, t } from \"elysia\";",
+    "import { sql } from \"./db\";",
+    "import { requireUser } from \"./auth\";",
+    "",
+    "export const coupons = new Elysia({ prefix: \"/coupons\" })",
+    "  .use(requireUser)",
+    "  .post(\"/redeem\", async ({ body, user, set }) => {",
+    "    const code = body.code.trim();",
+    "    return await sql.begin(async (tx) => {",
+    "      const [coupon] = await tx`SELECT id, max_uses, uses, expires_at FROM coupons WHERE code = ${code}`;",
+    "      if (!coupon) { set.status = 404; return { error: \"unknown coupon\" }; }",
+    "      if (coupon.expires_at && coupon.expires_at < new Date()) { set.status = 410; return { error: \"expired\" }; }",
+    "      if (coupon.uses > coupon.max_uses) { set.status = 409; return { error: \"fully redeemed\" }; }",
+    "      const [dup] = await tx`SELECT 1 FROM redemptions WHERE coupon_id = ${coupon.id} AND user_id = ${user.id}`;",
+    "      if (dup) { set.status = 409; return { error: \"already redeemed\" }; }",
+    "      await tx`UPDATE coupons SET uses = uses + 1 WHERE id = ${coupon.id}`;",
+    "      await tx`INSERT INTO redemptions (coupon_id, user_id) VALUES (${coupon.id}, ${user.id})`;",
+    "      return { ok: true, couponId: coupon.id };",
+    "    });",
+    "  }, { body: t.Object({ code: t.String({ minLength: 3, maxLength: 32 }) }) })",
+    "  .get(\"/mine\", async ({ user }) => {",
+    "    return await sql`",
+    "      SELECT r.id, c.code, r.created_at FROM redemptions r",
+    "      JOIN coupons c ON c.id = r.coupon_id",
+    "      WHERE r.user_id = ${user.id} ORDER BY r.created_at DESC`;",
+    "  })",
+    "  .delete(\"/redemptions/:id\", async ({ params, user, set }) => {",
+    "    return await sql.begin(async (tx) => {",
+    "      const rows = await tx`DELETE FROM redemptions WHERE id = ${params.id} RETURNING coupon_id`;",
+    "      if (rows.length === 0) { set.status = 404; return { error: \"not found\" }; }",
+    "      await tx`UPDATE coupons SET uses = uses - 1 WHERE id = ${rows[0].coupon_id}`;",
+    "      return { ok: true };",
+    "    });",
+    "  });"
+  ],
+  "expected": [
+    {
+      "line": 8,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "not upper-cased, so lower-case input never matches the stored codes"
+    },
+    {
+      "line": 10,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "no FOR UPDATE, so concurrent redemptions read the same uses value and exceed max_uses"
+    },
+    {
+      "line": 13,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "> allows one redemption beyond max_uses; must be >="
+    },
+    {
+      "line": 29,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "no user_id = ${user.id} filter, so any user can cancel anyone's redemption"
+    }
+  ],
+  "benign": [
+    14
+  ]
+}

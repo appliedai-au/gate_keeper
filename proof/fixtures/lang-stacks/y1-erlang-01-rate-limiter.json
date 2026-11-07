@@ -1,0 +1,79 @@
+{
+  "id": "y1-erlang-01-rate-limiter",
+  "title": "Erlang per-client rate limiter",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/rate_limiter.erl",
+  "context": "Fixed-window rate limiter for the API gateway. Each client may make at most 100 requests per 60-second window: the 100th request must be allowed and the 101st rejected. check/1 is called concurrently from many request processes, so no increment may be lost, and counters of finished windows must be cleaned up every window.",
+  "code": [
+    "-module(rate_limiter).",
+    "-behaviour(gen_server).",
+    "-export([start_link/0, check/1]).",
+    "-export([init/1, handle_call/3, handle_cast/2, handle_info/2]).",
+    "",
+    "-define(LIMIT, 100).",
+    "-define(WINDOW, 60).",
+    "",
+    "start_link() ->",
+    "    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).",
+    "",
+    "init([]) ->",
+    "    ets:new(rate_counts, [named_table, public, set, {write_concurrency, true}]),",
+    "    erlang:send_after(?WINDOW * 1000, self(), reset),",
+    "    {ok, #{}}.",
+    "",
+    "check(ClientId) ->",
+    "    Window = erlang:system_time(second) div ?WINDOW,",
+    "    Key = {ClientId, Window},",
+    "    Count = case ets:lookup(rate_counts, Key) of",
+    "        [{_, N}] -> N + 1;",
+    "        [] -> 1",
+    "    end,",
+    "    ets:insert(rate_counts, {Key, Count}),",
+    "    if",
+    "        Count >= ?LIMIT -> {error, rate_limited};",
+    "        true -> ok",
+    "    end.",
+    "",
+    "handle_call(_Req, _From, State) ->",
+    "    {reply, ok, State}.",
+    "",
+    "handle_cast(_Msg, State) ->",
+    "    {noreply, State}.",
+    "",
+    "handle_info(reset, State) ->",
+    "    Current = erlang:system_time(second) div ?WINDOW,",
+    "    ets:select_delete(rate_counts, [{{{'_', '$1'}, '_'}, [{'<', '$1', Current}], [true]}]),",
+    "    {noreply, State}."
+  ],
+  "expected": [
+    {
+      "line": 24,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "lookup-then-insert is not atomic: concurrent callers read the same N and overwrite each other, losing increments; use ets:update_counter/4 with a default"
+    },
+    {
+      "line": 26,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": ">= rejects the 100th request; the limit allows exactly 100, so the test must be Count > ?LIMIT"
+    },
+    {
+      "line": 39,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "the reset timer is never re-armed with send_after, so old windows are deleted only once and the table grows without bound"
+    }
+  ],
+  "benign": [
+    13,
+    38
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "id": "y1-react-07-login-page",
+  "title": "React login page with redirect",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/LoginPage.tsx",
+  "context": "Login page. After signing in it navigates to the ?next= parameter, which must be a same-site path (a single leading \"/\", never \"//host\"), otherwise \"/\". Server errors ({message}) are shown and the form must become usable again. \"Remember me\" must default to off.",
+  "code": [
+    "import { useState, type FormEvent } from \"react\";",
+    "import { useNavigate, useSearchParams } from \"react-router-dom\";",
+    "",
+    "export function LoginPage() {",
+    "  const [params] = useSearchParams();",
+    "  const navigate = useNavigate();",
+    "  const [email, setEmail] = useState(\"\");",
+    "  const [password, setPassword] = useState(\"\");",
+    "  const [remember, setRemember] = useState(true);",
+    "  const [error, setError] = useState(\"\");",
+    "  const [pending, setPending] = useState(false);",
+    "",
+    "  function safeNext(): string {",
+    "    const next = params.get(\"next\") ?? \"/\";",
+    "    return next.startsWith(\"/\") ? next : \"/\";",
+    "  }",
+    "",
+    "  async function onSubmit(e: FormEvent) {",
+    "    e.preventDefault();",
+    "    setPending(true);",
+    "    setError(\"\");",
+    "    try {",
+    "      const r = await fetch(\"/api/login\", {",
+    "        method: \"POST\",",
+    "        headers: { \"Content-Type\": \"application/json\" },",
+    "        body: JSON.stringify({ email, password, remember }),",
+    "        credentials: \"include\",",
+    "      });",
+    "      if (!r.ok) {",
+    "        const { message } = await r.json();",
+    "        setError(message);",
+    "        return;",
+    "      }",
+    "      navigate(safeNext(), { replace: true });",
+    "    } catch {",
+    "      setError(\"Network error\");",
+    "    }",
+    "    setPending(false);",
+    "  }",
+    "",
+    "  return (",
+    "    <form onSubmit={onSubmit}>",
+    "      <input type=\"email\" value={email} onChange={(e) => setEmail(e.target.value)} required />",
+    "      <input type=\"password\" value={password} onChange={(e) => setPassword(e.target.value)} required />",
+    "      <label>",
+    "        <input type=\"checkbox\" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Remember me",
+    "      </label>",
+    "      {error && <p role=\"alert\">{error}</p>}",
+    "      <button type=\"submit\" disabled={pending}>Sign in</button>",
+    "    </form>",
+    "  );",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 9,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "\"Remember me\" must default to off but starts checked"
+    },
+    {
+      "line": 15,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "\"//evil.example\" also starts with \"/\" and is a protocol-relative URL to another host (open redirect)"
+    },
+    {
+      "line": 32,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "returns before setPending(false), so after a failed login the submit button stays disabled forever"
+    }
+  ],
+  "benign": [
+    27
+  ]
+}

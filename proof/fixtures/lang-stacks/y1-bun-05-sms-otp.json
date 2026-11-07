@@ -1,0 +1,83 @@
+{
+  "id": "y1-bun-05-sms-otp",
+  "title": "Bun SMS one-time codes on Redis",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/otp.ts",
+  "context": "SMS login codes stored with Bun's built-in Redis client. Codes are 6 digits, valid for 5 minutes, single-use, and a phone gets at most 5 verification attempts per code window. sendSms returns a Promise that rejects when the provider fails; requestCode must fail in that case.",
+  "code": [
+    "import { redis } from \"bun\";",
+    "import { sendSms } from \"./sms\";",
+    "",
+    "const TTL_SECONDS = 300;",
+    "const MAX_TRIES = 5;",
+    "",
+    "function normalize(phone: string) {",
+    "  const p = phone.replace(/[^\\d+]/g, \"\");",
+    "  if (!/^\\+\\d{8,15}$/.test(p)) throw new Error(\"invalid phone\");",
+    "  return p;",
+    "}",
+    "",
+    "function sixDigits() {",
+    "  const n = crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000;",
+    "  return n.toString().padStart(6, \"0\");",
+    "}",
+    "",
+    "export async function requestCode(phone: string) {",
+    "  const p = normalize(phone);",
+    "  const code = sixDigits();",
+    "  await redis.set(`otp:${p}`, code);",
+    "  await redis.expire(`otp:${p}`, TTL_SECONDS * 1000);",
+    "  await redis.expire(`otp-tries:${p}`, TTL_SECONDS);",
+    "  sendSms(p, `Your login code is ${code}`);",
+    "}",
+    "",
+    "export async function verifyCode(phone: string, input: string) {",
+    "  const p = normalize(phone);",
+    "  const tries = await redis.incr(`otp-tries:${p}`);",
+    "  if (tries === 1) await redis.expire(`otp-tries:${p}`, TTL_SECONDS);",
+    "  if (tries >= MAX_TRIES) return { ok: false, reason: \"locked\" };",
+    "  const stored = await redis.get(`otp:${p}`);",
+    "  if (stored === null) return { ok: false, reason: \"expired\" };",
+    "  if (stored !== input) return { ok: false, reason: \"wrong\" };",
+    "  return { ok: true };",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 22,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "EXPIRE takes seconds; multiplying by 1000 keeps codes alive ~3.5 days instead of 5 minutes"
+    },
+    {
+      "line": 24,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the sendSms promise is not awaited, so a provider failure is an unhandled rejection and the caller is told the code was sent"
+    },
+    {
+      "line": 31,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": ">= locks on the 5th attempt, so only 4 attempts are allowed; must be > MAX_TRIES"
+    },
+    {
+      "line": 35,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the code is never deleted after a successful check, so it can be replayed until it expires (must be single-use)"
+    }
+  ],
+  "benign": [
+    14
+  ]
+}

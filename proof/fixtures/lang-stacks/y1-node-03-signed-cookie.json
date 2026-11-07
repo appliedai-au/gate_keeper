@@ -1,0 +1,84 @@
+{
+  "id": "y1-node-03-signed-cookie",
+  "title": "Express signed session cookie",
+  "holdout": false,
+  "language": "javascript",
+  "filename": "src/session-cookie.js",
+  "context": "Hand-rolled signed cookie for an Express app (cookie-parser populates req.cookies). The value is `<base64url payload>.<base64url HMAC-SHA256>`; signatures must be compared in constant time, and a malformed or tampered cookie must be treated as logged out, never throw. Payload `exp` is in seconds since the epoch. The app must refuse to start without COOKIE_SECRET.",
+  "code": [
+    "import crypto from \"node:crypto\";",
+    "",
+    "const SECRET = process.env.COOKIE_SECRET;",
+    "",
+    "function sign(data) {",
+    "  return crypto.createHmac(\"sha256\", SECRET).update(data).digest(\"base64url\");",
+    "}",
+    "",
+    "export function issue(res, userId, ttlSeconds) {",
+    "  const exp = Date.now() + ttlSeconds;",
+    "  const payload = Buffer.from(JSON.stringify({ uid: userId, exp })).toString(\"base64url\");",
+    "  res.cookie(\"sid\", `${payload}.${sign(payload)}`, { httpOnly: true, secure: true, sameSite: \"lax\" });",
+    "}",
+    "",
+    "export function read(req) {",
+    "  const raw = req.cookies?.sid;",
+    "  if (!raw) return null;",
+    "  const [payload, sig] = raw.split(\".\");",
+    "  const expected = sign(payload);",
+    "  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;",
+    "  const data = JSON.parse(Buffer.from(payload, \"base64url\").toString());",
+    "  if (data.exp < Date.now() / 1000) return null;",
+    "  return data.uid;",
+    "}",
+    "",
+    "export function requireUser(req, res, next) {",
+    "  const uid = read(req);",
+    "  if (!uid) res.status(401).json({ error: \"login required\" });",
+    "  req.userId = uid;",
+    "  next();",
+    "}",
+    "",
+    "export function logout(req, res) {",
+    "  res.clearCookie(\"sid\");",
+    "  res.status(204).end();",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 3,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "a missing COOKIE_SECRET is not detected at startup; the app starts and only fails (or signs with undefined) at request time"
+    },
+    {
+      "line": 10,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "Date.now() is milliseconds while exp must be seconds, so the cookie effectively never expires"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "timingSafeEqual throws when lengths differ and Buffer.from(undefined) throws when there is no dot, so a malformed cookie crashes the request"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "there is no return after the 401, so next() still runs the protected handler for anonymous users"
+    }
+  ],
+  "benign": [
+    12,
+    21
+  ]
+}

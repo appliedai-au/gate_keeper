@@ -1,0 +1,1136 @@
+=== y1-rust-01-token-bucket|Rust per-client token bucket|rust|src/limiter.rs
+CONTEXT: Per-client token-bucket rate limiter shared across threads. Each bucket holds at most `capacity` tokens and refills at `refill_per_sec` tokens per second; a request costs one whole token. Unknown clients start with a full bucket. `prune` removes buckets that have been idle for more than `idle_secs`.
+---
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Instant;
+
+pub struct Bucket {
+    tokens: f64,
+    last: Instant,
+}
+
+pub struct Limiter {
+    capacity: f64,
+    refill_per_sec: f64,
+    buckets: Mutex<HashMap<String, Bucket>>,
+}
+
+impl Limiter {
+    pub fn new(capacity: u32, refill_per_sec: u32) -> Self {
+        Limiter {
+            capacity: capacity as f64,
+            refill_per_sec: refill_per_sec as f64,
+            buckets: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn allow(&self, client: &str) -> bool {
+        let mut map = self.buckets.lock().unwrap(); ⟦OK⟧
+        let now = Instant::now();
+        let bucket = map.entry(client.to_string()).or_insert(Bucket { tokens: 0.0, last: now }); ⟦BUG correctness|new clients must start with a full bucket, but tokens starts at 0 so their first request is rejected⟧
+        let last = bucket.last;
+        let elapsed = now.duration_since(last).as_millis() as f64; ⟦BUG correctness|elapsed is measured in milliseconds but the rate is per second, so buckets refill 1000x too fast⟧
+        bucket.last = now;
+        bucket.tokens += elapsed * self.refill_per_sec; ⟦BUG correctness|tokens are never capped at capacity, so an idle client accumulates an unlimited burst⟧
+
+        if bucket.tokens > 0.0 { ⟦BUG correctness|a request costs a whole token; with > 0.0 a fractional balance admits the request and drives tokens negative⟧
+            bucket.tokens -= 1.0;
+            return true;
+        }
+        false
+    }
+
+    pub fn remaining(&self, client: &str) -> u32 {
+        let map = self.buckets.lock().unwrap();
+        map.get(client).map(|b| b.tokens as u32).unwrap_or(self.capacity as u32) ⟦OK⟧
+    }
+
+    pub fn prune(&self, idle_secs: u64) {
+        let mut map = self.buckets.lock().unwrap();
+        let now = Instant::now();
+        map.retain(|_, b| now.duration_since(b.last).as_secs() > idle_secs); ⟦BUG correctness|retain keeps the entries for which the closure is true, so this keeps idle buckets and deletes the active ones⟧
+    }
+}
+=== y1-rust-02-env-config|Rust environment config loader|rust|src/config.rs
+CONTEXT: Loads service configuration from environment variables at startup. Missing or invalid values must produce a ConfigError, never a panic. PORT defaults to 8080 and DATABASE_URL is required. MAX_CONNECTIONS defaults to 10 and must be between 1 and 100 inclusive. REQUEST_TIMEOUT_SECS defaults to 30. The Debug form of Config is written to the startup log, and DATABASE_URL contains the database password.
+---
+use std::env;
+use std::fmt;
+
+#[derive(Debug)]
+pub enum ConfigError {
+    Missing(&'static str),
+    Invalid(&'static str, String),
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConfigError::Missing(k) => write!(f, "missing env var {k}"),
+            ConfigError::Invalid(k, v) => write!(f, "invalid value for {k}: {v}"),
+        }
+    }
+}
+
+#[derive(Debug)] ⟦BUG security|derived Debug prints database_url, so the database password ends up in the startup log⟧
+pub struct Config {
+    pub port: u16,
+    pub database_url: String,
+    pub max_connections: u32,
+    pub request_timeout_ms: u64,
+}
+
+pub fn load() -> Result<Config, ConfigError> {
+    let port = match env::var("PORT") {
+        Ok(v) => v.parse::<u16>().map_err(|_| ConfigError::Invalid("PORT", v.clone()))?, ⟦OK⟧
+        Err(_) => 8080,
+    };
+    let database_url = env::var("DATABASE_URL").unwrap_or_default(); ⟦BUG error-handling|a missing DATABASE_URL silently becomes an empty string instead of returning ConfigError::Missing⟧
+    let max_connections: u32 = env::var("MAX_CONNECTIONS")
+        .unwrap_or_else(|_| "10".into())
+        .parse()
+        .unwrap(); ⟦BUG error-handling|unwrap panics on a non-numeric MAX_CONNECTIONS instead of returning ConfigError::Invalid⟧
+    let timeout_secs: u64 = match env::var("REQUEST_TIMEOUT_SECS") {
+        Ok(v) => v.parse().map_err(|_| ConfigError::Invalid("REQUEST_TIMEOUT_SECS", v.clone()))?,
+        Err(_) => 30,
+    };
+    if max_connections < 1 || max_connections >= 100 { ⟦BUG correctness|100 is allowed by the inclusive range but >= 100 rejects it⟧
+        return Err(ConfigError::Invalid("MAX_CONNECTIONS", max_connections.to_string()));
+    }
+    Ok(Config {
+        port,
+        database_url,
+        max_connections,
+        request_timeout_ms: timeout_secs * 100, ⟦BUG correctness|seconds to milliseconds needs * 1000; * 100 makes every timeout ten times too short⟧
+    })
+}
+=== y1-rust-03-lru-cache|Rust LRU page cache|rust|src/lru.rs
+CONTEXT: Fixed-capacity LRU cache for rendered pages. It must never hold more than `capacity` entries. `get` marks an entry as most recently used and `peek` does not. Inserting a new key into a full cache evicts the least recently used entry; overwriting an existing key must not evict anything. `shrink_to` lowers the capacity and evicts down to it.
+---
+use std::collections::{HashMap, VecDeque};
+
+pub struct LruCache {
+    capacity: usize,
+    map: HashMap<String, Vec<u8>>,
+    order: VecDeque<String>,
+}
+
+impl LruCache {
+    pub fn new(capacity: usize) -> Self {
+        assert!(capacity > 0, "capacity must be positive"); ⟦OK⟧
+        LruCache { capacity, map: HashMap::with_capacity(capacity), order: VecDeque::new() }
+    }
+
+    fn touch(&mut self, key: &str) {
+        if let Some(pos) = self.order.iter().position(|k| k == key) {
+            self.order.remove(pos);
+        }
+        self.order.push_back(key.to_string());
+    }
+
+    pub fn get(&mut self, key: &str) -> Option<&Vec<u8>> {
+        if self.map.contains_key(key) {
+            self.touch(key);
+        }
+        self.map.get(key)
+    }
+
+    pub fn peek(&self, key: &str) -> Option<&Vec<u8>> {
+        self.map.get(key) ⟦OK⟧
+    }
+
+    pub fn put(&mut self, key: String, value: Vec<u8>) {
+        let full = self.map.len() >= self.capacity; ⟦BUG correctness|does not check whether the key already exists, so overwriting a key in a full cache evicts an unrelated entry⟧
+        if full {
+            if let Some(old) = self.order.pop_back() { ⟦BUG correctness|the back of the deque is the most recently used entry; eviction must pop_front to drop the least recently used⟧
+                self.map.remove(&old);
+            }
+        }
+        self.touch(&key);
+        self.map.insert(key, value);
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<Vec<u8>> {
+        self.order.retain(|k| k != key);
+        self.map.remove(key)
+    }
+
+    pub fn shrink_to(&mut self, new_capacity: usize) {
+        self.capacity = new_capacity.max(1);
+        if self.order.len() > self.capacity { ⟦BUG correctness|if evicts at most one entry; it must loop until len <= capacity, otherwise the cache stays over capacity⟧
+            let old = self.order.pop_front().unwrap();
+            self.map.remove(&old);
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+}
+=== y1-rust-04-async-crawler|Rust async URL fetcher|rust|src/crawl.rs
+CONTEXT: Fetches a list of URLs concurrently with reqwest on tokio. At most MAX_IN_FLIGHT requests may run at once, each request must time out after 10 seconds, and a non-2xx status counts as failed. fetch_all must return only after every fetch has finished. success_rate may be called before anything was fetched and must then return 1.0.
+---
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::Semaphore;
+
+const MAX_IN_FLIGHT: usize = 8;
+
+#[derive(Default)]
+pub struct Stats {
+    pub ok: u64,
+    pub failed: u64,
+    pub bytes: u64,
+}
+
+pub async fn fetch_all(urls: Vec<String>) -> Arc<Mutex<Stats>> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(10)) ⟦BUG correctness|10 milliseconds instead of 10 seconds, so almost every request times out⟧
+        .build()
+        .expect("http client");
+    let stats = Arc::new(Mutex::new(Stats::default()));
+    let sem = Arc::new(Semaphore::new(MAX_IN_FLIGHT));
+    let mut handles = Vec::new();
+    for url in urls {
+        let client = client.clone();
+        let stats = stats.clone();
+        let sem = sem.clone();
+        handles.push(tokio::spawn(async move {
+            let _ = sem.acquire().await; ⟦BUG concurrency|binding to _ drops the permit immediately, so the semaphore never limits in-flight requests⟧
+            let outcome = match client.get(&url).send().await {
+                Ok(resp) => resp.bytes().await.map(|b| b.len() as u64), ⟦BUG correctness|the status is never checked (error_for_status), so 404/500 responses are counted as ok⟧
+                Err(e) => Err(e),
+            };
+            let mut s = stats.lock().unwrap(); ⟦OK⟧
+            match outcome {
+                Ok(n) => {
+                    s.ok += 1;
+                    s.bytes += n;
+                }
+                Err(_) => s.failed += 1,
+            }
+        }));
+    }
+    futures::future::join_all(handles); ⟦BUG concurrency|join_all returns a lazy future that is never awaited, so fetch_all returns before the fetches finish⟧
+    stats
+}
+
+pub fn success_rate(stats: &Stats) -> f64 {
+    let total = stats.ok + stats.failed;
+    (stats.ok / total) as f64 ⟦BUG correctness|integer division gives only 0 or 1, and with nothing fetched total is 0 and this panics instead of returning 1.0⟧
+}
+=== y1-rust-05-sample-ring|Rust audio sample ring buffer|rust|src/ring.rs
+CONTEXT: Fixed-size ring buffer of audio samples, used from a single thread; capacity is always at least 1. `push` overwrites the oldest sample when full, `pop` removes and returns the oldest sample, and `latest(n)` returns the n most recent samples oldest-first (n may exceed len). `rms` covers only the stored samples and is 0.0 for an empty ring.
+---
+pub struct Ring {
+    buf: Vec<f32>,
+    head: usize,
+    len: usize,
+}
+
+impl Ring {
+    pub fn with_capacity(cap: usize) -> Self {
+        Ring { buf: vec![0.0; cap], head: 0, len: 0 }
+    }
+
+    fn cap(&self) -> usize {
+        self.buf.len()
+    }
+
+    pub fn push(&mut self, sample: f32) {
+        let tail = (self.head + self.len) % self.cap();
+        self.buf[tail] = sample;
+        if self.len == self.cap() {
+            self.head = (self.head + 1) % self.cap(); ⟦OK⟧
+        } else {
+            self.len += 1;
+        }
+    }
+
+    pub fn pop(&mut self) -> Option<f32> {
+        if self.len == 0 {
+            return None;
+        }
+        let v = self.buf[self.head];
+        self.head += 1; ⟦BUG correctness|head is not wrapped modulo the capacity, so it runs past the end and the next pop or push indexes out of bounds⟧
+        self.len -= 1;
+        Some(v)
+    }
+
+    pub fn latest(&self, n: usize) -> Vec<f32> {
+        let n = n.min(self.len);
+        let start = self.head + self.len - n - 1; ⟦BUG correctness|off by one: the window starts at head + len - n; the extra - 1 returns one older sample and underflows when head is 0 and n == len⟧
+        (0..n).map(|i| self.buf[(start + i) % self.cap()]).collect()
+    }
+
+    pub fn rms(&self) -> f32 {
+        let sum: f32 = self.buf.iter().map(|s| s * s).sum(); ⟦BUG correctness|sums the whole backing buffer, including stale slots left by pop and unused slots, instead of only the len stored samples⟧
+        let count = self.len.max(1) as f32; ⟦OK⟧
+        (sum / count).sqrt()
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn clear(&mut self) {
+        self.head = 0;
+        self.len = 0;
+    }
+}
+=== y1-rust-06-sqlx-orders|Rust sqlx order repository|rust|src/orders.rs
+CONTEXT: Order repository on sqlx and PostgreSQL. `search` filters by a status string that comes straight from the customer. `place_order` must decrement stock and insert the order atomically and must never oversell, even when many orders for the same SKU run concurrently; qty is validated as positive by the caller. Database errors must be returned to the caller.
+---
+use sqlx::{PgPool, Row};
+
+pub struct Order {
+    pub id: i64,
+    pub sku: String,
+    pub qty: i32,
+    pub status: String,
+}
+
+pub async fn search(pool: &PgPool, status: &str, limit: i64) -> sqlx::Result<Vec<Order>> {
+    let sql = format!("SELECT id, sku, qty, status FROM orders WHERE status = '{status}' ORDER BY id DESC LIMIT $1"); ⟦BUG security|customer-supplied status is interpolated into the SQL text (injection); it must be bound as a parameter⟧
+    let rows = sqlx::query(&sql).bind(limit).fetch_all(pool).await?;
+    Ok(rows
+        .iter()
+        .map(|r| Order { id: r.get("id"), sku: r.get("sku"), qty: r.get("qty"), status: r.get("status") })
+        .collect())
+}
+
+pub async fn place_order(pool: &PgPool, sku: &str, qty: i32) -> sqlx::Result<i64> {
+    let mut tx = pool.begin().await?;
+    let stock: i32 = sqlx::query_scalar("SELECT stock FROM products WHERE sku = $1") ⟦BUG concurrency|the row is read without FOR UPDATE, so concurrent orders all see the same stock, pass the check and oversell⟧
+        .bind(sku)
+        .fetch_one(&mut *tx)
+        .await?;
+    if stock < qty { ⟦OK⟧
+        return Err(sqlx::Error::RowNotFound);
+    }
+    sqlx::query("UPDATE products SET stock = stock - $1 WHERE sku = $2")
+        .bind(qty)
+        .bind(sku)
+        .execute(&mut *tx)
+        .await?;
+    let id: i64 = sqlx::query_scalar("INSERT INTO orders (sku, qty, status) VALUES ($1, $2, 'pending') RETURNING id")
+        .bind(sku)
+        .bind(qty)
+        .fetch_one(pool) ⟦BUG data-integrity|the insert runs on the pool, outside the transaction, so it is not atomic with the stock update⟧
+        .await?;
+    Ok(id) ⟦BUG data-integrity|tx is never committed; it is rolled back on drop, so the stock decrement is lost while the order stays inserted⟧
+}
+
+pub async fn cancel(pool: &PgPool, id: i64) -> sqlx::Result<()> {
+    let _ = sqlx::query("UPDATE orders SET status = 'cancelled' WHERE id = $1").bind(id).execute(pool).await; ⟦BUG error-handling|the query result is discarded, so a database error is swallowed and cancel reports success⟧
+    Ok(())
+}
+=== y1-rust-07-log-rotate|Rust size-rotating log writer|rust|src/rotate.rs
+CONTEXT: Size-based log writer. When writing a line (including its newline) would push the current file past max_bytes, it rotates: app.log becomes app.log.1, app.log.1 becomes app.log.2, and so on, keeping `keep` old files and deleting the oldest. The writer may be reopened on an existing log file. Each line must be on disk when write_line returns, and I/O errors must be returned, never panic.
+---
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, BufWriter, Write};
+use std::path::PathBuf;
+
+pub struct RotatingLog {
+    path: PathBuf,
+    max_bytes: u64,
+    keep: u32,
+    size: u64,
+    out: BufWriter<File>,
+}
+
+fn open_append(path: &PathBuf) -> io::Result<File> {
+    OpenOptions::new().create(true).append(true).open(path)
+}
+
+impl RotatingLog {
+    pub fn open(path: PathBuf, max_bytes: u64, keep: u32) -> io::Result<Self> {
+        let file = open_append(&path)?;
+        let size = 0; ⟦BUG correctness|ignores the size of an existing file (file.metadata()?.len()), so a reopened log grows past max_bytes before rotating⟧
+        Ok(RotatingLog { path, max_bytes, keep, size, out: BufWriter::new(file) })
+    }
+
+    fn rotated(&self, n: u32) -> PathBuf {
+        PathBuf::from(format!("{}.{}", self.path.display(), n))
+    }
+
+    fn rotate(&mut self) -> io::Result<()> {
+        self.out.flush()?;
+        let _ = fs::remove_file(self.rotated(self.keep)); ⟦OK⟧
+        for n in 1..self.keep { ⟦BUG data-integrity|renames run in ascending order, so .1 overwrites .2 before .2 is moved; the loop must go from keep-1 down to 1⟧
+            let from = self.rotated(n);
+            if from.exists() {
+                fs::rename(&from, self.rotated(n + 1))?;
+            }
+        }
+        fs::rename(&self.path, self.rotated(1))?;
+        self.out = BufWriter::new(open_append(&self.path)?);
+        self.size = 0;
+        Ok(())
+    }
+
+    pub fn write_line(&mut self, line: &str) -> io::Result<()> {
+        let len = line.len() as u64; ⟦BUG correctness|the newline written by writeln! is not counted, so the size undercounts by one byte per line and files exceed max_bytes⟧
+        if self.size + len > self.max_bytes {
+            self.rotate()?;
+        }
+        writeln!(self.out, "{}", line).expect("log write failed"); ⟦BUG error-handling|expect panics on an I/O error instead of returning it⟧
+        self.size += len;
+        Ok(()) ⟦BUG data-integrity|the BufWriter is never flushed, so the line can still be in memory (and lost on crash) when write_line returns⟧
+    }
+}
+=== y2-rust-01-event-pages|Rust cursor pagination|rust|src/pages.rs
+CONTEXT: Cursor pagination over events sorted by ascending unique id. A cursor is the hex id of the last event on the previous page and the next page starts strictly after it. Page size comes from the client and must be clamped to 1..=100. Cursors come from clients and may be garbage or point past the end; that must yield an error or an empty page, never a panic. Event kinds are case-sensitive.
+---
+use std::num::ParseIntError;
+
+#[derive(Clone, Debug)]
+pub struct Event {
+    pub id: u64,
+    pub kind: String,
+    pub payload: String,
+}
+
+pub struct Page<'a> {
+    pub items: &'a [Event],
+    pub next_cursor: Option<String>,
+}
+
+pub fn decode_cursor(raw: &str) -> Result<u64, ParseIntError> {
+    u64::from_str_radix(raw, 16)
+}
+
+pub fn encode_cursor(id: u64) -> String {
+    format!("{:x}", id)
+}
+
+pub fn page<'a>(events: &'a [Event], cursor: Option<&str>, size: usize) -> Result<Page<'a>, ParseIntError> {
+    let size = size.min(100); ⟦BUG correctness|only the upper bound is clamped; a size of 0 gives an empty page with no cursor, which ends pagination early⟧
+    let start = match cursor {
+        Some(c) => {
+            let after = decode_cursor(c)?;
+            events.partition_point(|e| e.id <= after) ⟦OK⟧
+        }
+        None => 0,
+    };
+    let end = start + size; ⟦BUG correctness|end is not limited to events.len(), so the last page (or any short list) panics on the slice below⟧
+    let items = &events[start..end];
+    let next_cursor = if end < events.len() {
+        items.last().map(|e| encode_cursor(e.id))
+    } else {
+        None
+    };
+    Ok(Page { items, next_cursor })
+}
+
+pub fn find(events: &[Event], id: u64) -> Option<&Event> {
+    events.binary_search_by_key(&id, |e| e.id).ok().map(|i| &events[i]) ⟦OK⟧
+}
+
+pub fn count_kind(events: &[Event], kind: &str) -> usize {
+    events.iter().filter(|e| e.kind.eq_ignore_ascii_case(kind)).count() ⟦BUG correctness|kinds are case-sensitive, but eq_ignore_ascii_case also counts events whose kind differs only in case⟧
+}
+=== y2-rust-02-api-keys|Rust API key verification|rust|src/keys.rs
+CONTEXT: Verifies API keys presented in request headers. Stored records are looked up by the key's first 8 characters and hold the hex SHA-256 digest of the full key; the digest comparison must be constant-time. Revoked keys must be rejected. `expires_at` is Unix seconds and a key is valid strictly before that time. Presented keys are untrusted input of any length and must never cause a panic.
+---
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::RwLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+use subtle::ConstantTimeEq;
+
+pub struct KeyRecord {
+    pub owner: String,
+    pub digest_hex: String,
+    pub expires_at: u64,
+    pub revoked: bool,
+}
+
+pub struct KeyStore {
+    by_prefix: RwLock<HashMap<String, KeyRecord>>,
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) ⟦OK⟧
+}
+
+impl KeyStore {
+    pub fn verify(&self, presented: &str) -> Option<String> {
+        let prefix = &presented[..8]; ⟦BUG security|slicing panics on keys shorter than 8 bytes or when byte 8 is not a char boundary; untrusted input can crash the handler⟧
+        let map = self.by_prefix.read().unwrap();
+        let rec = map.get(prefix)?;
+        let digest = hex::encode(Sha256::digest(presented.as_bytes()));
+        if digest != rec.digest_hex { ⟦BUG security|String != short-circuits on the first differing byte; the digest must be compared with ct_eq⟧
+            return None;
+        }
+        if rec.expires_at < now_secs() { ⟦BUG security|a key is valid only strictly before expires_at, so the check must be expires_at <= now; this accepts it at the expiry second⟧
+            return None;
+        }
+        Some(rec.owner.clone()) ⟦BUG security|rec.revoked is never checked, so revoked keys still authenticate⟧
+    }
+
+    pub fn revoke(&self, prefix: &str) -> bool {
+        let mut map = self.by_prefix.write().unwrap();
+        match map.get_mut(prefix) {
+            Some(rec) => {
+                rec.revoked = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn insert(&self, prefix: String, rec: KeyRecord) {
+        self.by_prefix.write().unwrap().insert(prefix, rec);
+    }
+}
+=== y2-rust-03-thumb-pool|Rust thumbnail worker pool|rust|src/pool.rs
+CONTEXT: A std::thread worker pool for thumbnail jobs. `submit` queues a job and returns false if it could not be queued. `shutdown` must let workers finish the jobs already queued and then join every thread. A panicking job must not take down its worker thread. `done` counts finished jobs.
+---
+use std::panic::{self, AssertUnwindSafe};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+
+type Job = Box<dyn FnOnce() + Send + 'static>;
+
+pub struct Pool {
+    tx: Option<Sender<Job>>,
+    workers: Vec<JoinHandle<()>>,
+    pub done: Arc<AtomicUsize>,
+}
+
+impl Pool {
+    pub fn new(n: usize) -> Pool {
+        let (tx, rx) = channel::<Job>();
+        let rx: Arc<Mutex<Receiver<Job>>> = Arc::new(Mutex::new(rx));
+        let done = Arc::new(AtomicUsize::new(0));
+        let mut workers = Vec::with_capacity(n);
+        for _ in 0..n {
+            let rx = rx.clone();
+            let done = done.clone();
+            workers.push(thread::spawn(move || loop {
+                let job = rx.lock().unwrap().recv(); ⟦OK⟧
+                match job {
+                    Ok(job) => {
+                        job(); ⟦BUG error-handling|a panicking job unwinds and kills the worker thread; it must run under panic::catch_unwind(AssertUnwindSafe(job))⟧
+                        done.fetch_add(1, Ordering::Relaxed); ⟦OK⟧
+                    }
+                    Err(_) => break,
+                }
+            }));
+        }
+        Pool { tx: Some(tx), workers, done }
+    }
+
+    pub fn submit<F: FnOnce() + Send + 'static>(&self, f: F) -> bool {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(Box::new(f)); ⟦BUG error-handling|the send error is discarded and true is returned even when no worker is left to receive the job⟧
+            return true;
+        }
+        false
+    }
+
+    pub fn shutdown(&mut self) {
+        for w in self.workers.drain(..) { ⟦BUG concurrency|workers are joined while the Sender is still alive, so recv never returns Err and shutdown deadlocks; tx must be dropped first⟧
+            let _ = w.join();
+        }
+        self.tx.take();
+    }
+}
+
+impl Drop for Pool {
+    fn drop(&mut self) {
+        self.tx.take();
+    }
+}
+=== y1-go-01-avatar-upload|Go avatar upload handler|go|avatars/upload.go
+CONTEXT: HTTP handler for avatar uploads. Uploads are limited to 2 MiB and must be PNG or JPEG as detected by content sniffing; the file is saved as /var/avatars/<userID>.png or .jpg according to the sniffed type, with userID taken from the authenticated request context. Every failure must produce an HTTP error response, and no partial file may be reported as saved.
+---
+package avatars
+
+import (
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+)
+
+const maxAvatar = 2 << 20 ⟦OK⟧
+const avatarDir = "/var/avatars"
+
+type ctxKey struct{}
+
+var ctxUserKey = ctxKey{}
+
+func userIDFrom(r *http.Request) (string, bool) {
+	id, ok := r.Context().Value(ctxUserKey).(string)
+	return id, ok
+}
+
+func Upload(w http.ResponseWriter, r *http.Request) {
+	userID, ok := userIDFrom(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxAvatar)
+	file, header, err := r.FormFile("avatar") ⟦BUG resource|the multipart file is never closed (no defer file.Close()), leaking a file handle or temp file per upload⟧
+	if err != nil {
+		http.Error(w, "bad upload", http.StatusBadRequest)
+		return
+	}
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(file, head) ⟦OK⟧
+	kind := http.DetectContentType(head[:n])
+	if kind != "image/png" && kind != "image/jpeg" {
+		http.Error(w, "unsupported type", http.StatusUnsupportedMediaType)
+		return
+	}
+	ext := filepath.Ext(header.Filename) ⟦BUG security|the extension comes from the client file name, not the sniffed type, so a PNG can be stored as .html or .svg and served with that type⟧
+	dst, err := os.Create(filepath.Join(avatarDir, userID+ext))
+	if err != nil {
+		http.Error(w, "cannot save", http.StatusInternalServerError)
+		return
+	}
+	defer dst.Close()
+	if _, err := dst.Write(head[:n]); err != nil {
+		http.Error(w, "cannot save", http.StatusInternalServerError)
+		return
+	}
+	io.Copy(dst, file) ⟦BUG error-handling|the copy error is ignored, so an over-limit body or a disk error leaves a truncated file and still returns 204⟧
+	w.WriteHeader(http.StatusNoContent)
+}
+=== y1-go-02-rate-cache|Go TTL cache for exchange rates|go|rates/cache.go
+CONTEXT: In-memory TTL cache for exchange rates, used by concurrent HTTP handlers. Get returns ok=false for missing or expired entries. A janitor goroutine deletes expired entries every minute for the life of the process. GetOrFetch must not cache anything when fetch fails.
+---
+package rates
+
+import (
+	"sync"
+	"time"
+)
+
+type entry struct {
+	value   float64
+	expires time.Time
+}
+
+type Cache struct {
+	mu    sync.RWMutex
+	items map[string]entry
+	ttl   time.Duration
+}
+
+func New(ttl time.Duration) *Cache {
+	c := &Cache{items: make(map[string]entry), ttl: ttl}
+	go c.janitor()
+	return c
+}
+
+func (c *Cache) Get(key string) (float64, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e, ok := c.items[key]
+	if !ok || e.expires.Before(time.Now()) { ⟦OK⟧
+		return 0, false
+	}
+	return e.value, true
+}
+
+func (c *Cache) Set(key string, v float64) {
+	c.mu.RLock() ⟦BUG concurrency|writing the map under a read lock lets concurrent Sets write at once (fatal concurrent map writes); Set needs mu.Lock⟧
+	c.items[key] = entry{value: v, expires: time.Now().Add(c.ttl)}
+	c.mu.RUnlock()
+}
+
+func (c *Cache) GetOrFetch(key string, fetch func(string) (float64, error)) (float64, error) {
+	if v, ok := c.Get(key); ok {
+		return v, nil
+	}
+	v, err := fetch(key)
+	c.Set(key, v) ⟦BUG error-handling|the result is cached even when fetch failed, so a zero rate is served for the whole TTL⟧
+	return v, err
+}
+
+func (c *Cache) janitor() {
+	for range time.Tick(time.Minute) { ⟦OK⟧
+		c.mu.Lock()
+		for k, e := range c.items {
+			if e.expires.After(time.Now()) { ⟦BUG correctness|condition is inverted: it deletes entries that are still valid and keeps the expired ones⟧
+				delete(c.items, k)
+			}
+		}
+		c.mu.Unlock()
+	}
+}
+=== y1-go-03-sales-csv|Go sales CSV report|go|report/sales.go
+CONTEXT: HTTP handler that exports a CSV sales report from PostgreSQL via database/sql. The `sort` query parameter may only be "date", "region" or "total"; anything else falls back to date order. Amounts are stored as integer cents and must be printed as dollars with two decimals. Database resources must always be released and a failed query must never produce a silently truncated report.
+---
+package report
+
+import (
+	"database/sql"
+	"encoding/csv"
+	"fmt"
+	"net/http"
+	"strconv"
+)
+
+var sortColumns = map[string]string{"date": "sold_on", "region": "region", "total": "total_cents"}
+
+type line struct {
+	day, region string
+	cents       int64
+}
+
+func Handler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		col, ok := sortColumns[r.URL.Query().Get("sort")]
+		if !ok {
+			col = r.URL.Query().Get("sort") ⟦BUG security|unknown values fall back to the raw query parameter, which is pasted into ORDER BY (SQL injection) instead of defaulting to sold_on⟧
+		}
+		query := fmt.Sprintf("SELECT sold_on, region, total_cents FROM sales WHERE sold_on >= $1 ORDER BY %s", col)
+		rows, err := db.QueryContext(r.Context(), query, r.URL.Query().Get("from")) ⟦BUG resource|rows is never closed (no defer rows.Close()), so the early return on a Scan error leaks the connection⟧
+		if err != nil {
+			http.Error(w, "query failed", http.StatusInternalServerError)
+			return
+		}
+		var lines []line
+		for rows.Next() {
+			var l line
+			if err := rows.Scan(&l.day, &l.region, &l.cents); err != nil {
+				http.Error(w, "scan failed", http.StatusInternalServerError)
+				return
+			}
+			lines = append(lines, l)
+		}
+		w.Header().Set("Content-Type", "text/csv") ⟦BUG error-handling|rows.Err() is never checked after the loop, so an error mid-iteration produces a silently truncated report⟧
+		out := csv.NewWriter(w)
+		out.Write([]string{"date", "region", "total"})
+		for _, l := range lines {
+			dollars := float64(l.cents / 100) ⟦BUG correctness|integer division happens before the conversion, so the cents are dropped and every total ends in .00⟧
+			out.Write([]string{l.day, l.region, strconv.FormatFloat(dollars, 'f', 2, 64)})
+		}
+		out.Flush()
+	}
+}
+=== y1-go-04-broadcast|Go concurrent notification broadcast|go|notify/broadcast.go
+CONTEXT: Broadcast sends a message to every subscriber concurrently with at most 10 sends in flight, gives up on the whole operation after 30 seconds or when ctx is cancelled (starting no further sends), and returns the number of successful sends only after every started goroutine has finished. The module uses Go 1.22 loop variable semantics.
+---
+package notify
+
+import (
+	"context"
+	"sync"
+	"time"
+)
+
+type Sender interface {
+	Send(ctx context.Context, to string, msg string) error
+}
+
+func Broadcast(ctx context.Context, s Sender, subscribers []string, msg string) int {
+	tctx, _ := context.WithTimeout(ctx, 30*time.Second) ⟦BUG resource|the cancel func is discarded, so the timer and context live until the timeout even after Broadcast returns (lostcancel)⟧
+	sem := make(chan struct{}, 10)
+	var wg sync.WaitGroup
+	var ok int
+	for _, sub := range subscribers {
+		select {
+		case <-tctx.Done():
+			break ⟦BUG correctness|break only leaves the select, so the loop keeps starting goroutines without a semaphore slot, and their deferred <-sem then blocks forever⟧
+		case sem <- struct{}{}:
+		}
+		go func() {
+			wg.Add(1) ⟦BUG concurrency|wg.Add inside the goroutine races with wg.Wait, which can return before the goroutines have registered⟧
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := s.Send(tctx, sub, msg); err == nil {
+				ok++ ⟦BUG concurrency|ok is incremented from many goroutines without synchronisation (data race, lost counts)⟧
+			}
+		}()
+	}
+	wg.Wait()
+	return ok
+}
+
+func Unique(subscribers []string) []string {
+	seen := make(map[string]struct{}, len(subscribers))
+	out := subscribers[:0:0] ⟦OK⟧
+	for _, s := range subscribers {
+		if _, dup := seen[s]; !dup {
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	return out
+}
+=== y2-go-01-signed-webhook|Go signed webhook receiver|go|hooks/receiver.go
+CONTEXT: Receives webhooks from a payment provider. X-Signature is hex(HMAC-SHA256(secret, raw body)) and must be compared in constant time. Bodies over 1 MiB are rejected. The provider retries deliveries, sometimes concurrently, and each event ID must be handled at most once.
+---
+package hooks
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"net/http"
+	"sync"
+)
+
+type Event struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+}
+
+type Receiver struct {
+	secret []byte
+	handle func(Event) error
+	mu     sync.Mutex
+	seen   map[string]bool
+}
+
+func NewReceiver(secret []byte, handle func(Event) error) *Receiver {
+	return &Receiver{secret: secret, handle: handle, seen: make(map[string]bool)}
+}
+
+func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20)) ⟦OK⟧
+	if err != nil {
+		http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	mac := hmac.New(sha256.New, rc.secret)
+	mac.Write(body)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if expected != r.Header.Get("X-Signature") { ⟦BUG security|string comparison is not constant-time and leaks the signature byte by byte; use hmac.Equal on the decoded bytes⟧
+		http.Error(w, "bad signature", http.StatusUnauthorized)
+		return
+	}
+	var ev Event
+	if err := json.Unmarshal(body, &ev); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	rc.mu.Lock()
+	dup := rc.seen[ev.ID]
+	rc.mu.Unlock() ⟦BUG concurrency|the lock is released between checking and marking the ID, so two concurrent retries both see dup=false and both handle the event⟧
+	if dup {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if err := rc.handle(ev); err != nil {
+		http.Error(w, "handler failed", http.StatusInternalServerError)
+		return
+	}
+	rc.seen[ev.ID] = true ⟦BUG concurrency|the map is written without holding mu, racing with other requests (concurrent map read/write)⟧
+	w.WriteHeader(http.StatusOK)
+}
+=== y2-go-02-get-retry|Go HTTP GET with retry and backoff|go|httpx/retry.go
+CONTEXT: Retries idempotent GET requests with exponential backoff: waits of 100ms, 200ms, 400ms and so on, capped at 5s, for at most maxAttempts attempts in total. Network errors and 5xx responses are retried; any other response is returned immediately with its body open. Every response that is not returned must have its body closed. Waiting stops when ctx is cancelled.
+---
+package httpx
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+)
+
+const baseDelay = 100 * time.Millisecond
+const maxDelay = 5 * time.Second
+
+func backoff(attempt int) time.Duration {
+	d := baseDelay * time.Duration(1<<(attempt+1)) ⟦BUG correctness|off by one: attempt 0 waits 200ms instead of 100ms; the shift must be 1<<attempt⟧
+	if d > maxDelay {
+		return maxDelay
+	}
+	return d
+}
+
+func GetWithRetry(ctx context.Context, c *http.Client, url string, maxAttempts int) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.Do(req)
+		if err == nil && resp.StatusCode < 500 { ⟦OK⟧
+			return resp, nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = fmt.Errorf("server error: %s", resp.Status) ⟦BUG resource|the 5xx response body is never closed before retrying, leaking the connection⟧
+		}
+		if attempt == maxAttempts-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff(attempt) * time.Millisecond): ⟦BUG correctness|backoff already returns a Duration; multiplying by time.Millisecond turns 100ms into about 28 hours⟧
+		}
+	}
+	return nil, lastErr
+}
+=== y1-node-01-commit-log|Express recent commits endpoint|javascript|src/commits.js
+CONTEXT: Express 4 router for an internal dashboard that shows recent commits of a repository. `repo` must name a directory directly under /srv/repos, and `limit` must be an integer from 1 to 50 (default 20). Express 4 does not catch rejected promises from async handlers. Responses are cached for 60 seconds per repo and limit.
+---
+const express = require("express");
+const { exec } = require("child_process");
+const path = require("path");
+const fs = require("fs/promises");
+
+const REPO_ROOT = "/srv/repos";
+const FORMAT = "%H%x09%an%x09%s";
+const cache = new Map();
+const router = express.Router();
+
+function run(cmd) {
+  return new Promise((resolve, reject) => {
+    exec(cmd, { maxBuffer: 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(stdout))); ⟦OK⟧
+  });
+}
+
+router.get("/commits/:repo", async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50); ⟦BUG correctness|only the upper bound is enforced; limit=-5 or 0 is passed through to git instead of being rejected or clamped to at least 1⟧
+  const repo = req.params.repo;
+  const dir = path.join(REPO_ROOT, repo); ⟦BUG security|repo is not checked against the allowed directories, so ".." or an encoded %2F path escapes /srv/repos⟧
+  const key = `${repo}:${limit}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < 60) { ⟦BUG correctness|Date.now() is in milliseconds, so entries expire after 60ms instead of 60 seconds⟧
+    return res.json(hit.data);
+  }
+  await fs.access(dir); ⟦BUG error-handling|there is no try/catch, so a missing repo or a failing git command rejects the async handler and the request hangs with an unhandled rejection⟧
+  const pretty = `--pretty=format:${FORMAT}`;
+  const out = await run(`git -C ${dir} log -n ${limit} ${pretty}`); ⟦BUG security|dir is interpolated into a shell command, so a repo name containing ; or $( ) runs arbitrary commands; use execFile with an argument array⟧
+  const data = out
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [hash, author, subject] = line.split("\t");
+      return { hash, author, subject };
+    });
+  cache.set(key, { at: Date.now(), data });
+  res.json(data);
+});
+
+module.exports = router;
+=== y1-node-02-orders-csv|Node streaming CSV export|javascript|src/export.js
+CONTEXT: Streams a large orders table to CSV files. Fields may contain commas, quotes, CR and LF and must be quoted per RFC 4180 (embedded quotes doubled). exportOrders must respect write-stream backpressure, reject if the export fails, and resolve only after all data has been flushed to the file. exportAll resolves with every written path once all exports have finished.
+---
+const fs = require("fs");
+const { once } = require("events");
+
+function csvField(value) {
+  if (value === null || value === undefined) return "";
+  const s = String(value);
+  if (/[",\r\n]/.test(s)) {
+    return `"${s.replace(/"/, '""')}"`; ⟦BUG correctness|replace without the g flag doubles only the first quote, producing invalid CSV for fields with several quotes⟧
+  }
+  return s;
+}
+
+async function exportOrders(db, file) {
+  const out = fs.createWriteStream(file);
+  out.write("id,customer,total,note\n");
+  try {
+    for await (const row of db.iterate("SELECT id, customer, total_cents, note FROM orders")) {
+      const total = (row.total_cents / 100).toFixed(2); ⟦OK⟧
+      const line = [row.id, row.customer, total, row.note].map(csvField).join(",") + "\n";
+      if (!out.write(line)) {
+        once(out, "drain"); ⟦BUG performance|the drain promise is not awaited, so backpressure is ignored and the whole table is buffered in memory⟧
+      }
+    }
+  } catch (err) {
+    console.error("export failed", err); ⟦BUG error-handling|the error is logged and swallowed, so exportOrders resolves as if the export succeeded⟧
+  } finally {
+    out.end();
+  }
+  return file; ⟦BUG data-integrity|returns before the stream has emitted finish, so callers may read a file that is not fully flushed; await once(out, "finish") first⟧
+}
+
+async function exportAll(db, jobs) {
+  const results = [];
+  jobs.forEach(async (job) => {
+    results.push(await exportOrders(db, job.file)); ⟦BUG concurrency|forEach does not wait for async callbacks, so exportAll returns an empty array before any export has finished⟧
+  });
+  return results;
+}
+
+module.exports = { csvField, exportOrders, exportAll };
+=== y1-node-03-signed-cookie|Express signed session cookie|javascript|src/session-cookie.js
+CONTEXT: Hand-rolled signed cookie for an Express app (cookie-parser populates req.cookies). The value is `<base64url payload>.<base64url HMAC-SHA256>`; signatures must be compared in constant time, and a malformed or tampered cookie must be treated as logged out, never throw. Payload `exp` is in seconds since the epoch. The app must refuse to start without COOKIE_SECRET.
+---
+import crypto from "node:crypto";
+
+const SECRET = process.env.COOKIE_SECRET; ⟦BUG security|a missing COOKIE_SECRET is not detected at startup; the app starts and only fails (or signs with undefined) at request time⟧
+
+function sign(data) {
+  return crypto.createHmac("sha256", SECRET).update(data).digest("base64url");
+}
+
+export function issue(res, userId, ttlSeconds) {
+  const exp = Date.now() + ttlSeconds; ⟦BUG correctness|Date.now() is milliseconds while exp must be seconds, so the cookie effectively never expires⟧
+  const payload = Buffer.from(JSON.stringify({ uid: userId, exp })).toString("base64url");
+  res.cookie("sid", `${payload}.${sign(payload)}`, { httpOnly: true, secure: true, sameSite: "lax" }); ⟦OK⟧
+}
+
+export function read(req) {
+  const raw = req.cookies?.sid;
+  if (!raw) return null;
+  const [payload, sig] = raw.split(".");
+  const expected = sign(payload);
+  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null; ⟦BUG error-handling|timingSafeEqual throws when lengths differ and Buffer.from(undefined) throws when there is no dot, so a malformed cookie crashes the request⟧
+  const data = JSON.parse(Buffer.from(payload, "base64url").toString()); ⟦OK⟧
+  if (data.exp < Date.now() / 1000) return null;
+  return data.uid;
+}
+
+export function requireUser(req, res, next) {
+  const uid = read(req);
+  if (!uid) res.status(401).json({ error: "login required" }); ⟦BUG security|there is no return after the 401, so next() still runs the protected handler for anonymous users⟧
+  req.userId = uid;
+  next();
+}
+
+export function logout(req, res) {
+  res.clearCookie("sid");
+  res.status(204).end();
+}
+=== y1-node-04-job-queue|Node in-process job queue|javascript|src/queue.js
+CONTEXT: In-process job queue on node:events. Up to `concurrency` jobs run at once and jobs start in the order they were added. Each job function returns a promise and gets at most 3 attempts in total; after the last failure the queue emits "failed" with the error, otherwise "done" with the job's result. drain() resolves once nothing is pending or running, and may be called many times over the queue's life.
+---
+const { EventEmitter } = require("node:events");
+
+class JobQueue extends EventEmitter {
+  constructor(concurrency = 2) {
+    super();
+    this.concurrency = concurrency;
+    this.pending = [];
+    this.running = 0;
+  }
+
+  add(fn) {
+    this.pending.push({ fn, attempts: 0 });
+    this._next();
+  }
+
+  _next() {
+    while (this.running < this.concurrency && this.pending.length > 0) { ⟦OK⟧
+      const job = this.pending.pop(); ⟦BUG correctness|pop takes the newest job (LIFO); jobs must start in insertion order, so this must be shift⟧
+      this.running++;
+      this._run(job);
+    }
+    if (this.running === 0 && this.pending.length === 0) this.emit("idle");
+  }
+
+  async _run(job) {
+    try {
+      job.attempts++;
+      const result = job.fn(); ⟦BUG error-handling|the promise is not awaited, so rejections escape the try/catch (no retry, unhandled rejection) and "done" is emitted with a pending promise⟧
+      this.emit("done", result);
+    } catch (err) {
+      if (job.attempts <= 3) { ⟦BUG correctness|attempts is already incremented, so <= 3 re-queues after the third failure and allows a fourth attempt⟧
+        this.pending.push(job);
+      } else {
+        this.emit("failed", err);
+      }
+    }
+    this.running--;
+    this._next();
+  }
+
+  drain() {
+    return new Promise((resolve) => {
+      if (this.running === 0 && this.pending.length === 0) return resolve();
+      this.on("idle", resolve); ⟦BUG resource|on() keeps every resolve listener forever; repeated drain() calls leak listeners (MaxListenersExceededWarning); use once()⟧
+    });
+  }
+}
+
+module.exports = { JobQueue };
+=== y2-node-01-api-proxy|Node HTTP reverse proxy|javascript|src/proxy.js
+CONTEXT: node:http reverse proxy in front of an internal API on 127.0.0.1:9000. Only paths under /api/ may be forwarded. verifyToken rejects for invalid tokens and resolves to the user otherwise; the proxy sets X-Internal-User from that user and clients must not be able to set it themselves. Upstream calls time out after 5 seconds, and any upstream failure or timeout must answer the client with 502.
+---
+const http = require("node:http");
+const { verifyToken } = require("./auth");
+
+const UPSTREAM = { host: "127.0.0.1", port: 9000 };
+
+const server = http.createServer(async (req, res) => {
+  const started = Date.now();
+  res.on("finish", () => console.log(req.method, req.url, res.statusCode, Date.now() - started, "ms"));
+  if (!req.url.startsWith("/api")) { ⟦BUG security|the prefix check also accepts /apiadmin, /api-internal and similar paths; it must require "/api/"⟧
+    res.writeHead(404).end();
+    return;
+  }
+  let user;
+  try {
+    user = await verifyToken(req.headers.authorization);
+  } catch {
+    res.writeHead(401).end();
+    return;
+  }
+  const headers = { ...req.headers, "x-internal-user": user.id }; ⟦OK⟧
+  const upstream = http.request({ ...UPSTREAM, path: req.url, method: req.method, headers }, (up) => {
+    res.writeHead(up.statusCode, up.headers);
+    up.pipe(res);
+  });
+  upstream.setTimeout(5000); ⟦BUG error-handling|setTimeout only emits a timeout event; with no handler that destroys the request and sends 502, a slow upstream hangs the client⟧
+  upstream.on("error", (err) => {
+    console.error("upstream error", err.message); ⟦BUG error-handling|the error is only logged; the client never gets a 502 and its request hangs until it times out⟧
+  });
+  req.pipe(upstream);
+});
+
+server.listen(8080);
+=== y2-node-02-invoice-totals|Express invoice totals|javascript|src/invoices.js
+CONTEXT: Express 4 routes for invoices. Line prices are integer cents; tax rates are stored in basis points (825 means 8.25%) and tax is rounded to the nearest cent. The discount applies before tax and a total can never be negative. req.user is set by auth middleware, and customers may only read their own invoices.
+---
+const express = require("express");
+const db = require("./db");
+
+const router = express.Router();
+
+function computeTotals(lines, taxBps, discountCents) {
+  const subtotal = lines.reduce((sum, l) => sum + l.priceCents * l.qty, 0);
+  const discounted = subtotal - discountCents; ⟦BUG correctness|a discount larger than the subtotal makes the amount and total negative; it must be Math.max(0, ...)⟧
+  if (taxBps < 0) throw new RangeError("negative tax rate");
+  const tax = Math.round((discounted * taxBps) / 100); ⟦BUG correctness|basis points need / 10000; dividing by 100 makes tax 100x too large⟧
+  return { subtotal, discounted, tax, total: discounted + tax };
+}
+
+router.get("/invoices/:id", async (req, res, next) => {
+  try {
+    const invoice = await db.one("SELECT * FROM invoices WHERE id = $1", [req.params.id]); ⟦BUG security|the query does not filter on customer_id = req.user.id, so any logged-in customer can read any invoice by id (IDOR)⟧
+    const lines = await db.any('SELECT price_cents AS "priceCents", qty FROM invoice_lines WHERE invoice_id = $1', [invoice.id]);
+    res.json({ id: invoice.id, ...computeTotals(lines, invoice.tax_bps, invoice.discount_cents) });
+  } catch (err) {
+    next(err); ⟦OK⟧
+  }
+});
+
+router.get("/invoices", async (req, res, next) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const offset = (page - 1) * 20;
+    const rows = await db.any(
+      `SELECT id, issued_on FROM invoices WHERE customer_id = $1 ORDER BY issued_on DESC LIMIT 20 OFFSET ${offset}`, ⟦OK⟧
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+module.exports = router;

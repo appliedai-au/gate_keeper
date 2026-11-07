@@ -1,0 +1,99 @@
+{
+  "id": "y1-react-02-signup-wizard",
+  "title": "React signup wizard",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/SignupWizard.tsx",
+  "context": "Three-step signup wizard (steps 0, 1, 2). The form draft is kept in sessionStorage so a reload keeps progress, but the password must never be written to browser storage. Submitting on the last step creates the account; a failed signup must show the server's error message to the user.",
+  "code": [
+    "import { useState } from \"react\";",
+    "import { api } from \"./api\";",
+    "",
+    "type Draft = { email: string; name: string; password: string; plan: \"free\" | \"pro\" };",
+    "const STEPS = [\"Account\", \"Profile\", \"Plan\"];",
+    "",
+    "export function SignupWizard({ onDone }: { onDone: (id: string) => void }) {",
+    "  const [step, setStep] = useState(0);",
+    "  const [draft, setDraft] = useState<Draft>(() => {",
+    "    const saved = sessionStorage.getItem(\"signup-draft\");",
+    "    return saved ? { ...JSON.parse(saved), password: \"\" } : { email: \"\", name: \"\", password: \"\", plan: \"free\" };",
+    "  });",
+    "  const [submitting, setSubmitting] = useState(false);",
+    "  const [error, setError] = useState<string | null>(null);",
+    "",
+    "  function update<K extends keyof Draft>(key: K, value: Draft[K]) {",
+    "    const next = { ...draft, [key]: value };",
+    "    setDraft(next);",
+    "    sessionStorage.setItem(\"signup-draft\", JSON.stringify(next));",
+    "  }",
+    "",
+    "  function nextStep() {",
+    "    if (step === 0 && !draft.email.includes(\"@\")) return;",
+    "    setStep(Math.min(step + 1, STEPS.length - 1));",
+    "  }",
+    "",
+    "  async function submit() {",
+    "    if (submitting) return;",
+    "    setSubmitting(true);",
+    "    try {",
+    "      const { id } = await api.post(\"/signup\", draft);",
+    "      sessionStorage.removeItem(\"signup-draft\");",
+    "      onDone(id);",
+    "    } catch {",
+    "      setSubmitting(false);",
+    "    }",
+    "  }",
+    "",
+    "  return (",
+    "    <form onSubmit={(e) => { e.preventDefault(); step === STEPS.length ? submit() : nextStep(); }}>",
+    "      <h2>{STEPS[step]}</h2>",
+    "      {error && <p role=\"alert\">{error}</p>}",
+    "      {step === 0 && (",
+    "        <>",
+    "          <input type=\"email\" value={draft.email} onChange={(e) => update(\"email\", e.target.value)} />",
+    "          <input type=\"password\" value={draft.password} onChange={(e) => update(\"password\", e.target.value)} />",
+    "        </>",
+    "      )}",
+    "      {step === 1 && <input value={draft.name} onChange={(e) => update(\"name\", e.target.value)} />}",
+    "      {step === 2 && (",
+    "        <select value={draft.plan} onChange={(e) => update(\"plan\", e.target.value as Draft[\"plan\"])}>",
+    "          <option value=\"free\">Free</option>",
+    "          <option value=\"pro\">Pro</option>",
+    "        </select>",
+    "      )}",
+    "      {step > 0 && <button type=\"button\" onClick={() => setStep(step - 1)}>Back</button>}",
+    "      <button type=\"submit\" disabled={submitting}>{step === STEPS.length - 1 ? \"Create account\" : \"Next\"}</button>",
+    "    </form>",
+    "  );",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 19,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the whole draft including the password is written to sessionStorage"
+    },
+    {
+      "line": 34,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the error is swallowed; the server's message is never shown, the user only sees the button re-enable"
+    },
+    {
+      "line": 40,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "step never reaches STEPS.length (max is 2), so submit() is never called and the last step does nothing"
+    }
+  ],
+  "benign": [
+    28
+  ]
+}

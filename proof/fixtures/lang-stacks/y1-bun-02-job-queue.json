@@ -1,0 +1,90 @@
+{
+  "id": "y1-bun-02-job-queue",
+  "title": "Bun SQLite job queue",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/queue.ts",
+  "context": "Background job queue on bun:sqlite shared by several worker processes; each job must be claimed by exactly one worker. A job runs at most MAX_ATTEMPTS times in total, then becomes dead. Dead jobs must be kept for inspection; purgeOld only removes done jobs. All times are milliseconds.",
+  "code": [
+    "import { Database } from \"bun:sqlite\";",
+    "",
+    "const db = new Database(\"/var/lib/app/jobs.db\");",
+    "db.run(\"PRAGMA journal_mode = WAL\");",
+    "const MAX_ATTEMPTS = 3;",
+    "",
+    "type Job = { id: number; kind: string; payload: string; attempts: number };",
+    "type Handler = (payload: unknown) => Promise<void>;",
+    "",
+    "const pick = db.query(\"SELECT id, kind, payload, attempts FROM jobs WHERE status = 'queued' AND run_at <= ? ORDER BY run_at LIMIT 1\");",
+    "const markRunning = db.query(\"UPDATE jobs SET status = 'running', attempts = attempts + 1 WHERE id = ?\");",
+    "const markDone = db.query(\"UPDATE jobs SET status = 'done', finished_at = ? WHERE id = ?\");",
+    "const reschedule = db.query(\"UPDATE jobs SET status = 'queued', run_at = ?, last_error = ? WHERE id = ?\");",
+    "const markDead = db.query(\"UPDATE jobs SET status = 'dead', finished_at = ?, last_error = ? WHERE id = ?\");",
+    "",
+    "export function claim(): Job | null {",
+    "  const job = pick.get(Date.now()) as Job | null;",
+    "  if (!job) return null;",
+    "  markRunning.run(job.id);",
+    "  return job;",
+    "}",
+    "",
+    "export async function runOne(handlers: Map<string, Handler>) {",
+    "  const job = claim();",
+    "  if (!job) return false;",
+    "  const handler = handlers.get(job.kind);",
+    "  if (!handler) { markDead.run(Date.now(), `no handler for ${job.kind}`, job.id); return true; }",
+    "  try {",
+    "    await handler(JSON.parse(job.payload));",
+    "    markDone.run(Date.now(), job.id);",
+    "  } catch (err) {",
+    "    const attempts = job.attempts + 1;",
+    "    if (attempts > MAX_ATTEMPTS) {",
+    "      markDead.run(Date.now(), String(err), job.id);",
+    "    } else {",
+    "      reschedule.run(Date.now() + 1000 * 2 ** attempts, String(err), job.id);",
+    "    }",
+    "  }",
+    "  return true;",
+    "}",
+    "",
+    "export function purgeOld(olderThanMs: number) {",
+    "  return db.query(\"DELETE FROM jobs WHERE finished_at < ?\").run(Date.now() - olderThanMs).changes;",
+    "}",
+    "",
+    "export async function workLoop(handlers: Map<string, Handler>, signal: AbortSignal) {",
+    "  while (!signal.aborted) {",
+    "    const worked = await runOne(handlers);",
+    "    if (!worked) await Bun.sleep(500);",
+    "  }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 19,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "select and update are separate statements outside a transaction, so two worker processes can claim the same job; use BEGIN IMMEDIATE or an UPDATE ... WHERE status = 'queued' RETURNING"
+    },
+    {
+      "line": 33,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "attempts already counts this run, so > lets a job run MAX_ATTEMPTS + 1 times; must be >="
+    },
+    {
+      "line": 43,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "no status = 'done' filter, so dead jobs (which also get finished_at) are deleted too"
+    }
+  ],
+  "benign": [
+    27
+  ]
+}

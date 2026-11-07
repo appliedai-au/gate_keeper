@@ -1,0 +1,88 @@
+{
+  "id": "y2-rust-01-event-pages",
+  "title": "Rust cursor pagination",
+  "holdout": false,
+  "language": "rust",
+  "filename": "src/pages.rs",
+  "context": "Cursor pagination over events sorted by ascending unique id. A cursor is the hex id of the last event on the previous page and the next page starts strictly after it. Page size comes from the client and must be clamped to 1..=100. Cursors come from clients and may be garbage or point past the end; that must yield an error or an empty page, never a panic. Event kinds are case-sensitive.",
+  "code": [
+    "use std::num::ParseIntError;",
+    "",
+    "#[derive(Clone, Debug)]",
+    "pub struct Event {",
+    "    pub id: u64,",
+    "    pub kind: String,",
+    "    pub payload: String,",
+    "}",
+    "",
+    "pub struct Page<'a> {",
+    "    pub items: &'a [Event],",
+    "    pub next_cursor: Option<String>,",
+    "}",
+    "",
+    "pub fn decode_cursor(raw: &str) -> Result<u64, ParseIntError> {",
+    "    u64::from_str_radix(raw, 16)",
+    "}",
+    "",
+    "pub fn encode_cursor(id: u64) -> String {",
+    "    format!(\"{:x}\", id)",
+    "}",
+    "",
+    "pub fn page<'a>(events: &'a [Event], cursor: Option<&str>, size: usize) -> Result<Page<'a>, ParseIntError> {",
+    "    let size = size.min(100);",
+    "    let start = match cursor {",
+    "        Some(c) => {",
+    "            let after = decode_cursor(c)?;",
+    "            events.partition_point(|e| e.id <= after)",
+    "        }",
+    "        None => 0,",
+    "    };",
+    "    let end = start + size;",
+    "    let items = &events[start..end];",
+    "    let next_cursor = if end < events.len() {",
+    "        items.last().map(|e| encode_cursor(e.id))",
+    "    } else {",
+    "        None",
+    "    };",
+    "    Ok(Page { items, next_cursor })",
+    "}",
+    "",
+    "pub fn find(events: &[Event], id: u64) -> Option<&Event> {",
+    "    events.binary_search_by_key(&id, |e| e.id).ok().map(|i| &events[i])",
+    "}",
+    "",
+    "pub fn count_kind(events: &[Event], kind: &str) -> usize {",
+    "    events.iter().filter(|e| e.kind.eq_ignore_ascii_case(kind)).count()",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 24,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "only the upper bound is clamped; a size of 0 gives an empty page with no cursor, which ends pagination early"
+    },
+    {
+      "line": 32,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "end is not limited to events.len(), so the last page (or any short list) panics on the slice below"
+    },
+    {
+      "line": 47,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "kinds are case-sensitive, but eq_ignore_ascii_case also counts events whose kind differs only in case"
+    }
+  ],
+  "benign": [
+    28,
+    43
+  ]
+}

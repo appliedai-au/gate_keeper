@@ -1,0 +1,90 @@
+{
+  "id": "y1-php-08-image-proxy",
+  "title": "PHP image proxy for emails",
+  "holdout": false,
+  "language": "php",
+  "filename": "public/img_proxy.php",
+  "context": "/img_proxy.php?url=... fetches remote images for embedding in emails and serves them from our domain. It may only contact public http/https hosts (never loopback, private, link-local such as the 169.254.169.254 metadata service, or other reserved ranges), must give up after 5 seconds, and must only return JPEG, PNG or GIF responses of at most 5 MB.",
+  "code": [
+    "<?php",
+    "require __DIR__ . '/../bootstrap.php';",
+    "",
+    "$url = $_GET['url'] ?? '';",
+    "$parts = parse_url($url);",
+    "if (!$parts || !in_array($parts['scheme'] ?? '', ['http', 'https'], true)) {",
+    "    http_response_code(400);",
+    "    exit('bad url');",
+    "}",
+    "",
+    "$ip = gethostbyname($parts['host'] ?? '');",
+    "if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE)) {",
+    "    http_response_code(403);",
+    "    exit('forbidden host');",
+    "}",
+    "",
+    "$ch = curl_init($url);",
+    "curl_setopt_array($ch, [",
+    "    CURLOPT_RETURNTRANSFER => true,",
+    "    CURLOPT_FOLLOWLOCATION => true,",
+    "    CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,",
+    "    CURLOPT_TIMEOUT => 5000,",
+    "    CURLOPT_MAXFILESIZE => 5 * 1024 * 1024,",
+    "]);",
+    "$body = curl_exec($ch);",
+    "$type = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);",
+    "curl_close($ch);",
+    "",
+    "if ($body === false || !str_starts_with($type, 'image/')) {",
+    "    http_response_code(502);",
+    "    exit('fetch failed');",
+    "}",
+    "header('Content-Type: ' . $type);",
+    "echo $body;"
+  ],
+  "expected": [
+    {
+      "line": 12,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "without FILTER_FLAG_NO_RES_RANGE, loopback (127.0.0.1) and link-local (169.254.169.254) addresses pass the check"
+    },
+    {
+      "line": 17,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "curl resolves the host again, so a DNS-rebinding host can pass the check with a public IP and then connect to an internal one; pin the checked IP with CURLOPT_RESOLVE"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "redirects are followed without re-checking the target, so a public URL can redirect to an internal address"
+    },
+    {
+      "line": 22,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "CURLOPT_TIMEOUT is in seconds, so this allows 5000 seconds instead of 5; use 5 or CURLOPT_TIMEOUT_MS"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "any image/* type is accepted, including image/svg+xml, which runs script on our domain (XSS); allow only jpeg, png and gif"
+    }
+  ],
+  "benign": [
+    6,
+    21
+  ]
+}

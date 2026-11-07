@@ -1,0 +1,73 @@
+{
+  "id": "y2-ts-02-map-limit",
+  "title": "TypeScript concurrency-limited map",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/mapLimit.ts",
+  "context": "mapLimit(items, limit, fn) runs fn on every item with at most limit calls in flight and resolves to the results in input order. After any call rejects, mapLimit rejects with that error and no new calls may start. withTimeout(p, ms) rejects after ms milliseconds and must clear its timer as soon as p settles.",
+  "code": [
+    "export async function mapLimit<T, R>(",
+    "  items: readonly T[],",
+    "  limit: number,",
+    "  fn: (item: T, index: number) => Promise<R>,",
+    "): Promise<R[]> {",
+    "  if (!Number.isInteger(limit) || limit < 1) throw new RangeError(\"limit must be a positive integer\");",
+    "  const results: R[] = new Array(items.length);",
+    "  let next = 0;",
+    "  let failed = false;",
+    "",
+    "  async function worker(): Promise<void> {",
+    "    while (next < items.length) {",
+    "      const i = next++;",
+    "      try {",
+    "        results.push(await fn(items[i], i));",
+    "      } catch (err) {",
+    "        failed = true;",
+    "        throw err;",
+    "      }",
+    "    }",
+    "  }",
+    "",
+    "  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());",
+    "  await Promise.all(workers);",
+    "  return results;",
+    "}",
+    "",
+    "export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {",
+    "  let timer: ReturnType<typeof setTimeout> | undefined;",
+    "  const timeout = new Promise<never>((_, reject) => {",
+    "    timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);",
+    "  });",
+    "  return Promise.race([p, timeout]);",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 12,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "failed is never checked, so after one call rejects the other workers keep starting new calls"
+    },
+    {
+      "line": 15,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "push appends after the pre-sized array in completion order; results must be stored at results[i]"
+    },
+    {
+      "line": 33,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "the timer is never cleared when p settles first (no finally clearTimeout), leaving a pending timer for every call"
+    }
+  ],
+  "benign": [
+    13
+  ]
+}

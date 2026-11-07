@@ -1,0 +1,92 @@
+{
+  "id": "y2-react-01-toast-provider",
+  "title": "React toast notifications provider",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/ToastProvider.tsx",
+  "context": "App-wide toast provider. show(text, duration) auto-dismisses after duration milliseconds (default 4000). dismiss(id) removes only that toast. The provider wraps the whole app, so context consumers must not re-render when the toast list changes.",
+  "code": [
+    "import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from \"react\";",
+    "",
+    "type Toast = { id: number; text: string; duration: number };",
+    "type Ctx = { show: (text: string, duration?: number) => void; dismiss: (id: number) => void };",
+    "",
+    "const ToastContext = createContext<Ctx | null>(null);",
+    "",
+    "export function ToastProvider({ children }: { children: ReactNode }) {",
+    "  const [toasts, setToasts] = useState<Toast[]>([]);",
+    "  const nextId = useRef(1);",
+    "  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());",
+    "",
+    "  const dismiss = useCallback((id: number) => {",
+    "    setToasts((list) => list.filter((t) => t.id === id));",
+    "    const timer = timers.current.get(id);",
+    "    if (timer) clearTimeout(timer);",
+    "    timers.current.delete(id);",
+    "  }, []);",
+    "",
+    "  const show = useCallback((text: string, duration = 4) => {",
+    "    const id = nextId.current++;",
+    "    setToasts((list) => [...list, { id, text, duration }]);",
+    "    timers.current.set(id, setTimeout(() => dismiss(id), duration));",
+    "  }, [dismiss]);",
+    "",
+    "  useEffect(() => {",
+    "    const map = timers.current;",
+    "    return () => map.forEach((t) => clearTimeout(t));",
+    "  }, []);",
+    "",
+    "  const value = { show, dismiss };",
+    "",
+    "  return (",
+    "    <ToastContext.Provider value={value}>",
+    "      {children}",
+    "      <div className=\"toasts\" aria-live=\"polite\">",
+    "        {toasts.map((t) => (",
+    "          <div key={t.id} className=\"toast\">",
+    "            {t.text}",
+    "            <button onClick={() => dismiss(t.id)} aria-label=\"Dismiss\">×</button>",
+    "          </div>",
+    "        ))}",
+    "      </div>",
+    "    </ToastContext.Provider>",
+    "  );",
+    "}",
+    "",
+    "export function useToast(): Ctx {",
+    "  const ctx = useContext(ToastContext);",
+    "  if (!ctx) throw new Error(\"useToast must be used inside ToastProvider\");",
+    "  return ctx;",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 14,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "filter keeps only the dismissed toast and removes all the others; should be t.id !== id"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "duration is in milliseconds, so the default of 4 dismisses toasts almost instantly; should be 4000"
+    },
+    {
+      "line": 31,
+      "categories": [
+        "performance"
+      ],
+      "severity": "medium",
+      "why": "a new value object on every render makes every consumer re-render whenever toasts change; memoise it with useMemo"
+    }
+  ],
+  "benign": [
+    28,
+    50
+  ]
+}

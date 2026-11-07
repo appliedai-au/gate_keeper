@@ -1,0 +1,71 @@
+{
+  "id": "y1-bun-07-migrations",
+  "title": "Bun SQLite migration runner",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/migrate.ts",
+  "context": "Applies SQL migration files named <version>_<name>.sql (versions are unpadded integers: 1, 2, ... 10, 11) in ascending numeric version order. Each migration and its schema_migrations record must be applied atomically. If a migration fails, migrate must stop and throw so nothing later runs.",
+  "code": [
+    "import { Database } from \"bun:sqlite\";",
+    "import { Glob } from \"bun\";",
+    "",
+    "export async function migrate(dbPath: string, dir: string) {",
+    "  const db = new Database(dbPath);",
+    "  db.run(\"CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)\");",
+    "  const applied = new Set(",
+    "    (db.query(\"SELECT version FROM schema_migrations\").all() as { version: number }[]).map((r) => r.version),",
+    "  );",
+    "  const files: string[] = [];",
+    "  for await (const f of new Glob(\"*.sql\").scan(dir)) files.push(f);",
+    "  files.sort();",
+    "  const record = db.query(\"INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)\");",
+    "  let count = 0;",
+    "  for (const file of files) {",
+    "    const m = file.match(/^(\\d+)_(.+)\\.sql$/);",
+    "    if (!m) continue;",
+    "    const version = Number(m[1]);",
+    "    if (applied.has(version)) continue;",
+    "    const sql = await Bun.file(`${dir}/${file}`).text();",
+    "    try {",
+    "      db.run(sql);",
+    "      record.run(version, m[2], Date.now());",
+    "    } catch (err) {",
+    "      console.error(`migration ${file} failed`, err);",
+    "      continue;",
+    "    }",
+    "    count++;",
+    "  }",
+    "  db.close();",
+    "  return count;",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 12,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "lexicographic sort runs 10_x before 2_y; unpadded versions must be sorted numerically"
+    },
+    {
+      "line": 22,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "the migration and its record are not wrapped in one transaction, so a failure partway leaves a half-applied, unrecorded migration"
+    },
+    {
+      "line": 26,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "a failed migration is logged and skipped, so later migrations run against a broken schema; it must stop and rethrow"
+    }
+  ],
+  "benign": [
+    17
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "id": "y1-react-04-orders-table",
+  "title": "React sortable orders table",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/OrdersTable.tsx",
+  "context": "Sortable, paginated table over the orders prop; the parent's array must not be modified. Clicking the active column header toggles the direction. PAGE_SIZE rows per page, pages numbered 1..pageCount, and every order must be reachable. amount is integer cents.",
+  "code": [
+    "import { useMemo, useState } from \"react\";",
+    "",
+    "type Order = { id: string; customer: string; amount: number; createdAt: string };",
+    "type SortKey = \"customer\" | \"amount\" | \"createdAt\";",
+    "const PAGE_SIZE = 25;",
+    "",
+    "export function OrdersTable({ orders }: { orders: Order[] }) {",
+    "  const [sortKey, setSortKey] = useState<SortKey>(\"createdAt\");",
+    "  const [desc, setDesc] = useState(true);",
+    "  const [page, setPage] = useState(1);",
+    "",
+    "  const sorted = useMemo(() => {",
+    "    const dir = desc ? -1 : 1;",
+    "    return orders.sort((a, b) => {",
+    "      const x = a[sortKey], y = b[sortKey];",
+    "      return x < y ? -dir : x > y ? dir : 0;",
+    "    });",
+    "  }, [orders, sortKey]);",
+    "",
+    "  const pageCount = Math.floor(sorted.length / PAGE_SIZE);",
+    "  const rows = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);",
+    "",
+    "  function toggleSort(key: SortKey) {",
+    "    if (key === sortKey) setDesc(!desc);",
+    "    else { setSortKey(key); setDesc(false); }",
+    "    setPage(1);",
+    "  }",
+    "",
+    "  return (",
+    "    <table>",
+    "      <thead>",
+    "        <tr>",
+    "          <th onClick={() => toggleSort(\"customer\")}>Customer</th>",
+    "          <th onClick={() => toggleSort(\"amount\")}>Amount</th>",
+    "          <th onClick={() => toggleSort(\"createdAt\")}>Date</th>",
+    "        </tr>",
+    "      </thead>",
+    "      <tbody>",
+    "        {rows.map((o) => (",
+    "          <tr key={o.id}>",
+    "            <td>{o.customer}</td>",
+    "            <td>{(o.amount / 100).toFixed(2)}</td>",
+    "            <td>{new Date(o.createdAt).toLocaleDateString()}</td>",
+    "          </tr>",
+    "        ))}",
+    "      </tbody>",
+    "      <tfoot>",
+    "        <tr>",
+    "          <td colSpan={3}>",
+    "            <button disabled={page <= 1} onClick={() => setPage(page - 1)}>Prev</button>",
+    "            <span>{page} / {pageCount}</span>",
+    "            <button disabled={page > pageCount} onClick={() => setPage(page + 1)}>Next</button>",
+    "          </td>",
+    "        </tr>",
+    "      </tfoot>",
+    "    </table>",
+    "  );",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 14,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "sort() reorders the parent's orders array in place"
+    },
+    {
+      "line": 18,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "desc is missing from the dependency list, so toggling the direction does not re-sort"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "floor drops the last partial page (and gives 0 pages for under 25 orders); should be Math.ceil"
+    },
+    {
+      "line": 52,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "should be page >= pageCount; on the last page Next stays enabled and moves to an empty page past the end"
+    }
+  ],
+  "benign": [
+    21,
+    42
+  ]
+}

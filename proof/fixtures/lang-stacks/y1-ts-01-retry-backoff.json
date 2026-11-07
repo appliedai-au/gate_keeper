@@ -1,0 +1,78 @@
+{
+  "id": "y1-ts-01-retry-backoff",
+  "title": "TypeScript retry with exponential backoff",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/retry.ts",
+  "context": "retry(fn, opts) calls fn up to opts.attempts times in total (attempts >= 1). Between attempt n and n+1 it waits baseMs * 2^(n-1), capped at maxMs, so the first wait is baseMs. Errors for which isRetryable returns false are rethrown at once; when every attempt fails, the last error is thrown.",
+  "code": [
+    "export interface RetryOptions {",
+    "  attempts: number;",
+    "  baseMs: number;",
+    "  maxMs: number;",
+    "  isRetryable?: (err: unknown) => boolean;",
+    "  signal?: AbortSignal;",
+    "}",
+    "",
+    "function sleep(ms: number, signal?: AbortSignal): Promise<void> {",
+    "  return new Promise((resolve, reject) => {",
+    "    if (signal?.aborted) return reject(signal.reason);",
+    "    const onAbort = () => {",
+    "      clearTimeout(t);",
+    "      reject(signal!.reason);",
+    "    };",
+    "    const t = setTimeout(() => {",
+    "      signal?.removeEventListener(\"abort\", onAbort);",
+    "      resolve();",
+    "    }, ms);",
+    "    signal?.addEventListener(\"abort\", onAbort, { once: true });",
+    "  });",
+    "}",
+    "",
+    "export async function retry<T>(fn: () => Promise<T>, opts: RetryOptions): Promise<T> {",
+    "  const retryable = opts.isRetryable ?? (() => true);",
+    "  let lastError: unknown;",
+    "  for (let attempt = 1; attempt < opts.attempts; attempt++) {",
+    "    try {",
+    "      return fn();",
+    "    } catch (err) {",
+    "      lastError = err;",
+    "      if (!retryable(err)) throw err;",
+    "      if (attempt === opts.attempts) break;",
+    "      const delay = Math.min(opts.baseMs * 2 ** attempt, opts.maxMs);",
+    "      await sleep(delay, opts.signal);",
+    "    }",
+    "  }",
+    "  throw lastError;",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 27,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "off by one: fn runs only attempts-1 times, and with attempts = 1 it never runs and undefined is thrown; use <="
+    },
+    {
+      "line": 29,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "missing await: a rejected promise is returned past the try/catch, so failures are never retried"
+    },
+    {
+      "line": 34,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "exponent should be attempt - 1; the first wait is 2*baseMs and every wait is doubled"
+    }
+  ],
+  "benign": [
+    20
+  ]
+}

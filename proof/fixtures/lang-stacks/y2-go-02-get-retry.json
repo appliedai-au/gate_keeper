@@ -1,0 +1,86 @@
+{
+  "id": "y2-go-02-get-retry",
+  "title": "Go HTTP GET with retry and backoff",
+  "holdout": false,
+  "language": "go",
+  "filename": "httpx/retry.go",
+  "context": "Retries idempotent GET requests with exponential backoff: waits of 100ms, 200ms, 400ms and so on, capped at 5s, for at most maxAttempts attempts in total. Network errors and 5xx responses are retried; any other response is returned immediately with its body open. Every response that is not returned must have its body closed. Waiting stops when ctx is cancelled.",
+  "code": [
+    "package httpx",
+    "",
+    "import (",
+    "\t\"context\"",
+    "\t\"fmt\"",
+    "\t\"net/http\"",
+    "\t\"time\"",
+    ")",
+    "",
+    "const baseDelay = 100 * time.Millisecond",
+    "const maxDelay = 5 * time.Second",
+    "",
+    "func backoff(attempt int) time.Duration {",
+    "\td := baseDelay * time.Duration(1<<(attempt+1))",
+    "\tif d > maxDelay {",
+    "\t\treturn maxDelay",
+    "\t}",
+    "\treturn d",
+    "}",
+    "",
+    "func GetWithRetry(ctx context.Context, c *http.Client, url string, maxAttempts int) (*http.Response, error) {",
+    "\tvar lastErr error",
+    "\tfor attempt := 0; attempt < maxAttempts; attempt++ {",
+    "\t\treq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)",
+    "\t\tif err != nil {",
+    "\t\t\treturn nil, err",
+    "\t\t}",
+    "\t\tresp, err := c.Do(req)",
+    "\t\tif err == nil && resp.StatusCode < 500 {",
+    "\t\t\treturn resp, nil",
+    "\t\t}",
+    "\t\tif err != nil {",
+    "\t\t\tlastErr = err",
+    "\t\t} else {",
+    "\t\t\tlastErr = fmt.Errorf(\"server error: %s\", resp.Status)",
+    "\t\t}",
+    "\t\tif attempt == maxAttempts-1 {",
+    "\t\t\tbreak",
+    "\t\t}",
+    "\t\tselect {",
+    "\t\tcase <-ctx.Done():",
+    "\t\t\treturn nil, ctx.Err()",
+    "\t\tcase <-time.After(backoff(attempt) * time.Millisecond):",
+    "\t\t}",
+    "\t}",
+    "\treturn nil, lastErr",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 14,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "off by one: attempt 0 waits 200ms instead of 100ms; the shift must be 1<<attempt"
+    },
+    {
+      "line": 35,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "the 5xx response body is never closed before retrying, leaking the connection"
+    },
+    {
+      "line": 43,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "backoff already returns a Duration; multiplying by time.Millisecond turns 100ms into about 28 hours"
+    }
+  ],
+  "benign": [
+    29
+  ]
+}

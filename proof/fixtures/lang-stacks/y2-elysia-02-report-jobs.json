@@ -1,0 +1,82 @@
+{
+  "id": "y2-elysia-02-report-jobs",
+  "title": "Elysia background report jobs",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/reports.ts",
+  "context": "Starts report generation in the background; the requesting user polls for it. Only the user who started a job may see its status or download it. A failed job must show status \"failed\". Finished jobs (done or failed) are kept for one hour after finishing, then dropped.",
+  "code": [
+    "import { Elysia, t } from \"elysia\";",
+    "import { buildReport } from \"./reports-engine\";",
+    "import { auth } from \"./auth\";",
+    "",
+    "type Job = { owner: string; status: \"running\" | \"done\" | \"failed\"; file?: string; finishedAt?: number };",
+    "const jobs = new Map<string, Job>();",
+    "const KEEP_MS = 60 * 60 * 1000;",
+    "",
+    "setInterval(() => {",
+    "  const cutoff = Date.now() - KEEP_MS;",
+    "  for (const [id, job] of jobs) if (job.finishedAt && job.finishedAt > cutoff) jobs.delete(id);",
+    "}, 60_000);",
+    "",
+    "export const reports = new Elysia({ prefix: \"/reports\" })",
+    "  .use(auth)",
+    "  .post(\"/\", ({ body, user, set }) => {",
+    "    const id = crypto.randomUUID();",
+    "    const job: Job = { owner: user.id, status: \"running\" };",
+    "    jobs.set(id, job);",
+    "    buildReport(body.kind, body.from, body.to)",
+    "      .then((file) => { job.status = \"done\"; job.file = file; job.finishedAt = Date.now(); })",
+    "      .catch((err) => { console.error(\"report failed\", id, err); });",
+    "    set.status = 202;",
+    "    return { id };",
+    "  }, {",
+    "    body: t.Object({",
+    "      kind: t.Union([t.Literal(\"sales\"), t.Literal(\"refunds\")]),",
+    "      from: t.String({ format: \"date\" }),",
+    "      to: t.String({ format: \"date\" }),",
+    "    }),",
+    "  })",
+    "  .get(\"/:id\", ({ params, user, set }) => {",
+    "    const job = jobs.get(params.id);",
+    "    if (!job) { set.status = 404; return { error: \"not found\" }; }",
+    "    return { status: job.status };",
+    "  })",
+    "  .get(\"/:id/download\", ({ params, user, set }) => {",
+    "    const job = jobs.get(params.id);",
+    "    if (!job || job.owner !== user.id) { set.status = 404; return { error: \"not found\" }; }",
+    "    if (job.status !== \"done\") { set.status = 409; return { error: \"not ready\" }; }",
+    "    set.headers[\"content-disposition\"] = `attachment; filename=\"report-${params.id}.csv\"`;",
+    "    return Bun.file(job.file!);",
+    "  });"
+  ],
+  "expected": [
+    {
+      "line": 11,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "comparison is inverted: it deletes jobs finished within the last hour and keeps old ones forever; must be < cutoff"
+    },
+    {
+      "line": 22,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the failure is only logged: status stays \"running\" forever and finishedAt is never set, so the job is never cleaned up"
+    },
+    {
+      "line": 34,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "no job.owner === user.id check, so any user can read another user's job status"
+    }
+  ],
+  "benign": [
+    39
+  ]
+}

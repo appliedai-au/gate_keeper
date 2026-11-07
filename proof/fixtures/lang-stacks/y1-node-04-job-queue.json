@@ -1,0 +1,96 @@
+{
+  "id": "y1-node-04-job-queue",
+  "title": "Node in-process job queue",
+  "holdout": false,
+  "language": "javascript",
+  "filename": "src/queue.js",
+  "context": "In-process job queue on node:events. Up to `concurrency` jobs run at once and jobs start in the order they were added. Each job function returns a promise and gets at most 3 attempts in total; after the last failure the queue emits \"failed\" with the error, otherwise \"done\" with the job's result. drain() resolves once nothing is pending or running, and may be called many times over the queue's life.",
+  "code": [
+    "const { EventEmitter } = require(\"node:events\");",
+    "",
+    "class JobQueue extends EventEmitter {",
+    "  constructor(concurrency = 2) {",
+    "    super();",
+    "    this.concurrency = concurrency;",
+    "    this.pending = [];",
+    "    this.running = 0;",
+    "  }",
+    "",
+    "  add(fn) {",
+    "    this.pending.push({ fn, attempts: 0 });",
+    "    this._next();",
+    "  }",
+    "",
+    "  _next() {",
+    "    while (this.running < this.concurrency && this.pending.length > 0) {",
+    "      const job = this.pending.pop();",
+    "      this.running++;",
+    "      this._run(job);",
+    "    }",
+    "    if (this.running === 0 && this.pending.length === 0) this.emit(\"idle\");",
+    "  }",
+    "",
+    "  async _run(job) {",
+    "    try {",
+    "      job.attempts++;",
+    "      const result = job.fn();",
+    "      this.emit(\"done\", result);",
+    "    } catch (err) {",
+    "      if (job.attempts <= 3) {",
+    "        this.pending.push(job);",
+    "      } else {",
+    "        this.emit(\"failed\", err);",
+    "      }",
+    "    }",
+    "    this.running--;",
+    "    this._next();",
+    "  }",
+    "",
+    "  drain() {",
+    "    return new Promise((resolve) => {",
+    "      if (this.running === 0 && this.pending.length === 0) return resolve();",
+    "      this.on(\"idle\", resolve);",
+    "    });",
+    "  }",
+    "}",
+    "",
+    "module.exports = { JobQueue };"
+  ],
+  "expected": [
+    {
+      "line": 18,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "pop takes the newest job (LIFO); jobs must start in insertion order, so this must be shift"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the promise is not awaited, so rejections escape the try/catch (no retry, unhandled rejection) and \"done\" is emitted with a pending promise"
+    },
+    {
+      "line": 31,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "attempts is already incremented, so <= 3 re-queues after the third failure and allows a fourth attempt"
+    },
+    {
+      "line": 44,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "on() keeps every resolve listener forever; repeated drain() calls leak listeners (MaxListenersExceededWarning); use once()"
+    }
+  ],
+  "benign": [
+    17
+  ]
+}

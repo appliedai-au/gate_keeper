@@ -1,0 +1,68 @@
+{
+  "id": "y2-php-03-mail-worker",
+  "title": "PHP email queue worker",
+  "holdout": false,
+  "language": "php",
+  "filename": "bin/mail_worker.php",
+  "context": "CLI worker that sends queued emails; several copies run in parallel, so each email must be claimed by exactly one worker. attempts counts failed tries and an email is tried at most 5 times. $mailer->send() returns true on success and false on failure (it throws only on configuration errors). bootstrap.php provides $pdo and $mailer.",
+  "code": [
+    "<?php",
+    "require __DIR__ . '/../bootstrap.php';",
+    "",
+    "$workerId = gethostname() . ':' . getmypid();",
+    "",
+    "while (true) {",
+    "    $row = $pdo->query(",
+    "        \"SELECT id, recipient, subject, body FROM email_queue",
+    "         WHERE status = 'pending' AND attempts <= 5 ORDER BY id LIMIT 1\"",
+    "    )->fetch(PDO::FETCH_ASSOC);",
+    "    if ($row === false) {",
+    "        sleep(5);",
+    "        continue;",
+    "    }",
+    "",
+    "    $pdo->prepare(\"UPDATE email_queue SET status = 'sending', worker = ? WHERE id = ?\")",
+    "        ->execute([$workerId, $row['id']]);",
+    "",
+    "    try {",
+    "        $mailer->send($row['recipient'], $row['subject'], $row['body']);",
+    "        $pdo->prepare(\"UPDATE email_queue SET status = 'sent', sent_at = NOW() WHERE id = ?\")",
+    "            ->execute([$row['id']]);",
+    "    } catch (Throwable $e) {",
+    "        $pdo->prepare(\"UPDATE email_queue SET status = 'pending', attempts = attempts + 1 WHERE id = ?\")",
+    "            ->execute([$row['id']]);",
+    "        error_log('send failed: ' . $e->getMessage());",
+    "    }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 9,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "attempts <= 5 picks emails that already failed 5 times, giving a 6th try; use < 5"
+    },
+    {
+      "line": 16,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "the claim does not require status = 'pending' or check rowCount(), so two workers that selected the same row both send it"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the false return value is ignored, so failed deliveries are marked sent and never retried"
+    }
+  ],
+  "benign": [
+    4,
+    26
+  ]
+}

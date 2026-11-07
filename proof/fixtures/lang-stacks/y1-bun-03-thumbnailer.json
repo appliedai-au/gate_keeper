@@ -1,0 +1,77 @@
+{
+  "id": "y1-bun-03-thumbnailer",
+  "title": "Bun thumbnail service",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/thumbs.ts",
+  "context": "Generates thumbnails by running ImageMagick via Bun.spawn. Width must be a number from 16 to 1024. convert must be killed if it runs longer than 10 seconds. Temp files under /tmp/thumbs must be removed after every request, on success and on failure.",
+  "code": [
+    "import { unlink } from \"node:fs/promises\";",
+    "",
+    "const TMP = \"/tmp/thumbs\";",
+    "const FORMATS = new Set([\"png\", \"jpeg\", \"webp\"]);",
+    "",
+    "async function runConvert(src: string, dest: string, width: number) {",
+    "  const proc = Bun.spawn([\"convert\", src, \"-resize\", `${width}x`, dest], { stdout: \"ignore\", stderr: \"pipe\" });",
+    "  const timer = setTimeout(() => proc.kill(), 10);",
+    "  const stderr = await new Response(proc.stderr).text();",
+    "  await proc.exited;",
+    "  clearTimeout(timer);",
+    "  return { code: proc.exitCode, stderr };",
+    "}",
+    "",
+    "Bun.serve({",
+    "  port: 7070,",
+    "  async fetch(req) {",
+    "    const url = new URL(req.url);",
+    "    if (req.method !== \"POST\" || url.pathname !== \"/thumb\") return new Response(\"not found\", { status: 404 });",
+    "    const width = Number(url.searchParams.get(\"w\"));",
+    "    if (width < 16 || width > 1024) return new Response(\"bad width\", { status: 400 });",
+    "    const format = url.searchParams.get(\"fmt\") ?? \"png\";",
+    "    if (!FORMATS.has(format)) return new Response(\"bad format\", { status: 400 });",
+    "    const id = crypto.randomUUID();",
+    "    const src = `${TMP}/${id}.in`;",
+    "    const dest = `${TMP}/${id}.${format}`;",
+    "    await Bun.write(src, await req.arrayBuffer());",
+    "    const { code, stderr } = await runConvert(src, dest, width);",
+    "    if (code !== 0) {",
+    "      console.error(\"convert failed\", stderr);",
+    "      return new Response(\"conversion failed\", { status: 500 });",
+    "    }",
+    "    const out = await Bun.file(dest).arrayBuffer();",
+    "    await unlink(src);",
+    "    await unlink(dest);",
+    "    return new Response(out, { headers: { \"content-type\": `image/${format}` } });",
+    "  },",
+    "});"
+  ],
+  "expected": [
+    {
+      "line": 8,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "setTimeout takes milliseconds, so convert is killed after 10 ms instead of 10 s"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "NaN (missing or non-numeric w) fails both comparisons, so an invalid width reaches convert"
+    },
+    {
+      "line": 31,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "returns without deleting the src temp file (and any partial dest), leaking temp files on every failure"
+    }
+  ],
+  "benign": [
+    7
+  ]
+}

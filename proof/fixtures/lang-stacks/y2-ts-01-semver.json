@@ -1,0 +1,87 @@
+{
+  "id": "y2-ts-01-semver",
+  "title": "TypeScript semantic version compare",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/semver.ts",
+  "context": "Compares versions \"MAJOR.MINOR.PATCH[-prerelease]\". Numeric parts compare as numbers. A prerelease sorts before the same version without one (1.0.0-rc.1 < 1.0.0). satisfiesCaret(v, base) for base major >= 1 is true when v has the same major and v >= base (so v equal to base satisfies). maxVersion returns the highest version by these rules.",
+  "code": [
+    "export interface SemVer {",
+    "  major: number;",
+    "  minor: number;",
+    "  patch: number;",
+    "  pre: string[];",
+    "}",
+    "",
+    "const RE = /^(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?$/;",
+    "",
+    "export function parse(v: string): SemVer {",
+    "  const m = RE.exec(v.trim());",
+    "  if (!m) throw new Error(`invalid version: ${v}`);",
+    "  return { major: +m[1], minor: +m[2], patch: +m[3], pre: m[4] ? m[4].split(\".\") : [] };",
+    "}",
+    "",
+    "function comparePre(a: string[], b: string[]): number {",
+    "  if (!a.length || !b.length) return a.length - b.length;",
+    "  for (let i = 0; i < Math.max(a.length, b.length); i++) {",
+    "    if (a[i] === undefined) return -1;",
+    "    if (b[i] === undefined) return 1;",
+    "    const na = /^\\d+$/.test(a[i]), nb = /^\\d+$/.test(b[i]);",
+    "    if (na && nb) {",
+    "      const d = Number(a[i]) - Number(b[i]);",
+    "      if (d !== 0) return d;",
+    "    } else if (a[i] !== b[i]) {",
+    "      return a[i] < b[i] ? -1 : 1;",
+    "    }",
+    "  }",
+    "  return 0;",
+    "}",
+    "",
+    "export function compare(a: string, b: string): number {",
+    "  const x = parse(a), y = parse(b);",
+    "  for (const k of [\"major\", \"minor\", \"patch\"] as const) {",
+    "    if (x[k] !== y[k]) return x[k] - y[k];",
+    "  }",
+    "  return comparePre(x.pre, y.pre);",
+    "}",
+    "",
+    "export function maxVersion(list: string[]): string | undefined {",
+    "  return [...list].sort().pop();",
+    "}",
+    "",
+    "export function satisfiesCaret(v: string, base: string): boolean {",
+    "  const pv = parse(v), pb = parse(base);",
+    "  if (pb.major === 0) return pv.major === 0 && pv.minor === pb.minor && compare(v, base) >= 0;",
+    "  return pv.major === pb.major && compare(v, base) > 0;",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 17,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "a release (no prerelease) gets a negative result and sorts before its prerelease; it must be greater, i.e. b.length - a.length"
+    },
+    {
+      "line": 41,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "default sort is lexicographic, so \"1.9.0\" is ranked above \"1.10.0\"; sort with compare"
+    },
+    {
+      "line": 47,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "> excludes v equal to base; must be >= 0"
+    }
+  ],
+  "benign": [
+    35
+  ]
+}

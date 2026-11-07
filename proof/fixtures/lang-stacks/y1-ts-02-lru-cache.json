@@ -1,0 +1,92 @@
+{
+  "id": "y1-ts-02-lru-cache",
+  "title": "TypeScript LRU cache with TTL",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/lruCache.ts",
+  "context": "LRU cache holding at most max entries. get() marks an entry most recently used; set() on a full cache evicts the least recently used entry, and setting an existing key just replaces it and makes it most recent. Entries expire ttlMs after they were set and expired entries must behave as missing everywhere; size counts stored entries, expired or not.",
+  "code": [
+    "interface Entry<V> {",
+    "  value: V;",
+    "  expiresAt: number;",
+    "}",
+    "",
+    "export class LruCache<K, V> {",
+    "  private map = new Map<K, Entry<V>>();",
+    "",
+    "  constructor(",
+    "    private readonly max: number,",
+    "    private readonly ttlMs: number,",
+    "    private readonly now: () => number = Date.now,",
+    "  ) {",
+    "    if (max < 1) throw new RangeError(\"max must be at least 1\");",
+    "  }",
+    "",
+    "  get(key: K): V | undefined {",
+    "    const e = this.map.get(key);",
+    "    if (!e) return undefined;",
+    "    if (e.expiresAt <= this.now()) {",
+    "      this.map.delete(key);",
+    "      return undefined;",
+    "    }",
+    "    return e.value;",
+    "  }",
+    "",
+    "  set(key: K, value: V): void {",
+    "    if (this.map.size >= this.max) {",
+    "      const oldest = this.map.keys().next().value as K;",
+    "      this.map.delete(oldest);",
+    "    }",
+    "    this.map.set(key, { value, expiresAt: this.now() + this.ttlMs });",
+    "  }",
+    "",
+    "  has(key: K): boolean {",
+    "    return this.map.has(key);",
+    "  }",
+    "",
+    "  get size(): number {",
+    "    return this.map.size;",
+    "  }",
+    "",
+    "  prune(): number {",
+    "    let removed = 0;",
+    "    for (const [k, e] of this.map) {",
+    "      if (e.expiresAt <= this.now()) {",
+    "        this.map.delete(k);",
+    "        removed++;",
+    "      }",
+    "    }",
+    "    return removed;",
+    "  }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 24,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the entry is not moved to the most-recent end (delete and re-set), so recently read entries are still evicted first"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "an existing key is not deleted first, so updating it on a full cache evicts another entry and the key keeps its old LRU position"
+    },
+    {
+      "line": 36,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "ignores expiry, so has() returns true for an expired entry that get() treats as missing"
+    }
+  ],
+  "benign": [
+    47
+  ]
+}

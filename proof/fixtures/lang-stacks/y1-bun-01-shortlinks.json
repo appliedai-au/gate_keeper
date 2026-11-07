@@ -1,0 +1,82 @@
+{
+  "id": "y1-bun-01-shortlinks",
+  "title": "Bun URL shortener",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/links.ts",
+  "context": "URL shortener on Bun.serve and bun:sqlite. Short codes must be unguessable. Only http: and https: targets may be stored (allowlist). expires_at is stored as Unix seconds; expired links return 410. ttlDays is 1-365.",
+  "code": [
+    "import { Database } from \"bun:sqlite\";",
+    "",
+    "const db = new Database(\"links.db\");",
+    "db.run(\"CREATE TABLE IF NOT EXISTS links (code TEXT PRIMARY KEY, target TEXT NOT NULL, expires_at INTEGER NOT NULL, hits INTEGER NOT NULL DEFAULT 0)\");",
+    "",
+    "const ALPHABET = \"abcdefghijkmnpqrstuvwxyz23456789\";",
+    "const insert = db.query(\"INSERT INTO links (code, target, expires_at) VALUES (?, ?, ?)\");",
+    "const lookup = db.query(\"SELECT target, expires_at FROM links WHERE code = ?\");",
+    "const bump = db.query(\"UPDATE links SET hits = hits + 1 WHERE code = ?\");",
+    "",
+    "function newCode(len = 8) {",
+    "  let out = \"\";",
+    "  for (let i = 0; i < len; i++) out += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];",
+    "  return out;",
+    "}",
+    "",
+    "Bun.serve({",
+    "  port: 8080,",
+    "  async fetch(req) {",
+    "    const url = new URL(req.url);",
+    "    if (req.method === \"POST\" && url.pathname === \"/links\") {",
+    "      const { target, ttlDays } = await req.json();",
+    "      if (!Number.isInteger(ttlDays) || ttlDays < 1 || ttlDays > 365) return new Response(\"bad ttl\", { status: 400 });",
+    "      let parsed: URL;",
+    "      try { parsed = new URL(target); } catch { return new Response(\"bad url\", { status: 400 }); }",
+    "      if (parsed.protocol === \"javascript:\") return new Response(\"bad scheme\", { status: 400 });",
+    "      const code = newCode();",
+    "      const expires = Date.now() + ttlDays * 86400;",
+    "      insert.run(code, parsed.href, expires);",
+    "      return Response.json({ code }, { status: 201 });",
+    "    }",
+    "    if (req.method === \"GET\" && url.pathname.length > 1) {",
+    "      const code = url.pathname.slice(1);",
+    "      const row = lookup.get(code) as { target: string; expires_at: number } | null;",
+    "      if (!row) return new Response(\"not found\", { status: 404 });",
+    "      if (row.expires_at < Math.floor(Date.now() / 1000)) return new Response(\"gone\", { status: 410 });",
+    "      bump.run(code);",
+    "      return Response.redirect(row.target, 302);",
+    "    }",
+    "    return new Response(\"not found\", { status: 404 });",
+    "  },",
+    "});"
+  ],
+  "expected": [
+    {
+      "line": 13,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "Math.random is not a CSPRNG, so short codes are predictable; use crypto.getRandomValues"
+    },
+    {
+      "line": 26,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "blocklists one scheme instead of allowing only http:/https:, so data:, file: and vbscript: targets are accepted"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "expires_at is Unix seconds but Date.now() is milliseconds, so links effectively never expire"
+    }
+  ],
+  "benign": [
+    9,
+    36
+  ]
+}

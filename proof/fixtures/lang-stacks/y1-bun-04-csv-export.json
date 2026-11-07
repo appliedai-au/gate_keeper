@@ -1,0 +1,83 @@
+{
+  "id": "y1-bun-04-csv-export",
+  "title": "Bun streaming orders CSV export",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/export.ts",
+  "context": "Streams an orders CSV export from bun:sqlite; several admins may export at the same time. Per RFC 4180, fields containing a comma, quote or line break are quoted with every inner quote doubled; fields beginning with = + - @ get a ' prefix against formula injection. from/to are YYYY-MM-DD UTC days and the range includes both whole days. created_at is epoch milliseconds; totals are never negative.",
+  "code": [
+    "import { Database } from \"bun:sqlite\";",
+    "import { isAdmin } from \"./auth\";",
+    "",
+    "const db = new Database(\"shop.db\", { readonly: true });",
+    "const rows = db.query(\"SELECT id, customer, email, total_cents, created_at FROM orders WHERE created_at >= ? AND created_at < ? ORDER BY id\");",
+    "const DAY_MS = 86_400_000;",
+    "",
+    "function cell(v: unknown): string {",
+    "  let s = v == null ? \"\" : String(v);",
+    "  if (/^[=+\\-@]/.test(s)) s = \"'\" + s;",
+    "  if (/[\",\\r\\n]/.test(s)) s = '\"' + s.replace('\"', '\"\"') + '\"';",
+    "  return s;",
+    "}",
+    "",
+    "function dayStart(d: string) {",
+    "  return /^\\d{4}-\\d{2}-\\d{2}$/.test(d) ? Date.parse(`${d}T00:00:00Z`) : NaN;",
+    "}",
+    "",
+    "Bun.serve({",
+    "  port: 3100,",
+    "  fetch(req) {",
+    "    const url = new URL(req.url);",
+    "    if (url.pathname !== \"/export/orders.csv\") return new Response(\"not found\", { status: 404 });",
+    "    if (!isAdmin(req)) return new Response(\"forbidden\", { status: 403 });",
+    "    const from = dayStart(url.searchParams.get(\"from\") ?? \"\");",
+    "    const to = dayStart(url.searchParams.get(\"to\") ?? \"\");",
+    "    if (Number.isNaN(from) || Number.isNaN(to)) return new Response(\"bad range\", { status: 400 });",
+    "    const iter = rows.iterate(from, to);",
+    "    const enc = new TextEncoder();",
+    "    const stream = new ReadableStream({",
+    "      start(controller) {",
+    "        controller.enqueue(enc.encode(\"id,customer,email,total,created_at\\r\\n\"));",
+    "      },",
+    "      pull(controller) {",
+    "        const next = iter.next();",
+    "        if (next.done) { controller.close(); return; }",
+    "        const r = next.value as { id: number; customer: string; email: string; total_cents: number; created_at: number };",
+    "        const total = (r.total_cents / 100).toFixed(2);",
+    "        controller.enqueue(enc.encode([r.id, r.customer, r.email, total, new Date(r.created_at).toISOString()].map(cell).join(\",\") + \"\\r\\n\"));",
+    "      },",
+    "    });",
+    "    return new Response(stream, { headers: { \"content-type\": \"text/csv\", \"content-disposition\": \"attachment; filename=orders.csv\" } });",
+    "  },",
+    "});"
+  ],
+  "expected": [
+    {
+      "line": 11,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "String.replace with a string pattern only doubles the first quote; must use replaceAll or /\"/g"
+    },
+    {
+      "line": 26,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "`to` is the start of the last day and the query uses created_at < ?, so the whole `to` day is excluded; it must be dayStart(to) + DAY_MS"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "one shared prepared statement is iterated by every export; a concurrent export re-binds and resets it, corrupting the other stream; prepare a statement per request"
+    }
+  ],
+  "benign": [
+    10
+  ]
+}

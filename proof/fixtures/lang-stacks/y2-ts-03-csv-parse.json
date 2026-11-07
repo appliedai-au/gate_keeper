@@ -1,0 +1,80 @@
+{
+  "id": "y2-ts-03-csv-parse",
+  "title": "TypeScript CSV parser",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/csv.ts",
+  "context": "Parses RFC 4180 CSV. Fields may be quoted; a doubled \"\" inside quotes is one literal quote; quoted fields may contain commas and line breaks. Rows end with \\n or \\r\\n. A trailing line break at the end of the file must not produce an extra row. toObjects uses the first row (trimmed) as headers.",
+  "code": [
+    "export function parseCsv(text: string): string[][] {",
+    "  const rows: string[][] = [];",
+    "  let row: string[] = [];",
+    "  let field = \"\";",
+    "  let inQuotes = false;",
+    "  for (let i = 0; i < text.length; i++) {",
+    "    const ch = text[i];",
+    "    if (inQuotes) {",
+    "      if (ch === '\"') {",
+    "        if (text[i + 1] === '\"') {",
+    "          field += '\"';",
+    "        } else {",
+    "          inQuotes = false;",
+    "        }",
+    "      } else {",
+    "        field += ch;",
+    "      }",
+    "    } else if (ch === '\"') {",
+    "      inQuotes = true;",
+    "    } else if (ch === \",\") {",
+    "      row.push(field);",
+    "      field = \"\";",
+    "    } else if (ch === \"\\n\") {",
+    "      row.push(field.replace(/\\r$/, \"\"));",
+    "      rows.push(row);",
+    "      row = [];",
+    "      field = \"\";",
+    "    } else {",
+    "      field += ch;",
+    "    }",
+    "  }",
+    "  rows.push([...row, field]);",
+    "  return rows;",
+    "}",
+    "",
+    "export function toObjects(rows: string[][]): Record<string, string>[] {",
+    "  const [header, ...body] = rows;",
+    "  if (!header) return [];",
+    "  const keys = header.map((h) => h.trim());",
+    "  return body.map((r) => Object.fromEntries(keys.map((k, i) => [k, r[i + 1] ?? \"\"])));",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 11,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "i is not advanced past the second quote, so it is read next as a closing quote and the field ends early"
+    },
+    {
+      "line": 32,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "always pushes a final row, so a file ending in a line break gets an extra [\"\"] row; push only if row or field is non-empty"
+    },
+    {
+      "line": 40,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "off by one: r[i + 1] shifts every value one column left and drops the first; use r[i]"
+    }
+  ],
+  "benign": [
+    24
+  ]
+}

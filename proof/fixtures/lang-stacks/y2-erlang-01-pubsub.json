@@ -1,0 +1,76 @@
+{
+  "id": "y2-erlang-01-pubsub",
+  "title": "Erlang topic pub/sub registry",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/pubsub.erl",
+  "context": "Topic pub/sub server. subscribe/1 registers the calling process for a topic, and subscribing twice must not cause duplicate deliveries. publish/2 sends {msg, Topic, Payload} only to live subscribers of that topic. Subscribers that exit for any reason must be removed automatically; subscriber processes are long-lived and subscribe and unsubscribe often.",
+  "code": [
+    "-module(pubsub).",
+    "-behaviour(gen_server).",
+    "-export([start_link/0, subscribe/1, unsubscribe/1, publish/2]).",
+    "-export([init/1, handle_call/3, handle_cast/2, handle_info/2]).",
+    "",
+    "start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).",
+    "",
+    "subscribe(Topic) -> gen_server:call(?MODULE, {subscribe, Topic, self()}).",
+    "unsubscribe(Topic) -> gen_server:call(?MODULE, {unsubscribe, Topic, self()}).",
+    "publish(Topic, Payload) -> gen_server:cast(?MODULE, {publish, Topic, Payload}).",
+    "",
+    "init([]) -> {ok, #{}}.",
+    "",
+    "handle_call({subscribe, Topic, Pid}, _From, Subs) ->",
+    "    erlang:monitor(process, Pid),",
+    "    Pids = maps:get(Topic, Subs, []),",
+    "    {reply, ok, Subs#{Topic => [Pid | Pids]}};",
+    "handle_call({unsubscribe, Topic, Pid}, _From, Subs) ->",
+    "    Pids = maps:get(Topic, Subs, []),",
+    "    {reply, ok, Subs#{Topic => lists:delete(Pid, Pids)}}.",
+    "",
+    "handle_cast({publish, Topic, Payload}, Subs) ->",
+    "    maps:foreach(fun(_T, Pids) ->",
+    "        [Pid ! {msg, Topic, Payload} || Pid <- Pids]",
+    "    end, Subs),",
+    "    {noreply, Subs}.",
+    "",
+    "handle_info({'DOWN', _Ref, process, Pid, normal}, Subs) ->",
+    "    {noreply, maps:map(fun(_T, Pids) -> lists:delete(Pid, Pids) end, Subs)}."
+  ],
+  "expected": [
+    {
+      "line": 15,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "a new monitor is created on every subscribe and never removed on unsubscribe, so monitors pile up for long-lived subscribers"
+    },
+    {
+      "line": 17,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "a second subscribe adds the pid again, so the subscriber receives every message twice"
+    },
+    {
+      "line": 23,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the message goes to the subscribers of every topic, not only those of Topic"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "only normal exits are matched, so subscribers that crash are never removed (and other DOWN messages crash the server with function_clause)"
+    }
+  ],
+  "benign": [
+    10
+  ]
+}

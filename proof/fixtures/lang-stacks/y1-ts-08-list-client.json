@@ -1,0 +1,80 @@
+{
+  "id": "y1-ts-08-list-client",
+  "title": "TypeScript paginated list client",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/listClient.ts",
+  "context": "Client for a REST list endpoint. Pages are 0-based (page=0 is the first page) and the server returns {items, total}. Filter values are free text typed by users. listAll must return every item, fetch at most maxPages pages, and fail (reject) if any page request fails.",
+  "code": [
+    "export interface ListQuery {",
+    "  page: number;",
+    "  pageSize: number;",
+    "  filters: Record<string, string>;",
+    "  sort?: string;",
+    "}",
+    "",
+    "export interface PageResult<T> {",
+    "  items: T[];",
+    "  total: number;",
+    "}",
+    "",
+    "export function buildUrl(base: string, q: ListQuery): string {",
+    "  const parts = [`page=${q.page}`, `pageSize=${q.pageSize}`];",
+    "  for (const [k, v] of Object.entries(q.filters)) {",
+    "    parts.push(`filter[${encodeURIComponent(k)}]=${v}`);",
+    "  }",
+    "  if (q.sort) parts.push(`sort=${encodeURIComponent(q.sort)}`);",
+    "  return `${base}?${parts.join(\"&\")}`;",
+    "}",
+    "",
+    "export async function fetchPage<T>(base: string, q: ListQuery, signal?: AbortSignal): Promise<PageResult<T>> {",
+    "  const r = await fetch(buildUrl(base, q), { signal, headers: { Accept: \"application/json\" } });",
+    "  if (!r.ok) throw new Error(`list failed: HTTP ${r.status}`);",
+    "  return (await r.json()) as PageResult<T>;",
+    "}",
+    "",
+    "export async function listAll<T>(base: string, filters: Record<string, string>, pageSize = 100, maxPages = 50): Promise<T[]> {",
+    "  const all: T[] = [];",
+    "  for (let page = 1; page < maxPages; page++) {",
+    "    let res: PageResult<T>;",
+    "    try {",
+    "      res = await fetchPage<T>(base, { page, pageSize, filters });",
+    "    } catch {",
+    "      break;",
+    "    }",
+    "    all.push(...res.items);",
+    "    if (res.items.length < pageSize || all.length >= res.total) break;",
+    "  }",
+    "  return all;",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 16,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "filter values are not URL-encoded, so text containing & or = injects extra parameters or breaks the query"
+    },
+    {
+      "line": 30,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "pages are 0-based, so starting at 1 skips the first page (and fetches only maxPages - 1 pages)"
+    },
+    {
+      "line": 35,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "a failed page is swallowed and listAll resolves with a silently truncated list instead of rejecting"
+    }
+  ],
+  "benign": [
+    38
+  ]
+}

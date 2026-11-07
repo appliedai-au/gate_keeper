@@ -1,0 +1,89 @@
+{
+  "id": "y1-react-01-search-box",
+  "title": "React debounced search box",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/SearchBox.tsx",
+  "context": "Search box that queries the endpoint 300 ms after the user stops typing (2+ characters). Only the results of the latest query may be shown. Result titles come from crawled pages and may contain markup, so they must be displayed as plain text; result urls come from our own index and are always https.",
+  "code": [
+    "import { useEffect, useState } from \"react\";",
+    "",
+    "type Hit = { id: string; title: string; url: string };",
+    "",
+    "export function SearchBox({ endpoint }: { endpoint: string }) {",
+    "  const [query, setQuery] = useState(\"\");",
+    "  const [hits, setHits] = useState<Hit[]>([]);",
+    "  const [loading, setLoading] = useState(false);",
+    "  const [error, setError] = useState<string | null>(null);",
+    "",
+    "  useEffect(() => {",
+    "    if (query.trim().length < 2) {",
+    "      setHits([]);",
+    "      return;",
+    "    }",
+    "    const controller = new AbortController();",
+    "    const timer = setTimeout(async () => {",
+    "      setLoading(true);",
+    "      try {",
+    "        const r = await fetch(`${endpoint}?q=${query}`, { signal: controller.signal });",
+    "        if (!r.ok) throw new Error(`search failed: ${r.status}`);",
+    "        setHits(await r.json());",
+    "        setError(null);",
+    "      } catch (e) {",
+    "        if ((e as Error).name !== \"AbortError\") setError((e as Error).message);",
+    "      } finally {",
+    "        setLoading(false);",
+    "      }",
+    "    }, 300);",
+    "    return () => clearTimeout(timer);",
+    "  }, [query, endpoint]);",
+    "",
+    "  return (",
+    "    <div>",
+    "      <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder=\"Search\" />",
+    "      {loading && <span>Searching…</span>}",
+    "      {error && <p role=\"alert\">{error}</p>}",
+    "      <ul>",
+    "        {hits.map((h) => (",
+    "          <li key={h.id}>",
+    "            <a href={h.url}>",
+    "              <span dangerouslySetInnerHTML={{ __html: h.title.replace(query, \"<mark>$&</mark>\") }} />",
+    "            </a>",
+    "          </li>",
+    "        ))}",
+    "      </ul>",
+    "    </div>",
+    "  );",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 20,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the query is not URL-encoded, so input containing &, # or + breaks or alters the request; use encodeURIComponent"
+    },
+    {
+      "line": 30,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "cleanup never calls controller.abort(), so a slow response for an older query can arrive later and overwrite the latest results"
+    },
+    {
+      "line": 42,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "crawled titles may contain markup and are injected as HTML (XSS); they must be rendered as text"
+    }
+  ],
+  "benign": [
+    25,
+    41
+  ]
+}

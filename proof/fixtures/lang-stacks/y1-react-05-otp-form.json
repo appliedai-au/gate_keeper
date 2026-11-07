@@ -1,0 +1,87 @@
+{
+  "id": "y1-react-05-otp-form",
+  "title": "React one-time code form",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/OtpForm.tsx",
+  "context": "Verifies an SMS one-time code. After a send, Resend is disabled for the number of seconds the server returns as retryAfter (in seconds) and shows the countdown. The code must be exactly 6 digits. verifyCode resolves to true or false.",
+  "code": [
+    "import { useEffect, useState, type FormEvent } from \"react\";",
+    "import { sendCode, verifyCode } from \"./otpApi\";",
+    "",
+    "const RESEND_SECONDS = 60;",
+    "",
+    "export function OtpForm({ phone, onVerified }: { phone: string; onVerified: () => void }) {",
+    "  const [code, setCode] = useState(\"\");",
+    "  const [remaining, setRemaining] = useState(RESEND_SECONDS);",
+    "  const [error, setError] = useState<string | null>(null);",
+    "",
+    "  useEffect(() => {",
+    "    if (remaining <= 0) return;",
+    "    const t = setTimeout(() => setRemaining(remaining - 1), 1000);",
+    "    return () => clearTimeout(t);",
+    "  }, [remaining]);",
+    "",
+    "  async function resend() {",
+    "    setError(null);",
+    "    try {",
+    "      const { retryAfter } = await sendCode(phone);",
+    "      setRemaining(retryAfter * 1000);",
+    "    } catch {",
+    "      setError(\"Could not resend the code\");",
+    "    }",
+    "  }",
+    "",
+    "  async function submit(e: FormEvent) {",
+    "    e.preventDefault();",
+    "    if (!/^\\d{6}/.test(code)) {",
+    "      setError(\"Enter the 6-digit code\");",
+    "      return;",
+    "    }",
+    "    const ok = verifyCode(phone, code);",
+    "    if (ok) onVerified();",
+    "    else setError(\"Wrong code\");",
+    "  }",
+    "",
+    "  return (",
+    "    <form onSubmit={submit}>",
+    "      <input inputMode=\"numeric\" value={code} onChange={(e) => setCode(e.target.value.trim())} />",
+    "      {error && <p role=\"alert\">{error}</p>}",
+    "      <button type=\"submit\">Verify</button>",
+    "      <button type=\"button\" disabled={remaining > 0} onClick={resend}>",
+    "        {remaining > 0 ? `Resend in ${remaining}s` : \"Resend\"}",
+    "      </button>",
+    "    </form>",
+    "  );",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 21,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "retryAfter is already in seconds and the countdown ticks once per second, so Resend is locked 1000 times too long"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the regex has no $ anchor, so codes with more than 6 digits or trailing characters pass"
+    },
+    {
+      "line": 33,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "missing await: ok is a Promise, always truthy, so onVerified runs even for a wrong code"
+    }
+  ],
+  "benign": [
+    13
+  ]
+}

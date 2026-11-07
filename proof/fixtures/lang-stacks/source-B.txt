@@ -1,0 +1,795 @@
+=== y1-erlang-01-rate-limiter|Erlang per-client rate limiter|erlang|src/rate_limiter.erl
+CONTEXT: Fixed-window rate limiter for the API gateway. Each client may make at most 100 requests per 60-second window: the 100th request must be allowed and the 101st rejected. check/1 is called concurrently from many request processes, so no increment may be lost, and counters of finished windows must be cleaned up every window.
+---
+-module(rate_limiter).
+-behaviour(gen_server).
+-export([start_link/0, check/1]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+
+-define(LIMIT, 100).
+-define(WINDOW, 60).
+
+start_link() ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+init([]) ->
+    ets:new(rate_counts, [named_table, public, set, {write_concurrency, true}]), ⟦OK⟧
+    erlang:send_after(?WINDOW * 1000, self(), reset),
+    {ok, #{}}.
+
+check(ClientId) ->
+    Window = erlang:system_time(second) div ?WINDOW,
+    Key = {ClientId, Window},
+    Count = case ets:lookup(rate_counts, Key) of
+        [{_, N}] -> N + 1;
+        [] -> 1
+    end,
+    ets:insert(rate_counts, {Key, Count}), ⟦BUG concurrency|lookup-then-insert is not atomic: concurrent callers read the same N and overwrite each other, losing increments; use ets:update_counter/4 with a default⟧
+    if
+        Count >= ?LIMIT -> {error, rate_limited}; ⟦BUG correctness|>= rejects the 100th request; the limit allows exactly 100, so the test must be Count > ?LIMIT⟧
+        true -> ok
+    end.
+
+handle_call(_Req, _From, State) ->
+    {reply, ok, State}.
+
+handle_cast(_Msg, State) ->
+    {noreply, State}.
+
+handle_info(reset, State) ->
+    Current = erlang:system_time(second) div ?WINDOW,
+    ets:select_delete(rate_counts, [{{{'_', '$1'}, '_'}, [{'<', '$1', Current}], [true]}]), ⟦OK⟧
+    {noreply, State}. ⟦BUG resource|the reset timer is never re-armed with send_after, so old windows are deleted only once and the table grows without bound⟧
+=== y1-erlang-02-line-server|Erlang TCP line protocol server|erlang|src/line_server.erl
+CONTEXT: TCP server for a small line protocol (PING, ECHO <text>) on port 7000; start/0 runs in a dedicated supervisor-owned process. Every connection must be served concurrently so one slow client cannot block others, idle clients must be dropped after 30 seconds, and a client's socket must be closed when it sends an invalid command.
+---
+-module(line_server).
+-export([start/0]).
+
+start() ->
+    {ok, LSock} = gen_tcp:listen(7000, [binary, {packet, line}, {packet_size, 1024},
+                                        {active, false}, {reuseaddr, true}]),
+    accept_loop(LSock).
+
+accept_loop(LSock) ->
+    {ok, Sock} = gen_tcp:accept(LSock),
+    handle(Sock), ⟦BUG concurrency|the connection is served inline in the accept loop, so one client blocks every other; it must be handled in a spawned process (with controlling_process)⟧
+    accept_loop(LSock).
+
+handle(Sock) ->
+    case gen_tcp:recv(Sock, 0) of ⟦BUG resource|recv has no timeout, so idle clients are never dropped after 30 seconds and hold the socket forever⟧
+        {ok, Line} ->
+            case parse(Line) of
+                {ok, Cmd} ->
+                    gen_tcp:send(Sock, reply(Cmd)),
+                    handle(Sock);
+                error ->
+                    gen_tcp:send(Sock, <<"ERR bad command\n">>) ⟦BUG resource|after an invalid command the error is sent but the socket is never closed⟧
+            end;
+        {error, closed} ->
+            ok; ⟦OK⟧
+        {error, _Reason} ->
+            gen_tcp:close(Sock)
+    end.
+
+parse(Line) ->
+    case binary:split(string:trim(Line), <<" ">>) of
+        [<<"PING">>] -> {ok, ping};
+        [<<"ECHO">>, Text] -> {ok, {echo, Text}};
+        _ -> error
+    end.
+
+reply(ping) -> <<"PONG\n">>;
+reply({echo, Text}) -> <<Text/binary, "\n">>.
+=== y1-erlang-03-wallet-transfer|Erlang Mnesia wallet transfers|erlang|src/wallet.erl
+CONTEXT: Moves credit between user wallets stored in Mnesia (#wallet{user, balance}, integer cents). A transfer must be atomic, amounts must be positive integers, a balance must never go negative even under concurrent transfers, and failures must be returned as {error, Reason} rather than crashing the caller.
+---
+-module(wallet).
+-export([balance/1, deposit/2, transfer/3]).
+
+-record(wallet, {user, balance = 0}).
+
+balance(User) ->
+    case mnesia:dirty_read(wallet, User) of ⟦OK⟧
+        [#wallet{balance = B}] -> {ok, B};
+        [] -> {error, no_wallet}
+    end.
+
+deposit(User, Amount) when is_integer(Amount), Amount > 0 ->
+    mnesia:transaction(fun() ->
+        [W] = mnesia:read(wallet, User, write),
+        mnesia:write(W#wallet{balance = W#wallet.balance + Amount})
+    end).
+
+transfer(From, To, Amount) when is_integer(Amount) -> ⟦BUG data-integrity|the guard accepts zero and negative amounts, so a negative transfer pulls money out of To and skips the balance check⟧
+    case balance(From) of
+        {ok, FromBal} when FromBal >= Amount -> ⟦BUG concurrency|the balance is checked on a dirty read outside the transaction, so two concurrent transfers can both pass and overdraw the wallet⟧
+            F = fun() ->
+                [Src] = mnesia:read(wallet, From, write),
+                [Dst] = mnesia:read(wallet, To, write),
+                mnesia:write(Src#wallet{balance = Src#wallet.balance - Amount}),
+                mnesia:write(Dst#wallet{balance = Dst#wallet.balance + Amount})
+            end,
+            {atomic, ok} = mnesia:transaction(F), ⟦BUG error-handling|an aborted transaction (for example a missing To wallet) raises badmatch in the caller instead of returning {error, Reason}⟧
+            ok;
+        {ok, _} ->
+            {error, insufficient_funds};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+=== y1-erlang-04-feature-flags|Erlang feature flag loader|erlang|src/feature_flags.erl
+CONTEXT: Loads feature flags from a terms file ({flag, Name, true|false}) and answers is_enabled/1 for flag names taken from HTTP query strings (untrusted binaries). Unknown names must return false. If the file is missing or malformed the error is logged and the previously loaded flags stay in effect.
+---
+-module(feature_flags).
+-export([load/1, is_enabled/1, enable/1]).
+
+-define(KEY, {?MODULE, flags}).
+
+load(Path) ->
+    case file:consult(Path) of
+        {ok, Terms} ->
+            Flags = maps:from_list([{Name, Val} || {flag, Name, Val} <- Terms]),
+            persistent_term:put(?KEY, Flags), ⟦OK⟧
+            ok;
+        {error, Reason} ->
+            logger:error("feature flags not loaded: ~p", [Reason]),
+            persistent_term:put(?KEY, #{}), ⟦BUG data-integrity|on a load error the previously loaded flags are wiped instead of kept⟧
+            {error, Reason}
+    end.
+
+is_enabled(NameBin) when is_binary(NameBin) ->
+    Name = binary_to_atom(NameBin, utf8), ⟦BUG security|atoms are created from untrusted input and never garbage collected, so arbitrary names can exhaust the atom table; use binary_to_existing_atom with a catch⟧
+    Flags = persistent_term:get(?KEY, #{}),
+    case maps:get(Name, Flags) of ⟦BUG error-handling|maps:get/2 raises badkey for an unknown flag instead of returning false; use maps:get/3 with a false default⟧
+        true -> true;
+        _ -> false
+    end.
+
+enable(Name) when is_atom(Name) ->
+    Flags = persistent_term:get(?KEY, #{}),
+    persistent_term:put(?KEY, Flags#{Name => true}),
+    logger:notice("feature flag ~p enabled", [Name]),
+    ok.
+=== y1-erlang-05-ttl-cache|Erlang ETS read-through cache|erlang|src/ttl_cache.erl
+CONTEXT: Read-through cache in front of a slow pricing service. get/3 returns the cached value while it is younger than TtlMs milliseconds, otherwise it calls Loader() and caches the result. Loader errors ({error, _}) must be returned to the caller but never cached. The table is owned by the cache gen_server so it survives caller crashes.
+---
+-module(ttl_cache).
+-behaviour(gen_server).
+-export([start_link/0, get/3, invalidate/1]).
+-export([init/1, handle_call/3, handle_cast/2]).
+
+start_link() ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+init([]) ->
+    Tab = ets:new(price_cache, [named_table, public, set, {read_concurrency, true}]), ⟦OK⟧
+    {ok, Tab}.
+
+get(Key, TtlMs, Loader) ->
+    Now = erlang:monotonic_time(millisecond),
+    case ets:lookup(price_cache, Key) of
+        [{Key, Value, StoredAt}] when Now - StoredAt > TtlMs -> ⟦BUG correctness|the age test is inverted: entries older than the TTL are served and fresh ones are reloaded⟧
+            Value;
+        _ ->
+            StoredAt = erlang:monotonic_time(second), ⟦BUG correctness|the timestamp is stored in seconds but compared with millisecond time, so every age computation is wrong⟧
+            Result = Loader(),
+            ets:insert(price_cache, {Key, Result, StoredAt}), ⟦BUG error-handling|{error, _} results from Loader are cached and served as values until they expire⟧
+            Result
+    end.
+
+invalidate(Key) ->
+    gen_server:call(?MODULE, {invalidate, Key}).
+
+handle_call({invalidate, Key}, _From, Tab) ->
+    ets:delete(Tab, Key),
+    {reply, ok, Tab}.
+
+handle_cast(_Msg, Tab) ->
+    {noreply, Tab}.
+=== y1-erlang-06-orders-handler|Erlang Cowboy order list handler|erlang|src/orders_handler.erl
+CONTEXT: Cowboy handler for GET /orders?status=...&limit=N. auth:user_id(Req) returns {ok, UserId} for signed-in users or error; users see only their own orders. limit defaults to 50 and must be clamped to 1..200; a non-numeric limit must give 400, not a crash. db:equery/2 runs a parameterised Postgres query and returns {ok, Columns, Rows}.
+---
+-module(orders_handler).
+-export([init/2]).
+
+init(Req0, State) ->
+    case auth:user_id(Req0) of
+        {ok, UserId} ->
+            #{status := Status, limit := LimitBin} =
+                cowboy_req:match_qs([{status, [], <<"open">>}, {limit, [], <<"50">>}], Req0), ⟦OK⟧
+            Limit = binary_to_integer(LimitBin), ⟦BUG error-handling|a non-numeric limit raises badarg and the request ends in a 500 instead of a 400⟧
+            Rows = query(UserId, Status, Limit),
+            Body = jsx:encode([row_to_map(R) || R <- Rows]),
+            Req = cowboy_req:reply(200, #{<<"content-type">> => <<"application/json">>}, Body, Req0),
+            {ok, Req, State};
+        error ->
+            Req = cowboy_req:reply(401, Req0),
+            {ok, Req, State}
+    end.
+
+query(UserId, Status, Limit) ->
+    Capped = max(Limit, 200), ⟦BUG correctness|max/2 turns every limit into at least 200 instead of clamping it to 1..200⟧
+    Sql = "SELECT id, total_cents, status FROM orders WHERE user_id = $1 AND status = '"
+          ++ binary_to_list(Status) ++ "' ORDER BY id DESC LIMIT $2", ⟦BUG security|status from the query string is concatenated into the SQL (injection); it must be passed as a bound parameter⟧
+    {ok, _Cols, Rows} = db:equery(Sql, [UserId, Capped]),
+    Rows.
+
+row_to_map({Id, Total, Status}) ->
+    #{id => Id, total_cents => Total, status => Status}.
+=== y1-erlang-07-conn-pool|Erlang connection pool|erlang|src/conn_pool.erl
+CONTEXT: Fixed-size pool of database connection processes. checkout/0 hands one idle connection exclusively to the caller or returns {error, empty}; checkin/1 gives it back. If a caller dies while holding a connection, that connection must return to the idle list. The pool server is long-lived and callers check out many times.
+---
+-module(conn_pool).
+-behaviour(gen_server).
+-export([start_link/1, checkout/0, checkin/1]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+
+start_link(Conns) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Conns, []).
+
+checkout() ->
+    gen_server:call(?MODULE, checkout).
+
+checkin(Conn) ->
+    gen_server:cast(?MODULE, {checkin, Conn}). ⟦OK⟧
+
+init(Conns) ->
+    {ok, #{idle => Conns, busy => #{}}}.
+
+handle_call(checkout, {Pid, _Tag}, #{idle := Idle, busy := Busy} = S) ->
+    case Idle of
+        [Conn | _] -> ⟦BUG concurrency|the connection is handed out but left in the idle list, so the next caller gets the same connection⟧
+            Ref = erlang:monitor(process, Pid),
+            {reply, {ok, Conn}, S#{busy := Busy#{Ref => Conn}}};
+        [] ->
+            {reply, {error, empty}, S}
+    end.
+
+handle_cast({checkin, Conn}, #{idle := Idle, busy := Busy} = S) ->
+    Busy1 = maps:filter(fun(_Ref, C) -> C =/= Conn end, Busy), ⟦BUG resource|the caller's monitor is never demonitored on checkin, so a long-lived caller accumulates one monitor per checkout⟧
+    {noreply, S#{idle := [Conn | Idle], busy := Busy1}}.
+
+handle_info({'DOWN', Ref, process, _Pid, _Reason}, #{busy := Busy} = S) ->
+    {noreply, S#{busy := maps:remove(Ref, Busy)}}. ⟦BUG resource|the dead caller's connection is dropped from busy but never put back in idle, so the pool shrinks permanently⟧
+=== y1-erlang-08-leaderboard|Erlang game leaderboard|erlang|src/leaderboard.erl
+CONTEXT: Leaderboard helpers over a list of {PlayerId, Points} in submission order. ranked/1 sorts by points descending and ties keep submission order; top/2 returns the N best; page/3 returns 1-based page P of size Size; rank/2 returns a player's 1-based position or not_found.
+---
+-module(leaderboard).
+-export([submit/2, ranked/1, top/2, page/3, rank/2]).
+
+submit({_Id, Points} = Entry, Scores) when is_integer(Points), Points >= 0 ->
+    Scores ++ [Entry]. ⟦OK⟧
+
+ranked(Scores) ->
+    lists:sort(fun({_, A}, {_, B}) -> A > B end, Scores). ⟦BUG correctness|lists:sort/2 is only stable when the fun returns true for equal elements; with strict > ties are reordered, so use >=⟧
+
+top(N, Scores) ->
+    lists:sublist(ranked(Scores), N). ⟦OK⟧
+
+page(P, Size, Scores) when P >= 1, Size >= 1 ->
+    Ranked = ranked(Scores),
+    Start = P * Size, ⟦BUG correctness|pages are 1-based, so page P starts at (P - 1) * Size + 1; this skips the first page and is off by one⟧
+    case Start > length(Ranked) of
+        true -> [];
+        false -> lists:sublist(Ranked, Start, Size)
+    end.
+
+rank(PlayerId, Scores) ->
+    rank(PlayerId, ranked(Scores), 0). ⟦BUG correctness|the position counter starts at 0, so ranks come out 0-based instead of 1-based⟧
+
+rank(_PlayerId, [], _Pos) ->
+    not_found;
+rank(PlayerId, [{PlayerId, _} | _], Pos) ->
+    Pos;
+rank(PlayerId, [_ | Rest], Pos) ->
+    rank(PlayerId, Rest, Pos + 1).
+=== y2-erlang-01-pubsub|Erlang topic pub/sub registry|erlang|src/pubsub.erl
+CONTEXT: Topic pub/sub server. subscribe/1 registers the calling process for a topic, and subscribing twice must not cause duplicate deliveries. publish/2 sends {msg, Topic, Payload} only to live subscribers of that topic. Subscribers that exit for any reason must be removed automatically; subscriber processes are long-lived and subscribe and unsubscribe often.
+---
+-module(pubsub).
+-behaviour(gen_server).
+-export([start_link/0, subscribe/1, unsubscribe/1, publish/2]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+
+start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+subscribe(Topic) -> gen_server:call(?MODULE, {subscribe, Topic, self()}).
+unsubscribe(Topic) -> gen_server:call(?MODULE, {unsubscribe, Topic, self()}).
+publish(Topic, Payload) -> gen_server:cast(?MODULE, {publish, Topic, Payload}). ⟦OK⟧
+
+init([]) -> {ok, #{}}.
+
+handle_call({subscribe, Topic, Pid}, _From, Subs) ->
+    erlang:monitor(process, Pid), ⟦BUG resource|a new monitor is created on every subscribe and never removed on unsubscribe, so monitors pile up for long-lived subscribers⟧
+    Pids = maps:get(Topic, Subs, []),
+    {reply, ok, Subs#{Topic => [Pid | Pids]}}; ⟦BUG correctness|a second subscribe adds the pid again, so the subscriber receives every message twice⟧
+handle_call({unsubscribe, Topic, Pid}, _From, Subs) ->
+    Pids = maps:get(Topic, Subs, []),
+    {reply, ok, Subs#{Topic => lists:delete(Pid, Pids)}}.
+
+handle_cast({publish, Topic, Payload}, Subs) ->
+    maps:foreach(fun(_T, Pids) -> ⟦BUG correctness|the message goes to the subscribers of every topic, not only those of Topic⟧
+        [Pid ! {msg, Topic, Payload} || Pid <- Pids]
+    end, Subs),
+    {noreply, Subs}.
+
+handle_info({'DOWN', _Ref, process, Pid, normal}, Subs) -> ⟦BUG resource|only normal exits are matched, so subscribers that crash are never removed (and other DOWN messages crash the server with function_clause)⟧
+    {noreply, maps:map(fun(_T, Pids) -> lists:delete(Pid, Pids) end, Subs)}.
+=== y2-erlang-02-upload-writer|Erlang chunked upload writer|erlang|src/upload_writer.erl
+CONTEXT: Stores a client upload received as a list of binary chunks. FileName comes from the client; files may only be written inside /data/uploads, uploads over 10 MB must be rejected, write errors must be returned as {error, Reason}, and the file handle must be closed on every path.
+---
+-module(upload_writer).
+-export([store/2]).
+
+-define(DIR, "/data/uploads").
+-define(MAX_BYTES, 10 * 1024 * 1024).
+
+store(FileName, Chunks) ->
+    Size = iolist_size(Chunks), ⟦OK⟧
+    if
+        Size > ?MAX_BYTES * 8 -> {error, too_large}; ⟦BUG correctness|iolist_size is in bytes, so multiplying by 8 lets uploads up to 80 MB through⟧
+        true -> write(FileName, Chunks)
+    end.
+
+write(FileName, Chunks) ->
+    Path = filename:join(?DIR, FileName), ⟦BUG security|the client name is joined unchecked: "../" escapes the directory and an absolute name replaces it entirely⟧
+    ok = filelib:ensure_dir(Path),
+    case file:open(Path, [write, binary, raw]) of
+        {ok, Fd} ->
+            case write_chunks(Fd, Chunks) of
+                ok ->
+                    file:close(Fd);
+                {error, Reason} ->
+                    {error, Reason} ⟦BUG resource|the file handle is not closed when writing fails⟧
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+write_chunks(_Fd, []) ->
+    ok;
+write_chunks(Fd, [Chunk | Rest]) ->
+    file:write(Fd, Chunk), ⟦BUG error-handling|the result of file:write is ignored, so a failed write (e.g. disk full) is reported as success⟧
+    write_chunks(Fd, Rest).
+=== y2-erlang-03-latency-stats|Erlang latency statistics|erlang|src/latency_stats.erl
+CONTEXT: Summarises request latencies given as integer microseconds for a dashboard that shows milliseconds. summary/1 returns #{count, mean_ms, p95_ms, max_ms}, with all zeros for an empty list. p95 uses nearest rank: the element at 1-based rank ceil(0.95 * N) of the sorted samples. merge/2 combines two summaries; its mean must equal the mean over all underlying samples and p95 becomes undefined.
+---
+-module(latency_stats).
+-export([summary/1, merge/2, format/1]).
+
+summary([]) ->
+    #{count => 0, mean_ms => 0, p95_ms => 0, max_ms => 0};
+summary(Samples) ->
+    Sorted = lists:sort(Samples),
+    N = length(Sorted),
+    Mean = lists:sum(Sorted) / N / 1000, ⟦OK⟧
+    Rank = trunc(0.95 * N), ⟦BUG correctness|nearest rank needs ceil; trunc picks the wrong element and gives rank 0 for fewer than 20 samples, so lists:nth crashes⟧
+    P95 = lists:nth(Rank, Sorted),
+    Max = lists:last(Sorted) / 1000,
+    #{count => N, mean_ms => Mean, p95_ms => P95, max_ms => Max}. ⟦BUG correctness|p95 is returned in microseconds while the other fields are converted to milliseconds⟧
+
+merge(#{count := 0}, B) ->
+    B;
+merge(A, #{count := 0}) ->
+    A;
+merge(#{count := C1, mean_ms := M1, max_ms := X1}, #{count := C2, mean_ms := M2, max_ms := X2}) ->
+    Count = C1 + C2,
+    Mean = (M1 + M2) / 2, ⟦BUG correctness|the two means are averaged without weighting by count, so the result is not the mean of all samples; use (M1 * C1 + M2 * C2) / Count⟧
+    #{count => Count, mean_ms => Mean, p95_ms => undefined, max_ms => max(X1, X2)}.
+
+format(#{count := N, mean_ms := Mean, p95_ms := P95, max_ms := Max}) ->
+    io_lib:format("n=~b mean=~p ms p95=~p ms max=~p ms", [N, Mean, P95, Max]).
+=== y1-php-01-avatar-upload|PHP avatar upload|php|public/avatar.php
+CONTEXT: Lets a signed-in user upload a profile picture. Only real JPEG and PNG images up to 2 MB are accepted, files are stored in /var/www/uploads/avatars (served by the web server) under a server-generated name, and nothing uploaded may ever be executable. bootstrap.php starts the session and provides $pdo.
+---
+<?php
+require __DIR__ . '/../bootstrap.php';
+
+if (!isset($_SESSION['user_id'])) {
+    http_response_code(401);
+    exit;
+}
+
+$file = $_FILES['avatar'] ?? null;
+if ($file === null || $file['error'] !== UPLOAD_ERR_OK) {
+    http_response_code(400);
+    exit('upload failed');
+}
+
+if ($file['size'] > 2 * 1024) { ⟦BUG correctness|2 * 1024 is 2 KB, not 2 MB, so almost every real photo is rejected⟧
+    http_response_code(413);
+    exit('file too large');
+}
+
+$allowed = ['image/jpeg' => 'jpg', 'image/png' => 'png'];
+$type = $file['type']; ⟦BUG security|the MIME type is the client-supplied header, not detected from the content (use finfo), so any file can claim to be image/png⟧
+if (!isset($allowed[$type])) {
+    http_response_code(415);
+    exit('only JPEG or PNG');
+}
+
+$ext = pathinfo($file['name'], PATHINFO_EXTENSION); ⟦BUG security|the extension comes from the client file name, so shell.php sent as image/png is stored as an executable .php file; use $allowed[$type]⟧
+$name = bin2hex(random_bytes(16)) . '.' . $ext;
+$dest = '/var/www/uploads/avatars/' . $name;
+if (!move_uploaded_file($file['tmp_name'], $dest)) {
+    http_response_code(500);
+    exit('could not save');
+}
+
+$stmt = $pdo->prepare('UPDATE users SET avatar = ? WHERE id = ?');
+$stmt->execute([$name, $_SESSION['user_id']]); ⟦OK⟧
+header('Content-Type: application/json');
+echo json_encode(['avatar' => '/avatars/' . $name]);
+=== y1-php-02-login|PHP login with lockout|php|src/LoginController.php
+CONTEXT: Handles POST /login. Passwords are stored with password_hash. Failures must not reveal whether an email is registered, the session id must be regenerated on success, and an account locks for 15 minutes once it reaches 5 consecutive failed attempts, even when attackers send attempts in parallel. The session is already started.
+---
+<?php
+
+final class LoginController
+{
+    public function __construct(private PDO $db) {}
+
+    public function login(string $email, string $password): array
+    {
+        $stmt = $this->db->prepare('SELECT id, password_hash, failed_attempts, locked_until FROM users WHERE email = ?');
+        $stmt->execute([$email]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$user) {
+            return ['ok' => false, 'error' => 'unknown email']; ⟦BUG security|a distinct error for unknown emails lets anyone enumerate registered accounts⟧
+        }
+
+        if ($user['locked_until'] !== null && strtotime($user['locked_until']) > time()) { ⟦OK⟧
+            return ['ok' => false, 'error' => 'invalid credentials'];
+        }
+
+        if (!password_verify($password, $user['password_hash'])) {
+            $failed = (int) $user['failed_attempts'] + 1; ⟦BUG concurrency|the counter is read-modify-written from a stale SELECT, so parallel attempts overwrite each other and bypass the lockout; increment in SQL⟧
+            $this->db->prepare('UPDATE users SET failed_attempts = ? WHERE id = ?')->execute([$failed, $user['id']]);
+            if ($failed > 5) { ⟦BUG correctness|the lock triggers on the 6th failure; it must lock once the count reaches 5 (>= 5)⟧
+                $this->db->prepare('UPDATE users SET failed_attempts = 0, locked_until = ? WHERE id = ?')
+                    ->execute([date('Y-m-d H:i:s', time() + 900), $user['id']]);
+            }
+            return ['ok' => false, 'error' => 'invalid credentials'];
+        }
+
+        $this->db->prepare('UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?')
+            ->execute([$user['id']]);
+        $_SESSION['user_id'] = (int) $user['id']; ⟦BUG security|session_regenerate_id(true) is never called, leaving the login open to session fixation⟧
+        return ['ok' => true];
+    }
+}
+=== y1-php-03-checkout|PHP cart checkout|php|src/Checkout.php
+CONTEXT: Turns a cart into an order. Prices must come from the products table, never from the client; amounts are integer cents; stock must never go negative even with concurrent checkouts; the order, its lines and the stock updates are saved all-or-nothing, and any failure must roll back. $db uses PDO::ERRMODE_EXCEPTION on MySQL InnoDB.
+---
+<?php
+
+final class Checkout
+{
+    public function __construct(private PDO $db) {}
+
+    /** @param array<int, array{product_id:int, qty:int, price:int}> $items  as posted by the client */
+    public function placeOrder(int $userId, array $items): int
+    {
+        $this->db->beginTransaction();
+        try {
+            $total = 0;
+            foreach ($items as $item) {
+                $qty = (int) $item['qty'];
+                if ($qty <= 0) {
+                    throw new InvalidArgumentException('bad quantity');
+                }
+                $stmt = $this->db->prepare('SELECT stock FROM products WHERE id = ?'); ⟦BUG concurrency|the stock row is read without FOR UPDATE and written back as stock - qty, so concurrent checkouts both pass the check and oversell⟧
+                $stmt->execute([$item['product_id']]);
+                $stock = (int) $stmt->fetchColumn();
+                if ($stock < $qty) {
+                    throw new RuntimeException('out of stock');
+                }
+                $total += (int) $item['price'] * $qty; ⟦BUG security|the price comes from the client request, so a user can buy anything for 0⟧
+                $this->db->prepare('UPDATE products SET stock = ? WHERE id = ?')
+                    ->execute([$stock - $qty, $item['product_id']]);
+            }
+            $this->db->prepare('INSERT INTO orders (user_id, total_cents) VALUES (?, ?)')
+                ->execute([$userId, $total]);
+            $orderId = (int) $this->db->lastInsertId(); ⟦OK⟧
+            $line = $this->db->prepare('INSERT INTO order_lines (order_id, product_id, qty) VALUES (?, ?, ?)');
+            foreach ($items as $item) {
+                $line->execute([$orderId, $item['product_id'], (int) $item['qty']]);
+            }
+            $this->db->commit();
+            return $orderId;
+        } catch (RuntimeException $e) { ⟦BUG error-handling|InvalidArgumentException is a LogicException, not a RuntimeException, so a bad quantity escapes without rollBack and the transaction stays open; catch Throwable⟧
+            $this->db->rollBack();
+            throw $e;
+        }
+    }
+}
+=== y1-php-04-comments|PHP blog comments page|php|public/comments.php
+CONTEXT: Shows the approved comments of a post (comments.approved = 1), newest first, 10 per page with a 1-based page number. Author, website and body are user content and must be escaped; the website column is NOT NULL ('' when empty) and may only be linked if it is an http(s) URL. bootstrap.php provides $pdo with exceptions enabled.
+---
+<?php
+require __DIR__ . '/../bootstrap.php';
+
+function e(string $s): string
+{
+    return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); ⟦OK⟧
+}
+
+$postId = filter_input(INPUT_GET, 'post', FILTER_VALIDATE_INT);
+$page = max(1, (int) ($_GET['page'] ?? 1));
+if ($postId === false || $postId === null) {
+    http_response_code(400);
+    exit('bad post id');
+}
+
+$offset = $page * 10; ⟦BUG correctness|pages are 1-based, so the offset must be ($page - 1) * 10; page 1 skips the newest 10 comments⟧
+$stmt = $pdo->prepare(
+    'SELECT author, website, body, created_at FROM comments WHERE post_id = ? ' ⟦BUG security|approved = 1 is never checked, so comments still awaiting moderation (spam, abuse) are published⟧
+    . 'ORDER BY created_at DESC LIMIT 10 OFFSET ' . $offset ⟦OK⟧
+);
+$stmt->execute([$postId]);
+?>
+<?php foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $c): ?>
+  <article>
+    <h3><?= e($c['author']) ?></h3>
+    <?php if ($c['website'] !== ''): ?>
+      <a href="<?= e($c['website']) ?>" rel="nofollow">website</a> ⟦BUG security|the scheme is never checked, so a javascript: URL becomes a clickable XSS link; escaping does not prevent that⟧
+    <?php endif; ?>
+    <p><?= nl2br($c['body']) ?></p> ⟦BUG security|the comment body is output without escaping (stored XSS); use nl2br(e(...))⟧
+    <time><?= e($c['created_at']) ?></time>
+  </article>
+<?php endforeach; ?>
+=== y1-php-05-payment-webhook|PHP payment webhook receiver|php|public/payment_webhook.php
+CONTEXT: Receives payment provider webhooks. The provider signs the raw body with HMAC-SHA256 using WEBHOOK_SECRET and sends the hex digest in the X-Signature header; bad signatures get 401. Malformed JSON gets 400. The provider retries and may deliver the same event concurrently, and each event id must be processed exactly once (webhook_events.id is a primary key). bootstrap.php provides $pdo.
+---
+<?php
+require __DIR__ . '/../bootstrap.php';
+
+$payload = file_get_contents('php://input');
+$sig = $_SERVER['HTTP_X_SIGNATURE'] ?? '';
+$expected = hash_hmac('sha256', $payload, $_ENV['WEBHOOK_SECRET']); ⟦OK⟧
+
+if ($sig != $expected) { ⟦BUG security|loose != treats digests like "0e123..." as equal numbers and is not constant-time; use hash_equals⟧
+    http_response_code(401);
+    exit;
+}
+
+$event = json_decode($payload, true);
+if ($event === false) { ⟦BUG error-handling|json_decode returns null, not false, on invalid JSON, so malformed bodies are never rejected with 400⟧
+    http_response_code(400);
+    exit;
+}
+
+$seen = $pdo->prepare('SELECT 1 FROM webhook_events WHERE id = ?');
+$seen->execute([$event['id']]);
+if ($seen->fetchColumn()) { ⟦BUG concurrency|check-then-insert: two concurrent deliveries both see no row and both process the event; insert the id first and rely on the primary key⟧
+    http_response_code(200);
+    exit;
+}
+
+if ($event['type'] === 'payment.succeeded') {
+    $pdo->prepare('UPDATE orders SET status = ? WHERE id = ?')
+        ->execute(['paid', $event['data']['order_id']]);
+}
+$pdo->prepare('INSERT INTO webhook_events (id, received_at) VALUES (?, NOW())')
+    ->execute([$event['id']]);
+http_response_code(200);
+=== y1-php-06-login-return|PHP post-login redirect and remember-me|php|public/after_login.php
+CONTEXT: Finishes a login: optionally sets a remember-me cookie and redirects to ?return=. Only same-site relative paths are allowed (a single leading "/" followed by a non-slash, non-backslash character); anything else goes to /dashboard. The remember-me cookie must be Secure and HttpOnly, and only a SHA-256 hash of the token may be stored in the database.
+---
+<?php
+require __DIR__ . '/../bootstrap.php';
+
+if (empty($_SESSION['user_id'])) {
+    header('Location: /login');
+    exit;
+}
+
+$userId = (int) $_SESSION['user_id'];
+if (!empty($_POST['remember'])) {
+    $token = bin2hex(random_bytes(32)); ⟦OK⟧
+    $pdo->prepare('INSERT INTO remember_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)')
+        ->execute([$userId, $token, date('Y-m-d H:i:s', strtotime('+30 days'))]); ⟦BUG security|the raw token is stored in token_hash, so a database leak hands out working remember-me cookies; store hash('sha256', $token)⟧
+    setcookie('remember', $userId . ':' . $token, [
+        'expires' => strtotime('+30 days'),
+        'path' => '/',
+        'secure' => true,
+        'httponly' => false, ⟦BUG security|the cookie is readable from JavaScript, so any XSS can steal the long-lived login token⟧
+        'samesite' => 'Lax',
+    ]);
+}
+
+$return = $_GET['return'] ?? '/dashboard';
+if (!str_starts_with($return, '/')) { ⟦BUG security|"//evil.example" and "/\evil.example" start with "/" but are protocol-relative URLs, so this is an open redirect⟧
+    $return = '/dashboard';
+}
+
+$pdo->prepare('UPDATE users SET last_login_at = NOW() WHERE id = ?')->execute([$userId]);
+header('Location: ' . $return); ⟦OK⟧
+exit;
+=== y1-php-07-fragment-cache|PHP fragment cache and prefs cookie|php|src/FragmentCache.php
+CONTEXT: Caches rendered HTML fragments on disk under /var/cache/fragments. Keys are arbitrary strings that may contain user input; entries expire after their TTL, given in seconds. Many requests run concurrently and a reader must never see a half-written entry. load_prefs() reads display preferences from the 'prefs' cookie, which the client controls.
+---
+<?php
+
+final class FragmentCache
+{
+    private const DIR = '/var/cache/fragments';
+
+    public function get(string $key): ?string
+    {
+        $path = $this->path($key);
+        if (!is_file($path)) {
+            return null;
+        }
+        $entry = unserialize(file_get_contents($path), ['allowed_classes' => false]); ⟦OK⟧
+        if (time() > $entry['created'] + $entry['ttl'] * 1000) { ⟦BUG correctness|the TTL is in seconds but multiplied by 1000, so entries live 1000 times longer than intended⟧
+            @unlink($path);
+            return null;
+        }
+        return $entry['html'];
+    }
+
+    public function set(string $key, string $html, int $ttl): void
+    {
+        $data = serialize(['created' => time(), 'ttl' => $ttl, 'html' => $html]);
+        file_put_contents($this->path($key), $data); ⟦BUG concurrency|the file is written in place, so concurrent readers can read a truncated or half-written entry; write a temp file and rename() it⟧
+    }
+
+    private function path(string $key): string
+    {
+        return self::DIR . '/' . $key . '.cache'; ⟦BUG security|the raw key is used as a path, so "../" in a key reads or writes outside the cache directory; hash the key⟧
+    }
+}
+
+function load_prefs(): array
+{
+    $raw = $_COOKIE['prefs'] ?? '';
+    $prefs = $raw !== '' ? unserialize(base64_decode($raw)) : []; ⟦BUG security|unserialize on a client-controlled cookie allows PHP object injection; use json_decode⟧
+    return is_array($prefs) ? $prefs : [];
+}
+=== y1-php-08-image-proxy|PHP image proxy for emails|php|public/img_proxy.php
+CONTEXT: /img_proxy.php?url=... fetches remote images for embedding in emails and serves them from our domain. It may only contact public http/https hosts (never loopback, private, link-local such as the 169.254.169.254 metadata service, or other reserved ranges), must give up after 5 seconds, and must only return JPEG, PNG or GIF responses of at most 5 MB.
+---
+<?php
+require __DIR__ . '/../bootstrap.php';
+
+$url = $_GET['url'] ?? '';
+$parts = parse_url($url);
+if (!$parts || !in_array($parts['scheme'] ?? '', ['http', 'https'], true)) { ⟦OK⟧
+    http_response_code(400);
+    exit('bad url');
+}
+
+$ip = gethostbyname($parts['host'] ?? '');
+if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE)) { ⟦BUG security|without FILTER_FLAG_NO_RES_RANGE, loopback (127.0.0.1) and link-local (169.254.169.254) addresses pass the check⟧
+    http_response_code(403);
+    exit('forbidden host');
+}
+
+$ch = curl_init($url); ⟦BUG security|curl resolves the host again, so a DNS-rebinding host can pass the check with a public IP and then connect to an internal one; pin the checked IP with CURLOPT_RESOLVE⟧
+curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_FOLLOWLOCATION => true, ⟦BUG security|redirects are followed without re-checking the target, so a public URL can redirect to an internal address⟧
+    CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS, ⟦OK⟧
+    CURLOPT_TIMEOUT => 5000, ⟦BUG correctness|CURLOPT_TIMEOUT is in seconds, so this allows 5000 seconds instead of 5; use 5 or CURLOPT_TIMEOUT_MS⟧
+    CURLOPT_MAXFILESIZE => 5 * 1024 * 1024,
+]);
+$body = curl_exec($ch);
+$type = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+curl_close($ch);
+
+if ($body === false || !str_starts_with($type, 'image/')) { ⟦BUG security|any image/* type is accepted, including image/svg+xml, which runs script on our domain (XSS); allow only jpeg, png and gif⟧
+    http_response_code(502);
+    exit('fetch failed');
+}
+header('Content-Type: ' . $type);
+echo $body;
+=== y2-php-01-api-keys|PHP API key issue and verify|php|src/ApiKeys.php
+CONTEXT: Issues and verifies API keys. Keys look like "gk_<hex>", must be unguessable, are shown once and stored only as a SHA-256 hash. A key authenticates only if it is not revoked and its account's users.status is 'active'. Users may revoke only their own keys.
+---
+<?php
+
+final class ApiKeys
+{
+    public function __construct(private PDO $db) {}
+
+    public function issue(int $userId): string
+    {
+        $key = 'gk_' . bin2hex(pack('N', mt_rand()) . pack('N', mt_rand())); ⟦BUG security|mt_rand is not a cryptographic generator and gives only 64 predictable bits; use random_bytes⟧
+        $this->db->prepare('INSERT INTO api_keys (user_id, key_hash, revoked) VALUES (?, ?, 0)')
+            ->execute([$userId, hash('sha256', $key)]);
+        return $key;
+    }
+
+    public function verify(string $presented): ?int
+    {
+        if (!strpos($presented, 'gk_')) { ⟦BUG correctness|strpos returns 0 when the prefix is at the start, which is falsy, so every valid key is rejected; use str_starts_with⟧
+            return null;
+        }
+        $stmt = $this->db->prepare(
+            'SELECT k.user_id, k.revoked, u.status FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.key_hash = ?'
+        );
+        $stmt->execute([hash('sha256', $presented)]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        if ((int) $row['revoked'] === 1) { ⟦OK⟧
+            return null;
+        }
+        return (int) $row['user_id']; ⟦BUG security|users.status is fetched but never checked, so keys of suspended accounts keep working⟧
+    }
+
+    public function revoke(int $userId, string $keyHash): void
+    {
+        $this->db->prepare('UPDATE api_keys SET revoked = 1 WHERE key_hash = ?') ⟦BUG security|the update is not limited to user_id, so any user can revoke another user's key (IDOR)⟧
+            ->execute([$keyHash]);
+    }
+}
+=== y2-php-02-sales-report|PHP admin sales CSV report|php|public/admin/sales_report.php
+CONTEXT: CSV sales report for admins only ($_SESSION['role'] === 'admin'). from and to are Y-m-d dates and the range is inclusive of both days (sale_date is a DATE column). The sort parameter must be one of date, region or total. Refunded sales are excluded. bootstrap.php starts the session and provides $pdo.
+---
+<?php
+require __DIR__ . '/../../bootstrap.php';
+
+$isAdmin = $_SESSION['role'] ?? '' === 'admin'; ⟦BUG security|?? binds looser than ===, so this is $_SESSION['role'] ?? false and any non-empty role (e.g. "viewer") counts as admin⟧
+if (!$isAdmin) {
+    http_response_code(403);
+    exit;
+}
+
+$from = DateTimeImmutable::createFromFormat('!Y-m-d', $_GET['from'] ?? '');
+$to = DateTimeImmutable::createFromFormat('!Y-m-d', $_GET['to'] ?? '');
+if (!$from || !$to || $from > $to) { ⟦OK⟧
+    http_response_code(400);
+    exit('bad range');
+}
+
+$sql = 'SELECT sale_date AS date, region, SUM(amount_cents) AS total FROM sales '
+     . 'WHERE sale_date >= ? AND sale_date < ? ' ⟦BUG correctness|< excludes the "to" day although the range is inclusive; use <=⟧
+     . "AND status <> 'refunded' "
+     . 'GROUP BY sale_date, region '
+     . 'ORDER BY ' . ($_GET['sort'] ?? 'date'); ⟦BUG security|the sort parameter is concatenated into ORDER BY without a whitelist (SQL injection)⟧
+$stmt = $pdo->prepare($sql);
+$stmt->execute([$from->format('Y-m-d'), $to->format('Y-m-d')]);
+
+header('Content-Type: text/csv');
+header('Content-Disposition: attachment; filename="sales.csv"');
+$out = fopen('php://output', 'w');
+fputcsv($out, ['date', 'region', 'total']);
+while ($row = $stmt->fetch(PDO::FETCH_NUM)) {
+    $row[2] = number_format($row[2] / 100, 2, '.', '');
+    fputcsv($out, $row);
+}
+fclose($out);
+=== y2-php-03-mail-worker|PHP email queue worker|php|bin/mail_worker.php
+CONTEXT: CLI worker that sends queued emails; several copies run in parallel, so each email must be claimed by exactly one worker. attempts counts failed tries and an email is tried at most 5 times. $mailer->send() returns true on success and false on failure (it throws only on configuration errors). bootstrap.php provides $pdo and $mailer.
+---
+<?php
+require __DIR__ . '/../bootstrap.php';
+
+$workerId = gethostname() . ':' . getmypid(); ⟦OK⟧
+
+while (true) {
+    $row = $pdo->query(
+        "SELECT id, recipient, subject, body FROM email_queue
+         WHERE status = 'pending' AND attempts <= 5 ORDER BY id LIMIT 1" ⟦BUG correctness|attempts <= 5 picks emails that already failed 5 times, giving a 6th try; use < 5⟧
+    )->fetch(PDO::FETCH_ASSOC);
+    if ($row === false) {
+        sleep(5);
+        continue;
+    }
+
+    $pdo->prepare("UPDATE email_queue SET status = 'sending', worker = ? WHERE id = ?") ⟦BUG concurrency|the claim does not require status = 'pending' or check rowCount(), so two workers that selected the same row both send it⟧
+        ->execute([$workerId, $row['id']]);
+
+    try {
+        $mailer->send($row['recipient'], $row['subject'], $row['body']); ⟦BUG error-handling|the false return value is ignored, so failed deliveries are marked sent and never retried⟧
+        $pdo->prepare("UPDATE email_queue SET status = 'sent', sent_at = NOW() WHERE id = ?")
+            ->execute([$row['id']]);
+    } catch (Throwable $e) {
+        $pdo->prepare("UPDATE email_queue SET status = 'pending', attempts = attempts + 1 WHERE id = ?")
+            ->execute([$row['id']]);
+        error_log('send failed: ' . $e->getMessage()); ⟦OK⟧
+    }
+}
