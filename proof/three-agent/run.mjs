@@ -13,6 +13,11 @@ const P = JSON.parse(gunzipSync(Buffer.from(process.env.GK3_PAYLOAD_B64, "base64
 // Codex and Qodo prompts are untouched. The override's hash is logged so every run names the exact prompt it used.
 if (process.env.GK3_GK_SYSTEM) { P.agents.gate_keeper.system = process.env.GK3_GK_SYSTEM; P.sha256 = { ...(P.sha256 || {}), gate_keeper: createHash("sha256").update(process.env.GK3_GK_SYSTEM).digest("hex") };
   console.log("GK3_GK_OVERRIDE " + JSON.stringify({ file: process.env.GK3_GK_FILE || null, sha256: P.sha256.gate_keeper, chars: process.env.GK3_GK_SYSTEM.length })); }
+// GK3_GK_SYSTEM_B: a second Gate Keeper variant run as its own arm ("gate_keeper_b") on the same prompts, so two prompt versions
+// can be compared in one run. Same harness treatment as gate_keeper (line merge included).
+if (process.env.GK3_GK_SYSTEM_B) { P.agents.gate_keeper_b = { system: process.env.GK3_GK_SYSTEM_B }; for (const t of P.tasks) t.prompts.gate_keeper_b = t.prompts.gate_keeper;
+  P.sha256 = { ...(P.sha256 || {}), gate_keeper_b: createHash("sha256").update(process.env.GK3_GK_SYSTEM_B).digest("hex") };
+  console.log("GK3_GK_OVERRIDE_B " + JSON.stringify({ file: process.env.GK3_GK_FILE_B || null, sha256: P.sha256.gate_keeper_b, chars: process.env.GK3_GK_SYSTEM_B.length })); }
 const tf = new TrueForge({ baseUrl: process.env.TRUEFORGE_BASE_URL, token: process.env.TRUEFORGE_TOKEN, timeoutInSeconds: 60 });
 let spent = 0, reserved = 0, calls = 0;
 // Same for every agent. Reviews are non-interactive: no one can answer TrueForge's built-in ask_user_question
@@ -309,7 +314,7 @@ async function worker() {
     const r = await turn(`${arm}/${task.id}/t${trial}`, P.agents[arm].system, task.prompts[arm]);
     let fs = r.status === "done" ? parse(arm, r.text) : null;
     // Gate Keeper's own code step (GK3_GK_MERGE=1): merge its findings on the same or next line. Gate Keeper only.
-    if (fs && arm === "gate_keeper" && process.env.GK3_GK_MERGE) { const out = []; for (const f of [...fs].sort((a, b) => a.start - b.start)) { if (out.length && f.start - out[out.length - 1].start <= 1) continue; out.push(f); } fs = out; }
+    if (fs && arm.startsWith("gate_keeper") && process.env.GK3_GK_MERGE) { const out = []; for (const f of [...fs].sort((a, b) => a.start - b.start)) { if (out.length && f.start - out[out.length - 1].start <= 1) continue; out.push(f); } fs = out; }
     const sc = score(task.expected, fs, task.benign || []);
     const row = { arm, task: task.id, trial, status: r.status, cached: !!r.cached, finish: r.finishReason, source: r.source, outputNull: r.outputNull, reasoningChars: r.reasoningChars, tools: r.tools, ...sc, cost: r.cost, seconds: r.seconds, tokens: r.tokens, error: r.error };
     rows.push(row);
