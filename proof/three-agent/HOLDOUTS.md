@@ -7,3 +7,6 @@
 | 7 | **sealed holdout** | 5 tasks, 31 bugs. Tranche hash `c40e1e243cc327fb5ca1124388c040f15c0f239d1ef8d28cb3258883aff37cd8`. Not opened; to be run once, after the Gate Keeper config is frozen, against Codex and Qodo. |
 
 The training payloads are named `train-t4-t5-t6burned-*` so the name says t6 is burned. Results on tranche 6 for v10, v11, the vote/duo arms and the 20-config matrix must not be reported as holdout results.
+
+## gk-holdout-20261107-v13 (burned 7 Nov 2026)
+39 private tasks (27 bugs, 12 clean), task hash `e93bc3d9…`, payload `5631e7e7…`. Written and sealed before any v13 result; run once on v13.1 vs Codex vs Qodo. Report: `proof/submissions/gk-holdout-20261107-v13/report.md`. Now burned.
