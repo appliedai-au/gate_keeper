@@ -13,13 +13,17 @@ const P = JSON.parse(gunzipSync(Buffer.from(process.env.GK3_PAYLOAD_B64, "base64
 // Codex and Qodo prompts are untouched. The override's hash is logged so every run names the exact prompt it used.
 if (process.env.GK3_GK_SYSTEM) { P.agents.gate_keeper.system = process.env.GK3_GK_SYSTEM; P.sha256 = { ...(P.sha256 || {}), gate_keeper: createHash("sha256").update(process.env.GK3_GK_SYSTEM).digest("hex") };
   console.log("GK3_GK_OVERRIDE " + JSON.stringify({ file: process.env.GK3_GK_FILE || null, sha256: P.sha256.gate_keeper, chars: process.env.GK3_GK_SYSTEM.length })); }
-// GK3_GK_RULES: a per-model rule overlay (the learned rules for THIS model only), inserted into Gate Keeper's prompt the way the
-// improve loop inserts them. Rules are not model-agnostic: an overlay is used only on the model it was learned on. The core prompt stays shared.
+// GK3_GK_RULES: a per-model rule overlay (the learned rules for THIS model only), inserted into Gate Keeper's prompt exactly as the
+// improve loop inserts them (same heading, same position), so a rule set tuned in the loop replays byte-for-byte. Rules are not
+// model-agnostic: an overlay is used only on the model it was learned on; the core prompt stays shared. The overlay applies to the
+// "gate_keeper" arm only; "gate_keeper_b" is the comparison arm and gets exactly the prompt in GK3_GK_SYSTEM_B.
 if (process.env.GK3_GK_RULES) { const list = process.env.GK3_GK_RULES.split("\n").map((x) => x.replace(/^-\s*/, "").trim()).filter((x) => x && !x.startsWith("#"));
-  if (list.length) { const B = P.agents.gate_keeper.system, block = "\n\n## Learned rules (this model only)\n" + list.map((x) => "- " + x).join("\n");
+  const runModel = process.env.GK3_MODEL_B || MODEL; // improve and pipe modes run Gate Keeper on GK3_MODEL_B when it is set
+  if (!list.length) console.log("GK3_GK_RULES_EMPTY " + JSON.stringify({ file: process.env.GK3_GK_RULES_FILE || null, model: runModel }));
+  else { const B = P.agents.gate_keeper.system, block = "\n\n## Learned rules\n" + list.map((x) => "- " + x).join("\n");
     P.agents.gate_keeper.system = B.includes("\n\nExtra field:") ? B.replace("\n\nExtra field:", block + "\n\nExtra field:") : B + block;
     P.sha256 = { ...(P.sha256 || {}), gate_keeper: createHash("sha256").update(P.agents.gate_keeper.system).digest("hex") };
-    console.log("GK3_GK_RULES " + JSON.stringify({ file: process.env.GK3_GK_RULES_FILE || null, model: MODEL, rules: list.length, sha256: P.sha256.gate_keeper })); } }
+    console.log("GK3_GK_RULES " + JSON.stringify({ file: process.env.GK3_GK_RULES_FILE || null, model: runModel, rules: list.length, sha256: P.sha256.gate_keeper })); } }
 // GK3_GK_SYSTEM_B: a second Gate Keeper variant run as its own arm ("gate_keeper_b") on the same prompts, so two prompt versions
 // can be compared in one run. Same harness treatment as gate_keeper (line merge included).
 if (process.env.GK3_GK_SYSTEM_B) { P.agents.gate_keeper_b = { system: process.env.GK3_GK_SYSTEM_B }; for (const t of P.tasks) t.prompts.gate_keeper_b = t.prompts.gate_keeper;
