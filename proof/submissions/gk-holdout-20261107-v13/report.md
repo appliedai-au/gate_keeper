@@ -25,7 +25,7 @@ v12 lost to Codex on the previous holdout (net 33 vs 56, `gk-holdout-20261107-a`
 
 Paired per-review sign-flip test on net (same task, same trial): Gate Keeper vs Codex +3 over 117 pairs (11 differ, 7 up, 4 down), one-sided p = 0.27. Gate Keeper vs Qodo +10 (17 differ, 13 up, 4 down), p = 0.02.
 
-Gate Keeper and Codex missed the same two tasks (a single `Read` that can return a short count, and a non-constant-time signature comparison). Codex missed one more.
+Gate Keeper and Codex missed the same two tasks: a Go map written by concurrent goroutines without a lock (missed in 2 of 3 trials), and an upload read fully into memory before its size check (missed in 3 of 3). Codex also missed a refund check that ignored earlier refunds in one trial. Qodo's only misses were the Go map race.
 
 ## Second check on the previous holdout's tasks
 On the 42 tasks of `gk-holdout-20261107-a` (now burned, used here only as a development check, same model and settings): Gate Keeper v13.1 caught 75/81 with 19 false alarms, net **56**, the same as Codex's 56 and well ahead of v12 (33) and Qodo (27).
