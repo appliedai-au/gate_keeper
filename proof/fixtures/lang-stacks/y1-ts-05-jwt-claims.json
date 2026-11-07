@@ -1,0 +1,79 @@
+{
+  "id": "y1-ts-05-jwt-claims",
+  "title": "TypeScript JWT claim validation",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/claims.ts",
+  "context": "Checks the claims of a JWT whose signature was already verified. exp and nbf are NumericDate values (seconds since the epoch) and clockSkewSec of leeway is allowed. A token without exp must be rejected. aud may be a string or an array and must contain exactly the expected audience.",
+  "code": [
+    "export interface Claims {",
+    "  sub?: string;",
+    "  iss?: string;",
+    "  aud?: string | string[];",
+    "  exp?: number;",
+    "  nbf?: number;",
+    "}",
+    "",
+    "export class ClaimError extends Error {}",
+    "",
+    "export function parseBearer(header: string | null): string | null {",
+    "  if (!header) return null;",
+    "  const [scheme, token] = header.split(\" \");",
+    "  if (scheme.toLowerCase() !== \"bearer\" || !token) return null;",
+    "  return token;",
+    "}",
+    "",
+    "export function decodePayload(token: string): Claims {",
+    "  const parts = token.split(\".\");",
+    "  if (parts.length !== 3) throw new ClaimError(\"malformed token\");",
+    "  const b64 = parts[1].replace(/-/g, \"+\").replace(/_/g, \"/\");",
+    "  const padded = b64 + \"=\".repeat((4 - (b64.length % 4)) % 4);",
+    "  const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));",
+    "  return JSON.parse(new TextDecoder().decode(bytes));",
+    "}",
+    "",
+    "export function checkClaims(c: Claims, expected: { aud: string; iss: string; clockSkewSec: number }, nowMs = Date.now()): void {",
+    "  const now = nowMs / 1000;",
+    "  if (c.iss !== expected.iss) throw new ClaimError(\"bad issuer\");",
+    "  if (c.exp && c.exp + expected.clockSkewSec < now) throw new ClaimError(\"expired\");",
+    "  if (!c.sub) throw new ClaimError(\"missing subject\");",
+    "  if (c.nbf !== undefined && c.nbf - expected.clockSkewSec > nowMs) throw new ClaimError(\"not yet valid\");",
+    "  const auds = Array.isArray(c.aud) ? c.aud : [c.aud];",
+    "  if (!auds.some((a) => a?.includes(expected.aud))) throw new ClaimError(\"bad audience\");",
+    "}",
+    "",
+    "export function secondsLeft(c: Claims, nowMs = Date.now()): number {",
+    "  return c.exp === undefined ? 0 : Math.max(0, c.exp - Math.floor(nowMs / 1000));",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 30,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "a missing exp (or 0) skips the check, so tokens without expiry are accepted"
+    },
+    {
+      "line": 32,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "nbf in seconds is compared with nowMs in milliseconds, so not-yet-valid tokens are always accepted"
+    },
+    {
+      "line": 34,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "String.includes is a substring match, so aud \"api-internal\" or \"evilapi\" is accepted for \"api\"; compare with ==="
+    }
+  ],
+  "benign": [
+    14,
+    22
+  ]
+}

@@ -1,0 +1,99 @@
+{
+  "id": "y1-rust-06-sqlx-orders",
+  "title": "Rust sqlx order repository",
+  "holdout": false,
+  "language": "rust",
+  "filename": "src/orders.rs",
+  "context": "Order repository on sqlx and PostgreSQL. `search` filters by a status string that comes straight from the customer. `place_order` must decrement stock and insert the order atomically and must never oversell, even when many orders for the same SKU run concurrently; qty is validated as positive by the caller. Database errors must be returned to the caller.",
+  "code": [
+    "use sqlx::{PgPool, Row};",
+    "",
+    "pub struct Order {",
+    "    pub id: i64,",
+    "    pub sku: String,",
+    "    pub qty: i32,",
+    "    pub status: String,",
+    "}",
+    "",
+    "pub async fn search(pool: &PgPool, status: &str, limit: i64) -> sqlx::Result<Vec<Order>> {",
+    "    let sql = format!(\"SELECT id, sku, qty, status FROM orders WHERE status = '{status}' ORDER BY id DESC LIMIT $1\");",
+    "    let rows = sqlx::query(&sql).bind(limit).fetch_all(pool).await?;",
+    "    Ok(rows",
+    "        .iter()",
+    "        .map(|r| Order { id: r.get(\"id\"), sku: r.get(\"sku\"), qty: r.get(\"qty\"), status: r.get(\"status\") })",
+    "        .collect())",
+    "}",
+    "",
+    "pub async fn place_order(pool: &PgPool, sku: &str, qty: i32) -> sqlx::Result<i64> {",
+    "    let mut tx = pool.begin().await?;",
+    "    let stock: i32 = sqlx::query_scalar(\"SELECT stock FROM products WHERE sku = $1\")",
+    "        .bind(sku)",
+    "        .fetch_one(&mut *tx)",
+    "        .await?;",
+    "    if stock < qty {",
+    "        return Err(sqlx::Error::RowNotFound);",
+    "    }",
+    "    sqlx::query(\"UPDATE products SET stock = stock - $1 WHERE sku = $2\")",
+    "        .bind(qty)",
+    "        .bind(sku)",
+    "        .execute(&mut *tx)",
+    "        .await?;",
+    "    let id: i64 = sqlx::query_scalar(\"INSERT INTO orders (sku, qty, status) VALUES ($1, $2, 'pending') RETURNING id\")",
+    "        .bind(sku)",
+    "        .bind(qty)",
+    "        .fetch_one(pool)",
+    "        .await?;",
+    "    Ok(id)",
+    "}",
+    "",
+    "pub async fn cancel(pool: &PgPool, id: i64) -> sqlx::Result<()> {",
+    "    let _ = sqlx::query(\"UPDATE orders SET status = 'cancelled' WHERE id = $1\").bind(id).execute(pool).await;",
+    "    Ok(())",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 11,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "customer-supplied status is interpolated into the SQL text (injection); it must be bound as a parameter"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "the row is read without FOR UPDATE, so concurrent orders all see the same stock, pass the check and oversell"
+    },
+    {
+      "line": 36,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "the insert runs on the pool, outside the transaction, so it is not atomic with the stock update"
+    },
+    {
+      "line": 38,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "tx is never committed; it is rolled back on drop, so the stock decrement is lost while the order stays inserted"
+    },
+    {
+      "line": 42,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the query result is discarded, so a database error is swallowed and cancel reports success"
+    }
+  ],
+  "benign": [
+    25
+  ]
+}

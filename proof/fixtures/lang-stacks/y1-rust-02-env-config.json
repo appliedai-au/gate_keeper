@@ -1,0 +1,105 @@
+{
+  "id": "y1-rust-02-env-config",
+  "title": "Rust environment config loader",
+  "holdout": false,
+  "language": "rust",
+  "filename": "src/config.rs",
+  "context": "Loads service configuration from environment variables at startup. Missing or invalid values must produce a ConfigError, never a panic. PORT defaults to 8080 and DATABASE_URL is required. MAX_CONNECTIONS defaults to 10 and must be between 1 and 100 inclusive. REQUEST_TIMEOUT_SECS defaults to 30. The Debug form of Config is written to the startup log, and DATABASE_URL contains the database password.",
+  "code": [
+    "use std::env;",
+    "use std::fmt;",
+    "",
+    "#[derive(Debug)]",
+    "pub enum ConfigError {",
+    "    Missing(&'static str),",
+    "    Invalid(&'static str, String),",
+    "}",
+    "",
+    "impl fmt::Display for ConfigError {",
+    "    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {",
+    "        match self {",
+    "            ConfigError::Missing(k) => write!(f, \"missing env var {k}\"),",
+    "            ConfigError::Invalid(k, v) => write!(f, \"invalid value for {k}: {v}\"),",
+    "        }",
+    "    }",
+    "}",
+    "",
+    "#[derive(Debug)]",
+    "pub struct Config {",
+    "    pub port: u16,",
+    "    pub database_url: String,",
+    "    pub max_connections: u32,",
+    "    pub request_timeout_ms: u64,",
+    "}",
+    "",
+    "pub fn load() -> Result<Config, ConfigError> {",
+    "    let port = match env::var(\"PORT\") {",
+    "        Ok(v) => v.parse::<u16>().map_err(|_| ConfigError::Invalid(\"PORT\", v.clone()))?,",
+    "        Err(_) => 8080,",
+    "    };",
+    "    let database_url = env::var(\"DATABASE_URL\").unwrap_or_default();",
+    "    let max_connections: u32 = env::var(\"MAX_CONNECTIONS\")",
+    "        .unwrap_or_else(|_| \"10\".into())",
+    "        .parse()",
+    "        .unwrap();",
+    "    let timeout_secs: u64 = match env::var(\"REQUEST_TIMEOUT_SECS\") {",
+    "        Ok(v) => v.parse().map_err(|_| ConfigError::Invalid(\"REQUEST_TIMEOUT_SECS\", v.clone()))?,",
+    "        Err(_) => 30,",
+    "    };",
+    "    if max_connections < 1 || max_connections >= 100 {",
+    "        return Err(ConfigError::Invalid(\"MAX_CONNECTIONS\", max_connections.to_string()));",
+    "    }",
+    "    Ok(Config {",
+    "        port,",
+    "        database_url,",
+    "        max_connections,",
+    "        request_timeout_ms: timeout_secs * 100,",
+    "    })",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 19,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "derived Debug prints database_url, so the database password ends up in the startup log"
+    },
+    {
+      "line": 32,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "a missing DATABASE_URL silently becomes an empty string instead of returning ConfigError::Missing"
+    },
+    {
+      "line": 36,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "unwrap panics on a non-numeric MAX_CONNECTIONS instead of returning ConfigError::Invalid"
+    },
+    {
+      "line": 41,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "100 is allowed by the inclusive range but >= 100 rejects it"
+    },
+    {
+      "line": 48,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "seconds to milliseconds needs * 1000; * 100 makes every timeout ten times too short"
+    }
+  ],
+  "benign": [
+    29
+  ]
+}

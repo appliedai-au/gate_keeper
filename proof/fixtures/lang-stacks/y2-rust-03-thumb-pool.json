@@ -1,0 +1,98 @@
+{
+  "id": "y2-rust-03-thumb-pool",
+  "title": "Rust thumbnail worker pool",
+  "holdout": false,
+  "language": "rust",
+  "filename": "src/pool.rs",
+  "context": "A std::thread worker pool for thumbnail jobs. `submit` queues a job and returns false if it could not be queued. `shutdown` must let workers finish the jobs already queued and then join every thread. A panicking job must not take down its worker thread. `done` counts finished jobs.",
+  "code": [
+    "use std::panic::{self, AssertUnwindSafe};",
+    "use std::sync::atomic::{AtomicUsize, Ordering};",
+    "use std::sync::mpsc::{channel, Receiver, Sender};",
+    "use std::sync::{Arc, Mutex};",
+    "use std::thread::{self, JoinHandle};",
+    "",
+    "type Job = Box<dyn FnOnce() + Send + 'static>;",
+    "",
+    "pub struct Pool {",
+    "    tx: Option<Sender<Job>>,",
+    "    workers: Vec<JoinHandle<()>>,",
+    "    pub done: Arc<AtomicUsize>,",
+    "}",
+    "",
+    "impl Pool {",
+    "    pub fn new(n: usize) -> Pool {",
+    "        let (tx, rx) = channel::<Job>();",
+    "        let rx: Arc<Mutex<Receiver<Job>>> = Arc::new(Mutex::new(rx));",
+    "        let done = Arc::new(AtomicUsize::new(0));",
+    "        let mut workers = Vec::with_capacity(n);",
+    "        for _ in 0..n {",
+    "            let rx = rx.clone();",
+    "            let done = done.clone();",
+    "            workers.push(thread::spawn(move || loop {",
+    "                let job = rx.lock().unwrap().recv();",
+    "                match job {",
+    "                    Ok(job) => {",
+    "                        job();",
+    "                        done.fetch_add(1, Ordering::Relaxed);",
+    "                    }",
+    "                    Err(_) => break,",
+    "                }",
+    "            }));",
+    "        }",
+    "        Pool { tx: Some(tx), workers, done }",
+    "    }",
+    "",
+    "    pub fn submit<F: FnOnce() + Send + 'static>(&self, f: F) -> bool {",
+    "        if let Some(tx) = &self.tx {",
+    "            let _ = tx.send(Box::new(f));",
+    "            return true;",
+    "        }",
+    "        false",
+    "    }",
+    "",
+    "    pub fn shutdown(&mut self) {",
+    "        for w in self.workers.drain(..) {",
+    "            let _ = w.join();",
+    "        }",
+    "        self.tx.take();",
+    "    }",
+    "}",
+    "",
+    "impl Drop for Pool {",
+    "    fn drop(&mut self) {",
+    "        self.tx.take();",
+    "    }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 28,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "a panicking job unwinds and kills the worker thread; it must run under panic::catch_unwind(AssertUnwindSafe(job))"
+    },
+    {
+      "line": 40,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the send error is discarded and true is returned even when no worker is left to receive the job"
+    },
+    {
+      "line": 47,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "workers are joined while the Sender is still alive, so recv never returns Err and shutdown deadlocks; tx must be dropped first"
+    }
+  ],
+  "benign": [
+    25,
+    29
+  ]
+}

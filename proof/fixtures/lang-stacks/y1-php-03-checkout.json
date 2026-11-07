@@ -1,0 +1,81 @@
+{
+  "id": "y1-php-03-checkout",
+  "title": "PHP cart checkout",
+  "holdout": false,
+  "language": "php",
+  "filename": "src/Checkout.php",
+  "context": "Turns a cart into an order. Prices must come from the products table, never from the client; amounts are integer cents; stock must never go negative even with concurrent checkouts; the order, its lines and the stock updates are saved all-or-nothing, and any failure must roll back. $db uses PDO::ERRMODE_EXCEPTION on MySQL InnoDB.",
+  "code": [
+    "<?php",
+    "",
+    "final class Checkout",
+    "{",
+    "    public function __construct(private PDO $db) {}",
+    "",
+    "    /** @param array<int, array{product_id:int, qty:int, price:int}> $items  as posted by the client */",
+    "    public function placeOrder(int $userId, array $items): int",
+    "    {",
+    "        $this->db->beginTransaction();",
+    "        try {",
+    "            $total = 0;",
+    "            foreach ($items as $item) {",
+    "                $qty = (int) $item['qty'];",
+    "                if ($qty <= 0) {",
+    "                    throw new InvalidArgumentException('bad quantity');",
+    "                }",
+    "                $stmt = $this->db->prepare('SELECT stock FROM products WHERE id = ?');",
+    "                $stmt->execute([$item['product_id']]);",
+    "                $stock = (int) $stmt->fetchColumn();",
+    "                if ($stock < $qty) {",
+    "                    throw new RuntimeException('out of stock');",
+    "                }",
+    "                $total += (int) $item['price'] * $qty;",
+    "                $this->db->prepare('UPDATE products SET stock = ? WHERE id = ?')",
+    "                    ->execute([$stock - $qty, $item['product_id']]);",
+    "            }",
+    "            $this->db->prepare('INSERT INTO orders (user_id, total_cents) VALUES (?, ?)')",
+    "                ->execute([$userId, $total]);",
+    "            $orderId = (int) $this->db->lastInsertId();",
+    "            $line = $this->db->prepare('INSERT INTO order_lines (order_id, product_id, qty) VALUES (?, ?, ?)');",
+    "            foreach ($items as $item) {",
+    "                $line->execute([$orderId, $item['product_id'], (int) $item['qty']]);",
+    "            }",
+    "            $this->db->commit();",
+    "            return $orderId;",
+    "        } catch (RuntimeException $e) {",
+    "            $this->db->rollBack();",
+    "            throw $e;",
+    "        }",
+    "    }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 18,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "the stock row is read without FOR UPDATE and written back as stock - qty, so concurrent checkouts both pass the check and oversell"
+    },
+    {
+      "line": 24,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the price comes from the client request, so a user can buy anything for 0"
+    },
+    {
+      "line": 37,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "InvalidArgumentException is a LogicException, not a RuntimeException, so a bad quantity escapes without rollBack and the transaction stays open; catch Throwable"
+    }
+  ],
+  "benign": [
+    30
+  ]
+}

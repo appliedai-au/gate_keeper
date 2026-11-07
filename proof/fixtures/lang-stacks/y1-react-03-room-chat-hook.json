@@ -1,0 +1,82 @@
+{
+  "id": "y1-react-03-room-chat-hook",
+  "title": "React room chat WebSocket hook",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/useRoomChat.ts",
+  "context": "Hook that keeps one WebSocket open to the current room and collects its messages (the latest 200 are kept). Switching rooms or unmounting must close the old socket. Malformed frames are ignored. ordered must list messages by their at timestamp without changing state in place.",
+  "code": [
+    "import { useCallback, useEffect, useMemo, useRef, useState } from \"react\";",
+    "",
+    "export type ChatMessage = { id: string; text: string; at: number };",
+    "",
+    "export function useRoomChat(roomId: string, token: string) {",
+    "  const [messages, setMessages] = useState<ChatMessage[]>([]);",
+    "  const [status, setStatus] = useState<\"connecting\" | \"open\" | \"closed\">(\"connecting\");",
+    "  const socketRef = useRef<WebSocket | null>(null);",
+    "",
+    "  useEffect(() => {",
+    "    setMessages([]);",
+    "    setStatus(\"connecting\");",
+    "    const ws = new WebSocket(`wss://chat.example.com/rooms/${encodeURIComponent(roomId)}`);",
+    "    socketRef.current = ws;",
+    "    ws.onopen = () => {",
+    "      setStatus(\"open\");",
+    "      ws.send(JSON.stringify({ type: \"auth\", token }));",
+    "    };",
+    "    ws.onmessage = (ev) => {",
+    "      let msg: ChatMessage;",
+    "      try {",
+    "        msg = JSON.parse(ev.data);",
+    "      } catch {",
+    "        return;",
+    "      }",
+    "      setMessages([...messages, msg].slice(-200));",
+    "    };",
+    "    ws.onclose = () => setStatus(\"closed\");",
+    "  }, [roomId, token]);",
+    "",
+    "  const send = useCallback((text: string) => {",
+    "    const ws = socketRef.current;",
+    "    if (!ws || ws.readyState !== WebSocket.OPEN) return false;",
+    "    ws.send(JSON.stringify({ type: \"message\", text }));",
+    "    return true;",
+    "  }, []);",
+    "",
+    "  const ordered = useMemo(() => messages.sort((a, b) => a.at - b.at), [messages]);",
+    "  const lastSeen = ordered.length ? ordered[ordered.length - 1].at : null;",
+    "",
+    "  return { messages: ordered, status, send, lastSeen };",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 26,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "stale closure: messages is the empty array from when the effect ran, so each frame replaces the list with just one message; use the functional updater"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "the effect has no cleanup that closes ws, so every room switch or unmount leaves the old socket open and still updating state"
+    },
+    {
+      "line": 38,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "Array.sort mutates the state array in place; copy it first ([...messages].sort)"
+    }
+  ],
+  "benign": [
+    24,
+    36
+  ]
+}

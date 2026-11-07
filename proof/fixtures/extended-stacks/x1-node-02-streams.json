@@ -1,0 +1,80 @@
+{
+  "id": "x1-node-02-streams",
+  "title": "Node download and hashing helpers",
+  "holdout": false,
+  "language": "javascript",
+  "filename": "src/files.js",
+  "context": "Helpers for a backup job. processAll must return only after every download is hashed. makeToken creates password-reset tokens.",
+  "code": [
+    "const fs = require(\"fs\");",
+    "const crypto = require(\"crypto\");",
+    "const https = require(\"https\");",
+    "",
+    "async function sha256File(path) {",
+    "  const hash = crypto.createHash(\"sha256\");",
+    "  const stream = fs.createReadStream(path);",
+    "  stream.on(\"data\", (chunk) => hash.update(chunk));",
+    "  return hash.digest(\"hex\");",
+    "}",
+    "",
+    "function download(url, dest) {",
+    "  return new Promise((resolve, reject) => {",
+    "    const file = fs.createWriteStream(dest);",
+    "    https.get(url, (res) => {",
+    "      res.pipe(file);",
+    "      file.on(\"finish\", resolve);",
+    "    }).on(\"error\", reject);",
+    "  });",
+    "}",
+    "",
+    "async function processAll(urls) {",
+    "  const results = [];",
+    "  urls.forEach(async (u, i) => {",
+    "    await download(u, `/tmp/f${i}`);",
+    "    results.push(await sha256File(`/tmp/f${i}`));",
+    "  });",
+    "  return results;",
+    "}",
+    "",
+    "function makeToken() {",
+    "  return Math.random().toString(36).slice(2);",
+    "}",
+    "",
+    "module.exports = { sha256File, download, processAll, makeToken };"
+  ],
+  "expected": [
+    {
+      "line": 9,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "the digest is taken before the stream is read (nothing waits for 'end'), so it returns the hash of empty input"
+    },
+    {
+      "line": 16,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the status code is never checked, so a 404 or 500 error page is saved as the file"
+    },
+    {
+      "line": 24,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "async callbacks in forEach are not awaited, so processAll returns an empty list before any download finishes"
+    },
+    {
+      "line": 32,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "Math.random is not cryptographically secure, so reset tokens can be predicted"
+    }
+  ],
+  "benign": []
+}

@@ -1,0 +1,95 @@
+{
+  "id": "y1-bun-06-feature-flags",
+  "title": "Bun feature flag service",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/flags.ts",
+  "context": "Feature flags reloaded from a JSON file every 30 s. A failed reload must keep the last good flags. rollout is an integer percentage 0-100 of users; buckets are 0-99. PUT requires the admin token from FLAGS_ADMIN_TOKEN, compared in constant time; if the variable is unset, all writes must be refused.",
+  "code": [
+    "import { timingSafeEqual } from \"node:crypto\";",
+    "",
+    "type Flag = { enabled: boolean; rollout: number };",
+    "let flags = new Map<string, Flag>();",
+    "const FLAGS_PATH = \"/etc/app/flags.json\";",
+    "const ADMIN_TOKEN = Bun.env.FLAGS_ADMIN_TOKEN ?? \"\";",
+    "",
+    "async function reload() {",
+    "  try {",
+    "    flags = new Map(Object.entries(await Bun.file(FLAGS_PATH).json()));",
+    "  } catch (err) {",
+    "    console.error(\"flag reload failed\", err);",
+    "    flags = new Map();",
+    "  }",
+    "}",
+    "await reload();",
+    "setInterval(reload, 30_000);",
+    "",
+    "function isOn(name: string, userId: string) {",
+    "  const f = flags.get(name);",
+    "  if (!f || !f.enabled) return false;",
+    "  return Bun.hash.crc32(`${name}:${userId}`) % 100 <= f.rollout;",
+    "}",
+    "",
+    "function authorized(header: string | null) {",
+    "  const a = Buffer.from(header ?? \"\");",
+    "  const b = Buffer.from(`Bearer ${ADMIN_TOKEN}`);",
+    "  return a.length === b.length && timingSafeEqual(a, b);",
+    "}",
+    "",
+    "Bun.serve({",
+    "  port: 9100,",
+    "  routes: {",
+    "    \"/flags/:name\": {",
+    "      GET: (req) => {",
+    "        const user = new URL(req.url).searchParams.get(\"user\");",
+    "        if (!user) return new Response(\"user required\", { status: 400 });",
+    "        return Response.json({ on: isOn(req.params.name, user) });",
+    "      },",
+    "      PUT: async (req) => {",
+    "        if (!authorized(req.headers.get(\"authorization\"))) return new Response(\"forbidden\", { status: 403 });",
+    "        const body = (await req.json()) as Flag;",
+    "        if (typeof body.enabled !== \"boolean\" || body.rollout < 0 || body.rollout > 100) return new Response(\"bad flag\", { status: 400 });",
+    "        flags.set(req.params.name, body);",
+    "        await Bun.write(FLAGS_PATH, JSON.stringify(Object.fromEntries(flags), null, 2));",
+    "        return Response.json(body);",
+    "      },",
+    "    },",
+    "  },",
+    "});"
+  ],
+  "expected": [
+    {
+      "line": 13,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "a failed reload wipes every flag; the last good set must be kept"
+    },
+    {
+      "line": 22,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "buckets are 0-99, so <= enables rollout+1 percent (rollout 0 still turns the flag on for 1% of users); must be <"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "when FLAGS_ADMIN_TOKEN is unset, the header \"Bearer \" matches and anyone can write flags; an empty token must refuse all writes"
+    },
+    {
+      "line": 43,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "rollout is never checked to be an integer number; a string, null or missing rollout passes both comparisons and is saved"
+    }
+  ],
+  "benign": []
+}

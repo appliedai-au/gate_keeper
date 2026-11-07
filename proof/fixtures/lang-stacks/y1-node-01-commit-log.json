@@ -1,0 +1,95 @@
+{
+  "id": "y1-node-01-commit-log",
+  "title": "Express recent commits endpoint",
+  "holdout": false,
+  "language": "javascript",
+  "filename": "src/commits.js",
+  "context": "Express 4 router for an internal dashboard that shows recent commits of a repository. `repo` must name a directory directly under /srv/repos, and `limit` must be an integer from 1 to 50 (default 20). Express 4 does not catch rejected promises from async handlers. Responses are cached for 60 seconds per repo and limit.",
+  "code": [
+    "const express = require(\"express\");",
+    "const { exec } = require(\"child_process\");",
+    "const path = require(\"path\");",
+    "const fs = require(\"fs/promises\");",
+    "",
+    "const REPO_ROOT = \"/srv/repos\";",
+    "const FORMAT = \"%H%x09%an%x09%s\";",
+    "const cache = new Map();",
+    "const router = express.Router();",
+    "",
+    "function run(cmd) {",
+    "  return new Promise((resolve, reject) => {",
+    "    exec(cmd, { maxBuffer: 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));",
+    "  });",
+    "}",
+    "",
+    "router.get(\"/commits/:repo\", async (req, res) => {",
+    "  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);",
+    "  const repo = req.params.repo;",
+    "  const dir = path.join(REPO_ROOT, repo);",
+    "  const key = `${repo}:${limit}`;",
+    "  const hit = cache.get(key);",
+    "  if (hit && Date.now() - hit.at < 60) {",
+    "    return res.json(hit.data);",
+    "  }",
+    "  await fs.access(dir);",
+    "  const pretty = `--pretty=format:${FORMAT}`;",
+    "  const out = await run(`git -C ${dir} log -n ${limit} ${pretty}`);",
+    "  const data = out",
+    "    .split(\"\\n\")",
+    "    .filter(Boolean)",
+    "    .map((line) => {",
+    "      const [hash, author, subject] = line.split(\"\\t\");",
+    "      return { hash, author, subject };",
+    "    });",
+    "  cache.set(key, { at: Date.now(), data });",
+    "  res.json(data);",
+    "});",
+    "",
+    "module.exports = router;"
+  ],
+  "expected": [
+    {
+      "line": 18,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "only the upper bound is enforced; limit=-5 or 0 is passed through to git instead of being rejected or clamped to at least 1"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "repo is not checked against the allowed directories, so \"..\" or an encoded %2F path escapes /srv/repos"
+    },
+    {
+      "line": 23,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "Date.now() is in milliseconds, so entries expire after 60ms instead of 60 seconds"
+    },
+    {
+      "line": 26,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "there is no try/catch, so a missing repo or a failing git command rejects the async handler and the request hangs with an unhandled rejection"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "dir is interpolated into a shell command, so a repo name containing ; or $( ) runs arbitrary commands; use execFile with an argument array"
+    }
+  ],
+  "benign": [
+    13
+  ]
+}

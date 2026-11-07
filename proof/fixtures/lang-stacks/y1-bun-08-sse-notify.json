@@ -1,0 +1,82 @@
+{
+  "id": "y1-bun-08-sse-notify",
+  "title": "Bun server-sent notifications",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/events.ts",
+  "context": "Pushes notifications to logged-in users over server-sent events. verifyToken resolves to a user id or null; isAdmin(userId) returns Promise<boolean>. Notification messages are free text and may contain line breaks. Disconnected clients must be cleaned up.",
+  "code": [
+    "import { verifyToken, isAdmin } from \"./auth\";",
+    "",
+    "type Sub = { userId: string; send: (event: string, data: string) => void };",
+    "const subs = new Set<Sub>();",
+    "const enc = new TextEncoder();",
+    "",
+    "export function notify(userId: string, event: string, message: string) {",
+    "  for (const s of subs) if (s.userId === userId) s.send(event, message);",
+    "}",
+    "",
+    "Bun.serve({",
+    "  port: 5050,",
+    "  idleTimeout: 0,",
+    "  async fetch(req) {",
+    "    const url = new URL(req.url);",
+    "    if (url.pathname === \"/broadcast\" && req.method === \"POST\") {",
+    "      const caller = await verifyToken(req.headers.get(\"authorization\"));",
+    "      if (!caller || !isAdmin(caller)) return new Response(\"forbidden\", { status: 403 });",
+    "      const { message } = await req.json();",
+    "      for (const s of subs) s.send(\"broadcast\", String(message));",
+    "      return new Response(null, { status: 204 });",
+    "    }",
+    "    if (url.pathname !== \"/events\") return new Response(\"not found\", { status: 404 });",
+    "    const userId = await verifyToken(req.headers.get(\"authorization\"));",
+    "    if (!userId) return new Response(\"unauthorized\", { status: 401 });",
+    "    let sub: Sub;",
+    "    let timer: Timer;",
+    "    const stream = new ReadableStream({",
+    "      start(controller) {",
+    "        sub = {",
+    "          userId,",
+    "          send: (event, data) => controller.enqueue(enc.encode(`event: ${event}\\ndata: ${data}\\n\\n`)),",
+    "        };",
+    "        subs.add(sub);",
+    "        timer = setInterval(() => controller.enqueue(enc.encode(\": ping\\n\\n\")), 15_000);",
+    "      },",
+    "      cancel() {",
+    "        clearInterval(timer);",
+    "      },",
+    "    });",
+    "    return new Response(stream, { headers: { \"content-type\": \"text/event-stream\", \"cache-control\": \"no-cache\" } });",
+    "  },",
+    "});"
+  ],
+  "expected": [
+    {
+      "line": 18,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "isAdmin returns a Promise, which is always truthy, so any logged-in user can broadcast"
+    },
+    {
+      "line": 32,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "a message containing a line break ends the data field early and corrupts SSE framing; each line needs its own data: prefix"
+    },
+    {
+      "line": 38,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "the subscriber is never removed from subs on disconnect, so the set grows forever and notify keeps writing to closed streams"
+    }
+  ],
+  "benign": [
+    13
+  ]
+}

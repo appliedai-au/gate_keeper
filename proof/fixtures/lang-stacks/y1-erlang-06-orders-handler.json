@@ -1,0 +1,66 @@
+{
+  "id": "y1-erlang-06-orders-handler",
+  "title": "Erlang Cowboy order list handler",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/orders_handler.erl",
+  "context": "Cowboy handler for GET /orders?status=...&limit=N. auth:user_id(Req) returns {ok, UserId} for signed-in users or error; users see only their own orders. limit defaults to 50 and must be clamped to 1..200; a non-numeric limit must give 400, not a crash. db:equery/2 runs a parameterised Postgres query and returns {ok, Columns, Rows}.",
+  "code": [
+    "-module(orders_handler).",
+    "-export([init/2]).",
+    "",
+    "init(Req0, State) ->",
+    "    case auth:user_id(Req0) of",
+    "        {ok, UserId} ->",
+    "            #{status := Status, limit := LimitBin} =",
+    "                cowboy_req:match_qs([{status, [], <<\"open\">>}, {limit, [], <<\"50\">>}], Req0),",
+    "            Limit = binary_to_integer(LimitBin),",
+    "            Rows = query(UserId, Status, Limit),",
+    "            Body = jsx:encode([row_to_map(R) || R <- Rows]),",
+    "            Req = cowboy_req:reply(200, #{<<\"content-type\">> => <<\"application/json\">>}, Body, Req0),",
+    "            {ok, Req, State};",
+    "        error ->",
+    "            Req = cowboy_req:reply(401, Req0),",
+    "            {ok, Req, State}",
+    "    end.",
+    "",
+    "query(UserId, Status, Limit) ->",
+    "    Capped = max(Limit, 200),",
+    "    Sql = \"SELECT id, total_cents, status FROM orders WHERE user_id = $1 AND status = '\"",
+    "          ++ binary_to_list(Status) ++ \"' ORDER BY id DESC LIMIT $2\",",
+    "    {ok, _Cols, Rows} = db:equery(Sql, [UserId, Capped]),",
+    "    Rows.",
+    "",
+    "row_to_map({Id, Total, Status}) ->",
+    "    #{id => Id, total_cents => Total, status => Status}."
+  ],
+  "expected": [
+    {
+      "line": 9,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "a non-numeric limit raises badarg and the request ends in a 500 instead of a 400"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "max/2 turns every limit into at least 200 instead of clamping it to 1..200"
+    },
+    {
+      "line": 22,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "status from the query string is concatenated into the SQL (injection); it must be passed as a bound parameter"
+    }
+  ],
+  "benign": [
+    8
+  ]
+}

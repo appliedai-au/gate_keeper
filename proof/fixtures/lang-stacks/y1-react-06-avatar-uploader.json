@@ -1,0 +1,92 @@
+{
+  "id": "y1-react-06-avatar-uploader",
+  "title": "React avatar uploader",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/AvatarUploader.tsx",
+  "context": "Avatar upload. Only image/png or image/jpeg files up to 10 MB are accepted; anything else must be rejected. The preview object URL must be released when a new file is chosen and on unmount. The API answers 2xx with {url}, otherwise {error}, and only a successful upload may call onUploaded.",
+  "code": [
+    "import { useEffect, useState, type ChangeEvent } from \"react\";",
+    "",
+    "const MAX_BYTES = 10 * 1024 * 1024;",
+    "const TYPES = [\"image/png\", \"image/jpeg\"];",
+    "",
+    "export function AvatarUploader({ onUploaded }: { onUploaded: (url: string) => void }) {",
+    "  const [file, setFile] = useState<File | null>(null);",
+    "  const [preview, setPreview] = useState<string | null>(null);",
+    "  const [error, setError] = useState<string | null>(null);",
+    "  const [busy, setBusy] = useState(false);",
+    "",
+    "  useEffect(() => {",
+    "    if (!file) return;",
+    "    const url = URL.createObjectURL(file);",
+    "    setPreview(url);",
+    "  }, [file]);",
+    "",
+    "  function choose(e: ChangeEvent<HTMLInputElement>) {",
+    "    const f = e.target.files?.[0];",
+    "    if (!f) return;",
+    "    if (TYPES.indexOf(f.type) < 0 && f.size > MAX_BYTES) {",
+    "      setError(\"PNG or JPEG up to 10 MB\");",
+    "      return;",
+    "    }",
+    "    setError(null);",
+    "    setFile(f);",
+    "  }",
+    "",
+    "  async function upload() {",
+    "    if (!file) return;",
+    "    setBusy(true);",
+    "    const body = new FormData();",
+    "    body.append(\"avatar\", file);",
+    "    try {",
+    "      const r = await fetch(\"/api/avatar\", { method: \"POST\", body });",
+    "      const data = await r.json();",
+    "      onUploaded(data.url);",
+    "    } catch {",
+    "      setError(\"Upload failed\");",
+    "    }",
+    "    setBusy(false);",
+    "  }",
+    "",
+    "  return (",
+    "    <div>",
+    "      <input type=\"file\" accept=\"image/png,image/jpeg\" onChange={choose} />",
+    "      {preview && <img src={preview} alt=\"Preview\" />}",
+    "      {error && <p role=\"alert\">{error}</p>}",
+    "      <button onClick={upload} disabled={!file || busy}>Upload</button>",
+    "    </div>",
+    "  );",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 16,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "no cleanup calls URL.revokeObjectURL, so every chosen file's blob stays in memory"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "&& should be ||: a small file of any type, or a huge PNG, passes the check"
+    },
+    {
+      "line": 37,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "r.ok is never checked, so an error response calls onUploaded(undefined) instead of showing the error"
+    }
+  ],
+  "benign": [
+    33,
+    47
+  ]
+}

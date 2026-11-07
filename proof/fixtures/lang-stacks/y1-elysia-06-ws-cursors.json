@@ -1,0 +1,75 @@
+{
+  "id": "y1-elysia-06-ws-cursors",
+  "title": "Elysia live cursor presence",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/presence.ts",
+  "context": "Shared-document cursor presence over Elysia WebSockets. verifyToken(token) resolves to { userId } or null; canRead(userId, docId) resolves to a boolean, and only readers may join. On join a client receives the cursors of that document only. Each connection may publish at most 20 updates per second. All per-connection state must be dropped on close.",
+  "code": [
+    "import { Elysia, t } from \"elysia\";",
+    "import { verifyToken, canRead } from \"./auth\";",
+    "",
+    "type Cursor = { docId: string; userId: string; x: number; y: number };",
+    "const cursors = new Map<string, Cursor>();",
+    "const lastSent = new Map<string, number>();",
+    "const MIN_INTERVAL_MS = 1000 / 20;",
+    "",
+    "export const presence = new Elysia()",
+    "  .ws(\"/docs/:docId/live\", {",
+    "    query: t.Object({ token: t.String() }),",
+    "    body: t.Object({ x: t.Number({ minimum: 0, maximum: 1 }), y: t.Number({ minimum: 0, maximum: 1 }) }),",
+    "    async open(ws) {",
+    "      const { docId } = ws.data.params;",
+    "      const session = await verifyToken(ws.data.query.token);",
+    "      if (!session) { ws.close(4401, \"unauthorized\"); return; }",
+    "      if (!(await canRead(docId, session.userId))) { ws.close(4403, \"forbidden\"); return; }",
+    "      cursors.set(ws.id, { docId, userId: session.userId, x: 0, y: 0 });",
+    "      ws.subscribe(`doc:${docId}`);",
+    "      ws.send([...cursors.values()].filter((c) => (c.docId = docId)));",
+    "    },",
+    "    message(ws, { x, y }) {",
+    "      const c = cursors.get(ws.id);",
+    "      if (!c) return;",
+    "      const now = Date.now();",
+    "      if (now - (lastSent.get(ws.id) ?? 0) < MIN_INTERVAL_MS) return;",
+    "      lastSent.set(ws.id, now);",
+    "      c.x = x;",
+    "      c.y = y;",
+    "      ws.publish(`doc:${c.docId}`, c);",
+    "    },",
+    "    close(ws) {",
+    "      cursors.delete(ws.id);",
+    "    },",
+    "  });"
+  ],
+  "expected": [
+    {
+      "line": 17,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "arguments are swapped (canRead takes userId, docId), so the permission check tests the wrong pair"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "assignment instead of comparison: every cursor passes the filter and has its docId overwritten, leaking other documents' cursors"
+    },
+    {
+      "line": 33,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "the lastSent entry is never removed, so the map grows with every connection ever made"
+    }
+  ],
+  "benign": [
+    24,
+    30
+  ]
+}

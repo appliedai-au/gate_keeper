@@ -1,0 +1,86 @@
+{
+  "id": "y2-php-01-api-keys",
+  "title": "PHP API key issue and verify",
+  "holdout": false,
+  "language": "php",
+  "filename": "src/ApiKeys.php",
+  "context": "Issues and verifies API keys. Keys look like \"gk_<hex>\", must be unguessable, are shown once and stored only as a SHA-256 hash. A key authenticates only if it is not revoked and its account's users.status is 'active'. Users may revoke only their own keys.",
+  "code": [
+    "<?php",
+    "",
+    "final class ApiKeys",
+    "{",
+    "    public function __construct(private PDO $db) {}",
+    "",
+    "    public function issue(int $userId): string",
+    "    {",
+    "        $key = 'gk_' . bin2hex(pack('N', mt_rand()) . pack('N', mt_rand()));",
+    "        $this->db->prepare('INSERT INTO api_keys (user_id, key_hash, revoked) VALUES (?, ?, 0)')",
+    "            ->execute([$userId, hash('sha256', $key)]);",
+    "        return $key;",
+    "    }",
+    "",
+    "    public function verify(string $presented): ?int",
+    "    {",
+    "        if (!strpos($presented, 'gk_')) {",
+    "            return null;",
+    "        }",
+    "        $stmt = $this->db->prepare(",
+    "            'SELECT k.user_id, k.revoked, u.status FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.key_hash = ?'",
+    "        );",
+    "        $stmt->execute([hash('sha256', $presented)]);",
+    "        $row = $stmt->fetch(PDO::FETCH_ASSOC);",
+    "        if ($row === false) {",
+    "            return null;",
+    "        }",
+    "        if ((int) $row['revoked'] === 1) {",
+    "            return null;",
+    "        }",
+    "        return (int) $row['user_id'];",
+    "    }",
+    "",
+    "    public function revoke(int $userId, string $keyHash): void",
+    "    {",
+    "        $this->db->prepare('UPDATE api_keys SET revoked = 1 WHERE key_hash = ?')",
+    "            ->execute([$keyHash]);",
+    "    }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 9,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "mt_rand is not a cryptographic generator and gives only 64 predictable bits; use random_bytes"
+    },
+    {
+      "line": 17,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "strpos returns 0 when the prefix is at the start, which is falsy, so every valid key is rejected; use str_starts_with"
+    },
+    {
+      "line": 31,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "users.status is fetched but never checked, so keys of suspended accounts keep working"
+    },
+    {
+      "line": 36,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the update is not limited to user_id, so any user can revoke another user's key (IDOR)"
+    }
+  ],
+  "benign": [
+    28
+  ]
+}

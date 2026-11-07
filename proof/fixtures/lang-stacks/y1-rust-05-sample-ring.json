@@ -1,0 +1,96 @@
+{
+  "id": "y1-rust-05-sample-ring",
+  "title": "Rust audio sample ring buffer",
+  "holdout": false,
+  "language": "rust",
+  "filename": "src/ring.rs",
+  "context": "Fixed-size ring buffer of audio samples, used from a single thread; capacity is always at least 1. `push` overwrites the oldest sample when full, `pop` removes and returns the oldest sample, and `latest(n)` returns the n most recent samples oldest-first (n may exceed len). `rms` covers only the stored samples and is 0.0 for an empty ring.",
+  "code": [
+    "pub struct Ring {",
+    "    buf: Vec<f32>,",
+    "    head: usize,",
+    "    len: usize,",
+    "}",
+    "",
+    "impl Ring {",
+    "    pub fn with_capacity(cap: usize) -> Self {",
+    "        Ring { buf: vec![0.0; cap], head: 0, len: 0 }",
+    "    }",
+    "",
+    "    fn cap(&self) -> usize {",
+    "        self.buf.len()",
+    "    }",
+    "",
+    "    pub fn push(&mut self, sample: f32) {",
+    "        let tail = (self.head + self.len) % self.cap();",
+    "        self.buf[tail] = sample;",
+    "        if self.len == self.cap() {",
+    "            self.head = (self.head + 1) % self.cap();",
+    "        } else {",
+    "            self.len += 1;",
+    "        }",
+    "    }",
+    "",
+    "    pub fn pop(&mut self) -> Option<f32> {",
+    "        if self.len == 0 {",
+    "            return None;",
+    "        }",
+    "        let v = self.buf[self.head];",
+    "        self.head += 1;",
+    "        self.len -= 1;",
+    "        Some(v)",
+    "    }",
+    "",
+    "    pub fn latest(&self, n: usize) -> Vec<f32> {",
+    "        let n = n.min(self.len);",
+    "        let start = self.head + self.len - n - 1;",
+    "        (0..n).map(|i| self.buf[(start + i) % self.cap()]).collect()",
+    "    }",
+    "",
+    "    pub fn rms(&self) -> f32 {",
+    "        let sum: f32 = self.buf.iter().map(|s| s * s).sum();",
+    "        let count = self.len.max(1) as f32;",
+    "        (sum / count).sqrt()",
+    "    }",
+    "",
+    "    pub fn len(&self) -> usize {",
+    "        self.len",
+    "    }",
+    "",
+    "    pub fn clear(&mut self) {",
+    "        self.head = 0;",
+    "        self.len = 0;",
+    "    }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 31,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "head is not wrapped modulo the capacity, so it runs past the end and the next pop or push indexes out of bounds"
+    },
+    {
+      "line": 38,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "off by one: the window starts at head + len - n; the extra - 1 returns one older sample and underflows when head is 0 and n == len"
+    },
+    {
+      "line": 43,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "sums the whole backing buffer, including stale slots left by pop and unused slots, instead of only the len stored samples"
+    }
+  ],
+  "benign": [
+    20,
+    44
+  ]
+}

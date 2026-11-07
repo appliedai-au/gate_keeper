@@ -1,0 +1,77 @@
+{
+  "id": "y1-erlang-02-line-server",
+  "title": "Erlang TCP line protocol server",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/line_server.erl",
+  "context": "TCP server for a small line protocol (PING, ECHO <text>) on port 7000; start/0 runs in a dedicated supervisor-owned process. Every connection must be served concurrently so one slow client cannot block others, idle clients must be dropped after 30 seconds, and a client's socket must be closed when it sends an invalid command.",
+  "code": [
+    "-module(line_server).",
+    "-export([start/0]).",
+    "",
+    "start() ->",
+    "    {ok, LSock} = gen_tcp:listen(7000, [binary, {packet, line}, {packet_size, 1024},",
+    "                                        {active, false}, {reuseaddr, true}]),",
+    "    accept_loop(LSock).",
+    "",
+    "accept_loop(LSock) ->",
+    "    {ok, Sock} = gen_tcp:accept(LSock),",
+    "    handle(Sock),",
+    "    accept_loop(LSock).",
+    "",
+    "handle(Sock) ->",
+    "    case gen_tcp:recv(Sock, 0) of",
+    "        {ok, Line} ->",
+    "            case parse(Line) of",
+    "                {ok, Cmd} ->",
+    "                    gen_tcp:send(Sock, reply(Cmd)),",
+    "                    handle(Sock);",
+    "                error ->",
+    "                    gen_tcp:send(Sock, <<\"ERR bad command\\n\">>)",
+    "            end;",
+    "        {error, closed} ->",
+    "            ok;",
+    "        {error, _Reason} ->",
+    "            gen_tcp:close(Sock)",
+    "    end.",
+    "",
+    "parse(Line) ->",
+    "    case binary:split(string:trim(Line), <<\" \">>) of",
+    "        [<<\"PING\">>] -> {ok, ping};",
+    "        [<<\"ECHO\">>, Text] -> {ok, {echo, Text}};",
+    "        _ -> error",
+    "    end.",
+    "",
+    "reply(ping) -> <<\"PONG\\n\">>;",
+    "reply({echo, Text}) -> <<Text/binary, \"\\n\">>."
+  ],
+  "expected": [
+    {
+      "line": 11,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "the connection is served inline in the accept loop, so one client blocks every other; it must be handled in a spawned process (with controlling_process)"
+    },
+    {
+      "line": 15,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "recv has no timeout, so idle clients are never dropped after 30 seconds and hold the socket forever"
+    },
+    {
+      "line": 22,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "after an invalid command the error is sent but the socket is never closed"
+    }
+  ],
+  "benign": [
+    25
+  ]
+}

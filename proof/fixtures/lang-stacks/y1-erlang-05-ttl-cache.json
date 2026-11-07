@@ -1,0 +1,72 @@
+{
+  "id": "y1-erlang-05-ttl-cache",
+  "title": "Erlang ETS read-through cache",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/ttl_cache.erl",
+  "context": "Read-through cache in front of a slow pricing service. get/3 returns the cached value while it is younger than TtlMs milliseconds, otherwise it calls Loader() and caches the result. Loader errors ({error, _}) must be returned to the caller but never cached. The table is owned by the cache gen_server so it survives caller crashes.",
+  "code": [
+    "-module(ttl_cache).",
+    "-behaviour(gen_server).",
+    "-export([start_link/0, get/3, invalidate/1]).",
+    "-export([init/1, handle_call/3, handle_cast/2]).",
+    "",
+    "start_link() ->",
+    "    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).",
+    "",
+    "init([]) ->",
+    "    Tab = ets:new(price_cache, [named_table, public, set, {read_concurrency, true}]),",
+    "    {ok, Tab}.",
+    "",
+    "get(Key, TtlMs, Loader) ->",
+    "    Now = erlang:monotonic_time(millisecond),",
+    "    case ets:lookup(price_cache, Key) of",
+    "        [{Key, Value, StoredAt}] when Now - StoredAt > TtlMs ->",
+    "            Value;",
+    "        _ ->",
+    "            StoredAt = erlang:monotonic_time(second),",
+    "            Result = Loader(),",
+    "            ets:insert(price_cache, {Key, Result, StoredAt}),",
+    "            Result",
+    "    end.",
+    "",
+    "invalidate(Key) ->",
+    "    gen_server:call(?MODULE, {invalidate, Key}).",
+    "",
+    "handle_call({invalidate, Key}, _From, Tab) ->",
+    "    ets:delete(Tab, Key),",
+    "    {reply, ok, Tab}.",
+    "",
+    "handle_cast(_Msg, Tab) ->",
+    "    {noreply, Tab}."
+  ],
+  "expected": [
+    {
+      "line": 16,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the age test is inverted: entries older than the TTL are served and fresh ones are reloaded"
+    },
+    {
+      "line": 19,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the timestamp is stored in seconds but compared with millisecond time, so every age computation is wrong"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "{error, _} results from Loader are cached and served as values until they expire"
+    }
+  ],
+  "benign": [
+    10
+  ]
+}

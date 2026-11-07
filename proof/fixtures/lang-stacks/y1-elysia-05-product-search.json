@@ -1,0 +1,70 @@
+{
+  "id": "y1-elysia-05-product-search",
+  "title": "Elysia product search with cursor",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/search.ts",
+  "context": "Product search on bun:sqlite ordered by id. q matches as a substring of name and LIKE wildcards (% and _) in q must match literally. The cursor is the last id of the previous page; nextCursor is returned only when more rows exist after this page.",
+  "code": [
+    "import { Elysia, t } from \"elysia\";",
+    "import { Database } from \"bun:sqlite\";",
+    "",
+    "const db = new Database(\"catalog.db\", { readonly: true });",
+    "",
+    "function likeEscape(s: string) {",
+    "  return s.replace(/[\\\\%_]/g, (c) => \"\\\\\" + c);",
+    "}",
+    "",
+    "export const search = new Elysia()",
+    "  .get(\"/products\", ({ query }) => {",
+    "    const limit = query.limit ?? 20;",
+    "    const pattern = `%${likeEscape(query.q ?? \"\")}%`;",
+    "    const where = [\"name LIKE ?\", \"id > ?\"];",
+    "    const args: (string | number)[] = [pattern, query.cursor ?? 0];",
+    "    if (query.category) where.push(`category = '${query.category}'`);",
+    "    const rows = db",
+    "      .query(`SELECT id, name, price FROM products WHERE ${where.join(\" AND \")} ORDER BY id LIMIT ?`)",
+    "      .all(...args, limit) as { id: number; name: string; price: number }[];",
+    "    const nextCursor = rows.length === limit ? rows[rows.length - 1].id : null;",
+    "    return { items: rows, nextCursor };",
+    "  }, {",
+    "    query: t.Object({",
+    "      q: t.Optional(t.String({ maxLength: 100 })),",
+    "      category: t.Optional(t.String({ maxLength: 40 })),",
+    "      cursor: t.Optional(t.Numeric({ minimum: 0 })),",
+    "      limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100 })),",
+    "    }),",
+    "  });",
+    "",
+    "export const app = new Elysia().use(search).listen(3000);"
+  ],
+  "expected": [
+    {
+      "line": 14,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "SQLite LIKE has no default escape character, so the backslash escapes do nothing without ESCAPE '\\\\'"
+    },
+    {
+      "line": 16,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "category is interpolated into the SQL text (injection); it must be a bound parameter"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "when exactly `limit` rows remain it returns a cursor to an empty page; fetch limit + 1 rows to know if more exist"
+    }
+  ],
+  "benign": [
+    7
+  ]
+}

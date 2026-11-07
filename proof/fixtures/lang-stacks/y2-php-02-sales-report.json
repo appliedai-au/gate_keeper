@@ -1,0 +1,72 @@
+{
+  "id": "y2-php-02-sales-report",
+  "title": "PHP admin sales CSV report",
+  "holdout": false,
+  "language": "php",
+  "filename": "public/admin/sales_report.php",
+  "context": "CSV sales report for admins only ($_SESSION['role'] === 'admin'). from and to are Y-m-d dates and the range is inclusive of both days (sale_date is a DATE column). The sort parameter must be one of date, region or total. Refunded sales are excluded. bootstrap.php starts the session and provides $pdo.",
+  "code": [
+    "<?php",
+    "require __DIR__ . '/../../bootstrap.php';",
+    "",
+    "$isAdmin = $_SESSION['role'] ?? '' === 'admin';",
+    "if (!$isAdmin) {",
+    "    http_response_code(403);",
+    "    exit;",
+    "}",
+    "",
+    "$from = DateTimeImmutable::createFromFormat('!Y-m-d', $_GET['from'] ?? '');",
+    "$to = DateTimeImmutable::createFromFormat('!Y-m-d', $_GET['to'] ?? '');",
+    "if (!$from || !$to || $from > $to) {",
+    "    http_response_code(400);",
+    "    exit('bad range');",
+    "}",
+    "",
+    "$sql = 'SELECT sale_date AS date, region, SUM(amount_cents) AS total FROM sales '",
+    "     . 'WHERE sale_date >= ? AND sale_date < ? '",
+    "     . \"AND status <> 'refunded' \"",
+    "     . 'GROUP BY sale_date, region '",
+    "     . 'ORDER BY ' . ($_GET['sort'] ?? 'date');",
+    "$stmt = $pdo->prepare($sql);",
+    "$stmt->execute([$from->format('Y-m-d'), $to->format('Y-m-d')]);",
+    "",
+    "header('Content-Type: text/csv');",
+    "header('Content-Disposition: attachment; filename=\"sales.csv\"');",
+    "$out = fopen('php://output', 'w');",
+    "fputcsv($out, ['date', 'region', 'total']);",
+    "while ($row = $stmt->fetch(PDO::FETCH_NUM)) {",
+    "    $row[2] = number_format($row[2] / 100, 2, '.', '');",
+    "    fputcsv($out, $row);",
+    "}",
+    "fclose($out);"
+  ],
+  "expected": [
+    {
+      "line": 4,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "?? binds looser than ===, so this is $_SESSION['role'] ?? false and any non-empty role (e.g. \"viewer\") counts as admin"
+    },
+    {
+      "line": 18,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "< excludes the \"to\" day although the range is inclusive; use <="
+    },
+    {
+      "line": 21,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the sort parameter is concatenated into ORDER BY without a whitelist (SQL injection)"
+    }
+  ],
+  "benign": [
+    12
+  ]
+}

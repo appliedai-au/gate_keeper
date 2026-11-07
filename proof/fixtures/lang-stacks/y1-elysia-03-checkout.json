@@ -1,0 +1,77 @@
+{
+  "id": "y1-elysia-03-checkout",
+  "title": "Elysia checkout endpoint",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/checkout.ts",
+  "context": "Checkout. Prices come only from the catalog (getProducts returns a Map of sku to { priceCents }), never from the client. Money is integer cents; tax is 8.25% of the subtotal before discount. couponPercent returns 0-100. Stock is decremented in the order transaction, and the order must fail if any item lacks stock.",
+  "code": [
+    "import { Elysia, t } from \"elysia\";",
+    "import { getProducts, couponPercent, createOrderTx } from \"./store\";",
+    "import { session } from \"./session\";",
+    "",
+    "const Item = t.Object({",
+    "  sku: t.String(),",
+    "  qty: t.Integer({ minimum: 1, maximum: 99 }),",
+    "  price: t.Integer(),",
+    "});",
+    "",
+    "export const checkout = new Elysia()",
+    "  .use(session)",
+    "  .post(\"/checkout\", async ({ body, user, set }) => {",
+    "    if (!user) { set.status = 401; return { error: \"login required\" }; }",
+    "    const products = await getProducts(body.items.map((i) => i.sku));",
+    "    let subtotal = 0;",
+    "    for (const item of body.items) {",
+    "      const p = products.get(item.sku);",
+    "      if (!p) { set.status = 400; return { error: `unknown sku ${item.sku}` }; }",
+    "      subtotal += item.price * item.qty;",
+    "    }",
+    "    const tax = Math.round(subtotal * 0.0825);",
+    "    const pct = body.coupon ? await couponPercent(body.coupon) : 0;",
+    "    const discount = (subtotal * pct) / 100;",
+    "    const total = subtotal + tax - discount;",
+    "    const order = await createOrderTx(user.id, body.items, total, async (tx) => {",
+    "      for (const item of body.items) {",
+    "        await tx.query(\"UPDATE inventory SET stock = stock - $1 WHERE sku = $2\", [item.qty, item.sku]);",
+    "      }",
+    "    });",
+    "    set.status = 201;",
+    "    return { orderId: order.id, total };",
+    "  }, {",
+    "    body: t.Object({",
+    "      items: t.Array(Item, { minItems: 1, maxItems: 50 }),",
+    "      coupon: t.Optional(t.String({ maxLength: 32 })),",
+    "    }),",
+    "  });"
+  ],
+  "expected": [
+    {
+      "line": 20,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "uses the client-sent price instead of p.priceCents, so buyers can set their own price"
+    },
+    {
+      "line": 24,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "discount is not rounded, so totals become fractional cents; must be Math.round"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "no stock >= qty guard or row-count check, so stock goes negative and oversold orders succeed"
+    }
+  ],
+  "benign": [
+    22
+  ]
+}

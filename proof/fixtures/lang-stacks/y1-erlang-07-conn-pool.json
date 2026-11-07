@@ -1,0 +1,71 @@
+{
+  "id": "y1-erlang-07-conn-pool",
+  "title": "Erlang connection pool",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/conn_pool.erl",
+  "context": "Fixed-size pool of database connection processes. checkout/0 hands one idle connection exclusively to the caller or returns {error, empty}; checkin/1 gives it back. If a caller dies while holding a connection, that connection must return to the idle list. The pool server is long-lived and callers check out many times.",
+  "code": [
+    "-module(conn_pool).",
+    "-behaviour(gen_server).",
+    "-export([start_link/1, checkout/0, checkin/1]).",
+    "-export([init/1, handle_call/3, handle_cast/2, handle_info/2]).",
+    "",
+    "start_link(Conns) ->",
+    "    gen_server:start_link({local, ?MODULE}, ?MODULE, Conns, []).",
+    "",
+    "checkout() ->",
+    "    gen_server:call(?MODULE, checkout).",
+    "",
+    "checkin(Conn) ->",
+    "    gen_server:cast(?MODULE, {checkin, Conn}).",
+    "",
+    "init(Conns) ->",
+    "    {ok, #{idle => Conns, busy => #{}}}.",
+    "",
+    "handle_call(checkout, {Pid, _Tag}, #{idle := Idle, busy := Busy} = S) ->",
+    "    case Idle of",
+    "        [Conn | _] ->",
+    "            Ref = erlang:monitor(process, Pid),",
+    "            {reply, {ok, Conn}, S#{busy := Busy#{Ref => Conn}}};",
+    "        [] ->",
+    "            {reply, {error, empty}, S}",
+    "    end.",
+    "",
+    "handle_cast({checkin, Conn}, #{idle := Idle, busy := Busy} = S) ->",
+    "    Busy1 = maps:filter(fun(_Ref, C) -> C =/= Conn end, Busy),",
+    "    {noreply, S#{idle := [Conn | Idle], busy := Busy1}}.",
+    "",
+    "handle_info({'DOWN', Ref, process, _Pid, _Reason}, #{busy := Busy} = S) ->",
+    "    {noreply, S#{busy := maps:remove(Ref, Busy)}}."
+  ],
+  "expected": [
+    {
+      "line": 20,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "the connection is handed out but left in the idle list, so the next caller gets the same connection"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "the caller's monitor is never demonitored on checkin, so a long-lived caller accumulates one monitor per checkout"
+    },
+    {
+      "line": 32,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "the dead caller's connection is dropped from busy but never put back in idle, so the pool shrinks permanently"
+    }
+  ],
+  "benign": [
+    13
+  ]
+}

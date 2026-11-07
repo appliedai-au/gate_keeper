@@ -1,0 +1,68 @@
+{
+  "id": "y1-elysia-01-team-invites",
+  "title": "Elysia team invitations",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/invites.ts",
+  "context": "Team invitations. Only team admins create invites. An invite joins the team it was created for, may be accepted once, only by the user whose email it was sent to (emails compare case-insensitively), and only before expires_at (a Date). `db` is a pg-promise client; `tx` runs its callback in a transaction.",
+  "code": [
+    "import { Elysia, t } from \"elysia\";",
+    "import { db } from \"./db\";",
+    "import { auth } from \"./auth\";",
+    "import { sendInviteEmail } from \"./mail\";",
+    "",
+    "export const invites = new Elysia({ prefix: \"/teams/:teamId/invites\" })",
+    "  .use(auth)",
+    "  .post(\"/\", async ({ params, body, currentUser, set }) => {",
+    "    const member = await db.oneOrNone(\"SELECT role FROM memberships WHERE team_id = $1 AND user_id = $2\", [params.teamId, currentUser.id]);",
+    "    if (!member || member.role !== \"admin\") { set.status = 403; return \"forbidden\"; }",
+    "    const token = crypto.randomUUID();",
+    "    const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000);",
+    "    await db.none(\"INSERT INTO invites (token, team_id, email, expires_at) VALUES ($1, $2, $3, $4)\", [token, params.teamId, body.email, expiresAt]);",
+    "    await sendInviteEmail(body.email, token);",
+    "    set.status = 201;",
+    "    return { token };",
+    "  }, { body: t.Object({ email: t.String({ format: \"email\" }) }) })",
+    "  .post(\"/:token/accept\", async ({ params, currentUser, set }) => {",
+    "    const invite = await db.oneOrNone(\"SELECT * FROM invites WHERE token = $1\", [params.token]);",
+    "    if (!invite || invite.accepted_at) { set.status = 404; return \"invalid invite\"; }",
+    "    if (invite.expires_at < Date.now()) { set.status = 410; return \"expired\"; }",
+    "    if (invite.email !== currentUser.email) { set.status = 403; return \"wrong account\"; }",
+    "    await db.tx(async (tx) => {",
+    "      await tx.none(\"INSERT INTO memberships (team_id, user_id, role) VALUES ($1, $2, 'member')\", [params.teamId, currentUser.id]);",
+    "      await tx.none(\"UPDATE invites SET accepted_at = now() WHERE token = $1\", [params.token]);",
+    "    });",
+    "    return { joined: params.teamId };",
+    "  });"
+  ],
+  "expected": [
+    {
+      "line": 19,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "lookup ignores team_id, so a valid invite for one team can be used to join any :teamId in the URL"
+    },
+    {
+      "line": 22,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "emails must compare case-insensitively; a different-case address is wrongly refused"
+    },
+    {
+      "line": 25,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "accepted_at is checked outside the transaction and this update has no AND accepted_at IS NULL / row-count check, so parallel accepts all succeed"
+    }
+  ],
+  "benign": [
+    11,
+    21
+  ]
+}

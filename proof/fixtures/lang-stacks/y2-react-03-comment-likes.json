@@ -1,0 +1,75 @@
+{
+  "id": "y2-react-03-comment-likes",
+  "title": "React comments with optimistic likes",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/CommentList.tsx",
+  "context": "Comment list with optimistic likes: the count changes at once and must be rolled back if the server rejects the like (any non-2xx) or the request fails. Comment bodies are plain text typed by users; line breaks must be kept. Comments are shown newest first (createdAt is an ISO 8601 UTC string).",
+  "code": [
+    "import { useState } from \"react\";",
+    "",
+    "type Comment = { id: string; body: string; likes: number; liked: boolean; createdAt: string; author: string };",
+    "",
+    "export function CommentList({ initial, postId }: { initial: Comment[]; postId: string }) {",
+    "  const [comments, setComments] = useState(initial);",
+    "",
+    "  async function toggleLike(id: string) {",
+    "    const before = comments;",
+    "    setComments((list) =>",
+    "      list.map((c) => (c.id === id ? { ...c, liked: !c.liked, likes: c.likes + (c.liked ? -1 : 1) } : c)),",
+    "    );",
+    "    try {",
+    "      await fetch(`/api/posts/${encodeURIComponent(postId)}/comments/${encodeURIComponent(id)}/like`, { method: \"POST\" });",
+    "    } catch {",
+    "      setComments(before);",
+    "    }",
+    "  }",
+    "",
+    "  const sorted = [...comments].sort((a, b) => a.createdAt.localeCompare(b.createdAt));",
+    "",
+    "  return (",
+    "    <ul>",
+    "      {sorted.map((c) => (",
+    "        <li key={c.id}>",
+    "          <strong>{c.author}</strong>",
+    "          <p dangerouslySetInnerHTML={{ __html: c.body.replace(/\\n/g, \"<br>\") }} />",
+    "          <time dateTime={c.createdAt}>{new Date(c.createdAt).toLocaleString()}</time>",
+    "          <button aria-pressed={c.liked} onClick={() => toggleLike(c.id)}>",
+    "            ♥ {c.likes}",
+    "          </button>",
+    "        </li>",
+    "      ))}",
+    "    </ul>",
+    "  );",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 14,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "fetch does not reject on 4xx/5xx and r.ok is never checked, so a rejected like is not rolled back"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "ascending compare shows oldest first; newest first needs b.createdAt.localeCompare(a.createdAt)"
+    },
+    {
+      "line": 27,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "user text is injected as HTML (XSS); keep line breaks with CSS white-space: pre-line and render as text"
+    }
+  ],
+  "benign": [
+    11
+  ]
+}

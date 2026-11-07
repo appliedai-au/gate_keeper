@@ -1,0 +1,93 @@
+{
+  "id": "y1-go-03-sales-csv",
+  "title": "Go sales CSV report",
+  "holdout": false,
+  "language": "go",
+  "filename": "report/sales.go",
+  "context": "HTTP handler that exports a CSV sales report from PostgreSQL via database/sql. The `sort` query parameter may only be \"date\", \"region\" or \"total\"; anything else falls back to date order. Amounts are stored as integer cents and must be printed as dollars with two decimals. Database resources must always be released and a failed query must never produce a silently truncated report.",
+  "code": [
+    "package report",
+    "",
+    "import (",
+    "\t\"database/sql\"",
+    "\t\"encoding/csv\"",
+    "\t\"fmt\"",
+    "\t\"net/http\"",
+    "\t\"strconv\"",
+    ")",
+    "",
+    "var sortColumns = map[string]string{\"date\": \"sold_on\", \"region\": \"region\", \"total\": \"total_cents\"}",
+    "",
+    "type line struct {",
+    "\tday, region string",
+    "\tcents       int64",
+    "}",
+    "",
+    "func Handler(db *sql.DB) http.HandlerFunc {",
+    "\treturn func(w http.ResponseWriter, r *http.Request) {",
+    "\t\tcol, ok := sortColumns[r.URL.Query().Get(\"sort\")]",
+    "\t\tif !ok {",
+    "\t\t\tcol = r.URL.Query().Get(\"sort\")",
+    "\t\t}",
+    "\t\tquery := fmt.Sprintf(\"SELECT sold_on, region, total_cents FROM sales WHERE sold_on >= $1 ORDER BY %s\", col)",
+    "\t\trows, err := db.QueryContext(r.Context(), query, r.URL.Query().Get(\"from\"))",
+    "\t\tif err != nil {",
+    "\t\t\thttp.Error(w, \"query failed\", http.StatusInternalServerError)",
+    "\t\t\treturn",
+    "\t\t}",
+    "\t\tvar lines []line",
+    "\t\tfor rows.Next() {",
+    "\t\t\tvar l line",
+    "\t\t\tif err := rows.Scan(&l.day, &l.region, &l.cents); err != nil {",
+    "\t\t\t\thttp.Error(w, \"scan failed\", http.StatusInternalServerError)",
+    "\t\t\t\treturn",
+    "\t\t\t}",
+    "\t\t\tlines = append(lines, l)",
+    "\t\t}",
+    "\t\tw.Header().Set(\"Content-Type\", \"text/csv\")",
+    "\t\tout := csv.NewWriter(w)",
+    "\t\tout.Write([]string{\"date\", \"region\", \"total\"})",
+    "\t\tfor _, l := range lines {",
+    "\t\t\tdollars := float64(l.cents / 100)",
+    "\t\t\tout.Write([]string{l.day, l.region, strconv.FormatFloat(dollars, 'f', 2, 64)})",
+    "\t\t}",
+    "\t\tout.Flush()",
+    "\t}",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 22,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "unknown values fall back to the raw query parameter, which is pasted into ORDER BY (SQL injection) instead of defaulting to sold_on"
+    },
+    {
+      "line": 25,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "rows is never closed (no defer rows.Close()), so the early return on a Scan error leaks the connection"
+    },
+    {
+      "line": 39,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "rows.Err() is never checked after the loop, so an error mid-iteration produces a silently truncated report"
+    },
+    {
+      "line": 43,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "integer division happens before the conversion, so the cents are dropped and every total ends in .00"
+    }
+  ],
+  "benign": []
+}

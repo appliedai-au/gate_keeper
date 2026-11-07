@@ -1,0 +1,80 @@
+{
+  "id": "y2-erlang-02-upload-writer",
+  "title": "Erlang chunked upload writer",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/upload_writer.erl",
+  "context": "Stores a client upload received as a list of binary chunks. FileName comes from the client; files may only be written inside /data/uploads, uploads over 10 MB must be rejected, write errors must be returned as {error, Reason}, and the file handle must be closed on every path.",
+  "code": [
+    "-module(upload_writer).",
+    "-export([store/2]).",
+    "",
+    "-define(DIR, \"/data/uploads\").",
+    "-define(MAX_BYTES, 10 * 1024 * 1024).",
+    "",
+    "store(FileName, Chunks) ->",
+    "    Size = iolist_size(Chunks),",
+    "    if",
+    "        Size > ?MAX_BYTES * 8 -> {error, too_large};",
+    "        true -> write(FileName, Chunks)",
+    "    end.",
+    "",
+    "write(FileName, Chunks) ->",
+    "    Path = filename:join(?DIR, FileName),",
+    "    ok = filelib:ensure_dir(Path),",
+    "    case file:open(Path, [write, binary, raw]) of",
+    "        {ok, Fd} ->",
+    "            case write_chunks(Fd, Chunks) of",
+    "                ok ->",
+    "                    file:close(Fd);",
+    "                {error, Reason} ->",
+    "                    {error, Reason}",
+    "            end;",
+    "        {error, Reason} ->",
+    "            {error, Reason}",
+    "    end.",
+    "",
+    "write_chunks(_Fd, []) ->",
+    "    ok;",
+    "write_chunks(Fd, [Chunk | Rest]) ->",
+    "    file:write(Fd, Chunk),",
+    "    write_chunks(Fd, Rest)."
+  ],
+  "expected": [
+    {
+      "line": 10,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "iolist_size is in bytes, so multiplying by 8 lets uploads up to 80 MB through"
+    },
+    {
+      "line": 15,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the client name is joined unchecked: \"../\" escapes the directory and an absolute name replaces it entirely"
+    },
+    {
+      "line": 23,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "the file handle is not closed when writing fails"
+    },
+    {
+      "line": 32,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the result of file:write is ignored, so a failed write (e.g. disk full) is reported as success"
+    }
+  ],
+  "benign": [
+    8
+  ]
+}

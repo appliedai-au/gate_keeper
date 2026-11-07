@@ -1,0 +1,1081 @@
+=== y1-react-01-search-box|React debounced search box|typescript|src/SearchBox.tsx
+CONTEXT: Search box that queries the endpoint 300 ms after the user stops typing (2+ characters). Only the results of the latest query may be shown. Result titles come from crawled pages and may contain markup, so they must be displayed as plain text; result urls come from our own index and are always https.
+---
+import { useEffect, useState } from "react";
+
+type Hit = { id: string; title: string; url: string };
+
+export function SearchBox({ endpoint }: { endpoint: string }) {
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<Hit[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      setHits([]);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const r = await fetch(`${endpoint}?q=${query}`, { signal: controller.signal }); ⟦BUG correctness|the query is not URL-encoded, so input containing &, # or + breaks or alters the request; use encodeURIComponent⟧
+        if (!r.ok) throw new Error(`search failed: ${r.status}`);
+        setHits(await r.json());
+        setError(null);
+      } catch (e) {
+        if ((e as Error).name !== "AbortError") setError((e as Error).message); ⟦OK⟧
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer); ⟦BUG concurrency|cleanup never calls controller.abort(), so a slow response for an older query can arrive later and overwrite the latest results⟧
+  }, [query, endpoint]);
+
+  return (
+    <div>
+      <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" />
+      {loading && <span>Searching…</span>}
+      {error && <p role="alert">{error}</p>}
+      <ul>
+        {hits.map((h) => (
+          <li key={h.id}>
+            <a href={h.url}> ⟦OK⟧
+              <span dangerouslySetInnerHTML={{ __html: h.title.replace(query, "<mark>$&</mark>") }} /> ⟦BUG security|crawled titles may contain markup and are injected as HTML (XSS); they must be rendered as text⟧
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+=== y1-react-02-signup-wizard|React signup wizard|typescript|src/SignupWizard.tsx
+CONTEXT: Three-step signup wizard (steps 0, 1, 2). The form draft is kept in sessionStorage so a reload keeps progress, but the password must never be written to browser storage. Submitting on the last step creates the account; a failed signup must show the server's error message to the user.
+---
+import { useState } from "react";
+import { api } from "./api";
+
+type Draft = { email: string; name: string; password: string; plan: "free" | "pro" };
+const STEPS = ["Account", "Profile", "Plan"];
+
+export function SignupWizard({ onDone }: { onDone: (id: string) => void }) {
+  const [step, setStep] = useState(0);
+  const [draft, setDraft] = useState<Draft>(() => {
+    const saved = sessionStorage.getItem("signup-draft");
+    return saved ? { ...JSON.parse(saved), password: "" } : { email: "", name: "", password: "", plan: "free" };
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function update<K extends keyof Draft>(key: K, value: Draft[K]) {
+    const next = { ...draft, [key]: value };
+    setDraft(next);
+    sessionStorage.setItem("signup-draft", JSON.stringify(next)); ⟦BUG security|the whole draft including the password is written to sessionStorage⟧
+  }
+
+  function nextStep() {
+    if (step === 0 && !draft.email.includes("@")) return;
+    setStep(Math.min(step + 1, STEPS.length - 1));
+  }
+
+  async function submit() {
+    if (submitting) return; ⟦OK⟧
+    setSubmitting(true);
+    try {
+      const { id } = await api.post("/signup", draft);
+      sessionStorage.removeItem("signup-draft");
+      onDone(id);
+    } catch { ⟦BUG error-handling|the error is swallowed; the server's message is never shown, the user only sees the button re-enable⟧
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); step === STEPS.length ? submit() : nextStep(); }}> ⟦BUG correctness|step never reaches STEPS.length (max is 2), so submit() is never called and the last step does nothing⟧
+      <h2>{STEPS[step]}</h2>
+      {error && <p role="alert">{error}</p>}
+      {step === 0 && (
+        <>
+          <input type="email" value={draft.email} onChange={(e) => update("email", e.target.value)} />
+          <input type="password" value={draft.password} onChange={(e) => update("password", e.target.value)} />
+        </>
+      )}
+      {step === 1 && <input value={draft.name} onChange={(e) => update("name", e.target.value)} />}
+      {step === 2 && (
+        <select value={draft.plan} onChange={(e) => update("plan", e.target.value as Draft["plan"])}>
+          <option value="free">Free</option>
+          <option value="pro">Pro</option>
+        </select>
+      )}
+      {step > 0 && <button type="button" onClick={() => setStep(step - 1)}>Back</button>}
+      <button type="submit" disabled={submitting}>{step === STEPS.length - 1 ? "Create account" : "Next"}</button>
+    </form>
+  );
+}
+=== y1-react-03-room-chat-hook|React room chat WebSocket hook|typescript|src/useRoomChat.ts
+CONTEXT: Hook that keeps one WebSocket open to the current room and collects its messages (the latest 200 are kept). Switching rooms or unmounting must close the old socket. Malformed frames are ignored. ordered must list messages by their at timestamp without changing state in place.
+---
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+export type ChatMessage = { id: string; text: string; at: number };
+
+export function useRoomChat(roomId: string, token: string) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [status, setStatus] = useState<"connecting" | "open" | "closed">("connecting");
+  const socketRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    setMessages([]);
+    setStatus("connecting");
+    const ws = new WebSocket(`wss://chat.example.com/rooms/${encodeURIComponent(roomId)}`);
+    socketRef.current = ws;
+    ws.onopen = () => {
+      setStatus("open");
+      ws.send(JSON.stringify({ type: "auth", token }));
+    };
+    ws.onmessage = (ev) => {
+      let msg: ChatMessage;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch {
+        return; ⟦OK⟧
+      }
+      setMessages([...messages, msg].slice(-200)); ⟦BUG correctness|stale closure: messages is the empty array from when the effect ran, so each frame replaces the list with just one message; use the functional updater⟧
+    };
+    ws.onclose = () => setStatus("closed");
+  }, [roomId, token]); ⟦BUG resource|the effect has no cleanup that closes ws, so every room switch or unmount leaves the old socket open and still updating state⟧
+
+  const send = useCallback((text: string) => {
+    const ws = socketRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify({ type: "message", text }));
+    return true;
+  }, []); ⟦OK⟧
+
+  const ordered = useMemo(() => messages.sort((a, b) => a.at - b.at), [messages]); ⟦BUG data-integrity|Array.sort mutates the state array in place; copy it first ([...messages].sort)⟧
+  const lastSeen = ordered.length ? ordered[ordered.length - 1].at : null;
+
+  return { messages: ordered, status, send, lastSeen };
+}
+=== y1-react-04-orders-table|React sortable orders table|typescript|src/OrdersTable.tsx
+CONTEXT: Sortable, paginated table over the orders prop; the parent's array must not be modified. Clicking the active column header toggles the direction. PAGE_SIZE rows per page, pages numbered 1..pageCount, and every order must be reachable. amount is integer cents.
+---
+import { useMemo, useState } from "react";
+
+type Order = { id: string; customer: string; amount: number; createdAt: string };
+type SortKey = "customer" | "amount" | "createdAt";
+const PAGE_SIZE = 25;
+
+export function OrdersTable({ orders }: { orders: Order[] }) {
+  const [sortKey, setSortKey] = useState<SortKey>("createdAt");
+  const [desc, setDesc] = useState(true);
+  const [page, setPage] = useState(1);
+
+  const sorted = useMemo(() => {
+    const dir = desc ? -1 : 1;
+    return orders.sort((a, b) => { ⟦BUG data-integrity|sort() reorders the parent's orders array in place⟧
+      const x = a[sortKey], y = b[sortKey];
+      return x < y ? -dir : x > y ? dir : 0;
+    });
+  }, [orders, sortKey]); ⟦BUG correctness|desc is missing from the dependency list, so toggling the direction does not re-sort⟧
+
+  const pageCount = Math.floor(sorted.length / PAGE_SIZE); ⟦BUG correctness|floor drops the last partial page (and gives 0 pages for under 25 orders); should be Math.ceil⟧
+  const rows = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE); ⟦OK⟧
+
+  function toggleSort(key: SortKey) {
+    if (key === sortKey) setDesc(!desc);
+    else { setSortKey(key); setDesc(false); }
+    setPage(1);
+  }
+
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th onClick={() => toggleSort("customer")}>Customer</th>
+          <th onClick={() => toggleSort("amount")}>Amount</th>
+          <th onClick={() => toggleSort("createdAt")}>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((o) => (
+          <tr key={o.id}>
+            <td>{o.customer}</td>
+            <td>{(o.amount / 100).toFixed(2)}</td> ⟦OK⟧
+            <td>{new Date(o.createdAt).toLocaleDateString()}</td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colSpan={3}>
+            <button disabled={page <= 1} onClick={() => setPage(page - 1)}>Prev</button>
+            <span>{page} / {pageCount}</span>
+            <button disabled={page > pageCount} onClick={() => setPage(page + 1)}>Next</button> ⟦BUG correctness|should be page >= pageCount; on the last page Next stays enabled and moves to an empty page past the end⟧
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+=== y1-react-05-otp-form|React one-time code form|typescript|src/OtpForm.tsx
+CONTEXT: Verifies an SMS one-time code. After a send, Resend is disabled for the number of seconds the server returns as retryAfter (in seconds) and shows the countdown. The code must be exactly 6 digits. verifyCode resolves to true or false.
+---
+import { useEffect, useState, type FormEvent } from "react";
+import { sendCode, verifyCode } from "./otpApi";
+
+const RESEND_SECONDS = 60;
+
+export function OtpForm({ phone, onVerified }: { phone: string; onVerified: () => void }) {
+  const [code, setCode] = useState("");
+  const [remaining, setRemaining] = useState(RESEND_SECONDS);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (remaining <= 0) return;
+    const t = setTimeout(() => setRemaining(remaining - 1), 1000); ⟦OK⟧
+    return () => clearTimeout(t);
+  }, [remaining]);
+
+  async function resend() {
+    setError(null);
+    try {
+      const { retryAfter } = await sendCode(phone);
+      setRemaining(retryAfter * 1000); ⟦BUG correctness|retryAfter is already in seconds and the countdown ticks once per second, so Resend is locked 1000 times too long⟧
+    } catch {
+      setError("Could not resend the code");
+    }
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!/^\d{6}/.test(code)) { ⟦BUG correctness|the regex has no $ anchor, so codes with more than 6 digits or trailing characters pass⟧
+      setError("Enter the 6-digit code");
+      return;
+    }
+    const ok = verifyCode(phone, code); ⟦BUG security|missing await: ok is a Promise, always truthy, so onVerified runs even for a wrong code⟧
+    if (ok) onVerified();
+    else setError("Wrong code");
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <input inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value.trim())} />
+      {error && <p role="alert">{error}</p>}
+      <button type="submit">Verify</button>
+      <button type="button" disabled={remaining > 0} onClick={resend}>
+        {remaining > 0 ? `Resend in ${remaining}s` : "Resend"}
+      </button>
+    </form>
+  );
+}
+=== y1-react-06-avatar-uploader|React avatar uploader|typescript|src/AvatarUploader.tsx
+CONTEXT: Avatar upload. Only image/png or image/jpeg files up to 10 MB are accepted; anything else must be rejected. The preview object URL must be released when a new file is chosen and on unmount. The API answers 2xx with {url}, otherwise {error}, and only a successful upload may call onUploaded.
+---
+import { useEffect, useState, type ChangeEvent } from "react";
+
+const MAX_BYTES = 10 * 1024 * 1024;
+const TYPES = ["image/png", "image/jpeg"];
+
+export function AvatarUploader({ onUploaded }: { onUploaded: (url: string) => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+  }, [file]); ⟦BUG resource|no cleanup calls URL.revokeObjectURL, so every chosen file's blob stays in memory⟧
+
+  function choose(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (TYPES.indexOf(f.type) < 0 && f.size > MAX_BYTES) { ⟦BUG correctness|&& should be ||: a small file of any type, or a huge PNG, passes the check⟧
+      setError("PNG or JPEG up to 10 MB");
+      return;
+    }
+    setError(null);
+    setFile(f);
+  }
+
+  async function upload() {
+    if (!file) return;
+    setBusy(true);
+    const body = new FormData();
+    body.append("avatar", file); ⟦OK⟧
+    try {
+      const r = await fetch("/api/avatar", { method: "POST", body });
+      const data = await r.json();
+      onUploaded(data.url); ⟦BUG error-handling|r.ok is never checked, so an error response calls onUploaded(undefined) instead of showing the error⟧
+    } catch {
+      setError("Upload failed");
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div>
+      <input type="file" accept="image/png,image/jpeg" onChange={choose} />
+      {preview && <img src={preview} alt="Preview" />} ⟦OK⟧
+      {error && <p role="alert">{error}</p>}
+      <button onClick={upload} disabled={!file || busy}>Upload</button>
+    </div>
+  );
+}
+=== y1-react-07-login-page|React login page with redirect|typescript|src/LoginPage.tsx
+CONTEXT: Login page. After signing in it navigates to the ?next= parameter, which must be a same-site path (a single leading "/", never "//host"), otherwise "/". Server errors ({message}) are shown and the form must become usable again. "Remember me" must default to off.
+---
+import { useState, type FormEvent } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+
+export function LoginPage() {
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true); ⟦BUG correctness|"Remember me" must default to off but starts checked⟧
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+
+  function safeNext(): string {
+    const next = params.get("next") ?? "/";
+    return next.startsWith("/") ? next : "/"; ⟦BUG security|"//evil.example" also starts with "/" and is a protocol-relative URL to another host (open redirect)⟧
+  }
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setPending(true);
+    setError("");
+    try {
+      const r = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, remember }),
+        credentials: "include", ⟦OK⟧
+      });
+      if (!r.ok) {
+        const { message } = await r.json();
+        setError(message);
+        return; ⟦BUG error-handling|returns before setPending(false), so after a failed login the submit button stays disabled forever⟧
+      }
+      navigate(safeNext(), { replace: true });
+    } catch {
+      setError("Network error");
+    }
+    setPending(false);
+  }
+
+  return (
+    <form onSubmit={onSubmit}>
+      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+      <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+      <label>
+        <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Remember me
+      </label>
+      {error && <p role="alert">{error}</p>}
+      <button type="submit" disabled={pending}>Sign in</button>
+    </form>
+  );
+}
+=== y2-react-01-toast-provider|React toast notifications provider|typescript|src/ToastProvider.tsx
+CONTEXT: App-wide toast provider. show(text, duration) auto-dismisses after duration milliseconds (default 4000). dismiss(id) removes only that toast. The provider wraps the whole app, so context consumers must not re-render when the toast list changes.
+---
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+
+type Toast = { id: number; text: string; duration: number };
+type Ctx = { show: (text: string, duration?: number) => void; dismiss: (id: number) => void };
+
+const ToastContext = createContext<Ctx | null>(null);
+
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const nextId = useRef(1);
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+
+  const dismiss = useCallback((id: number) => {
+    setToasts((list) => list.filter((t) => t.id === id)); ⟦BUG correctness|filter keeps only the dismissed toast and removes all the others; should be t.id !== id⟧
+    const timer = timers.current.get(id);
+    if (timer) clearTimeout(timer);
+    timers.current.delete(id);
+  }, []);
+
+  const show = useCallback((text: string, duration = 4) => { ⟦BUG correctness|duration is in milliseconds, so the default of 4 dismisses toasts almost instantly; should be 4000⟧
+    const id = nextId.current++;
+    setToasts((list) => [...list, { id, text, duration }]);
+    timers.current.set(id, setTimeout(() => dismiss(id), duration));
+  }, [dismiss]);
+
+  useEffect(() => {
+    const map = timers.current;
+    return () => map.forEach((t) => clearTimeout(t)); ⟦OK⟧
+  }, []);
+
+  const value = { show, dismiss }; ⟦BUG performance|a new value object on every render makes every consumer re-render whenever toasts change; memoise it with useMemo⟧
+
+  return (
+    <ToastContext.Provider value={value}>
+      {children}
+      <div className="toasts" aria-live="polite">
+        {toasts.map((t) => (
+          <div key={t.id} className="toast">
+            {t.text}
+            <button onClick={() => dismiss(t.id)} aria-label="Dismiss">×</button>
+          </div>
+        ))}
+      </div>
+    </ToastContext.Provider>
+  );
+}
+
+export function useToast(): Ctx {
+  const ctx = useContext(ToastContext);
+  if (!ctx) throw new Error("useToast must be used inside ToastProvider"); ⟦OK⟧
+  return ctx;
+}
+=== y2-react-02-infinite-feed|React infinite scroll feed|typescript|src/Feed.tsx
+CONTEXT: Infinite-scroll feed. GET /api/feed?cursor=... returns {items, nextCursor}; nextCursor is null after the last page, and then loading must stop. Pages are appended in order, oldest page first. The IntersectionObserver must be disconnected when it is replaced or on unmount.
+---
+import { useCallback, useEffect, useRef, useState } from "react";
+
+type Post = { id: string; body: string };
+
+export function Feed() {
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [cursor, setCursor] = useState<string | null>("");
+  const [loading, setLoading] = useState(false);
+  const sentinel = useRef<HTMLDivElement>(null);
+  const loadingRef = useRef(false);
+
+  const loadMore = useCallback(async () => {
+    if (loadingRef.current || cursor === null) return;
+    loadingRef.current = true;
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/feed?cursor=${encodeURIComponent(cursor)}`);
+      if (!r.ok) throw new Error(String(r.status));
+      const page: { items: Post[]; nextCursor: string | null } = await r.json();
+      setCursor(page.nextCursor || ""); ⟦BUG correctness|null is turned into "", so after the last page the feed requests the first page again and loops forever⟧
+      if (page.items.length === 0) return;
+      setPosts((prev) => [...page.items, ...prev]); ⟦BUG correctness|new pages are prepended instead of appended, so the feed order is reversed per page⟧
+    } catch (e) {
+      console.error("feed load failed", e); ⟦OK⟧
+    } finally {
+      loadingRef.current = false;
+      setLoading(false);
+    }
+  }, [cursor]);
+
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) loadMore();
+    });
+    observer.observe(el);
+  }, [loadMore]); ⟦BUG resource|no cleanup disconnects the observer; a new one is added on every cursor change and the old ones keep firing stale loadMore callbacks⟧
+
+  return (
+    <div>
+      {posts.map((p) => <article key={p.id}>{p.body}</article>)}
+      {loading && <p>Loading…</p>}
+      {cursor !== null && <div ref={sentinel} />}
+    </div>
+  );
+}
+=== y2-react-03-comment-likes|React comments with optimistic likes|typescript|src/CommentList.tsx
+CONTEXT: Comment list with optimistic likes: the count changes at once and must be rolled back if the server rejects the like (any non-2xx) or the request fails. Comment bodies are plain text typed by users; line breaks must be kept. Comments are shown newest first (createdAt is an ISO 8601 UTC string).
+---
+import { useState } from "react";
+
+type Comment = { id: string; body: string; likes: number; liked: boolean; createdAt: string; author: string };
+
+export function CommentList({ initial, postId }: { initial: Comment[]; postId: string }) {
+  const [comments, setComments] = useState(initial);
+
+  async function toggleLike(id: string) {
+    const before = comments;
+    setComments((list) =>
+      list.map((c) => (c.id === id ? { ...c, liked: !c.liked, likes: c.likes + (c.liked ? -1 : 1) } : c)), ⟦OK⟧
+    );
+    try {
+      await fetch(`/api/posts/${encodeURIComponent(postId)}/comments/${encodeURIComponent(id)}/like`, { method: "POST" }); ⟦BUG error-handling|fetch does not reject on 4xx/5xx and r.ok is never checked, so a rejected like is not rolled back⟧
+    } catch {
+      setComments(before);
+    }
+  }
+
+  const sorted = [...comments].sort((a, b) => a.createdAt.localeCompare(b.createdAt)); ⟦BUG correctness|ascending compare shows oldest first; newest first needs b.createdAt.localeCompare(a.createdAt)⟧
+
+  return (
+    <ul>
+      {sorted.map((c) => (
+        <li key={c.id}>
+          <strong>{c.author}</strong>
+          <p dangerouslySetInnerHTML={{ __html: c.body.replace(/\n/g, "<br>") }} /> ⟦BUG security|user text is injected as HTML (XSS); keep line breaks with CSS white-space: pre-line and render as text⟧
+          <time dateTime={c.createdAt}>{new Date(c.createdAt).toLocaleString()}</time>
+          <button aria-pressed={c.liked} onClick={() => toggleLike(c.id)}>
+            ♥ {c.likes}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+=== y1-ts-01-retry-backoff|TypeScript retry with exponential backoff|typescript|src/retry.ts
+CONTEXT: retry(fn, opts) calls fn up to opts.attempts times in total (attempts >= 1). Between attempt n and n+1 it waits baseMs * 2^(n-1), capped at maxMs, so the first wait is baseMs. Errors for which isRetryable returns false are rethrown at once; when every attempt fails, the last error is thrown.
+---
+export interface RetryOptions {
+  attempts: number;
+  baseMs: number;
+  maxMs: number;
+  isRetryable?: (err: unknown) => boolean;
+  signal?: AbortSignal;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(signal!.reason);
+    };
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true }); ⟦OK⟧
+  });
+}
+
+export async function retry<T>(fn: () => Promise<T>, opts: RetryOptions): Promise<T> {
+  const retryable = opts.isRetryable ?? (() => true);
+  let lastError: unknown;
+  for (let attempt = 1; attempt < opts.attempts; attempt++) { ⟦BUG correctness|off by one: fn runs only attempts-1 times, and with attempts = 1 it never runs and undefined is thrown; use <=⟧
+    try {
+      return fn(); ⟦BUG error-handling|missing await: a rejected promise is returned past the try/catch, so failures are never retried⟧
+    } catch (err) {
+      lastError = err;
+      if (!retryable(err)) throw err;
+      if (attempt === opts.attempts) break;
+      const delay = Math.min(opts.baseMs * 2 ** attempt, opts.maxMs); ⟦BUG correctness|exponent should be attempt - 1; the first wait is 2*baseMs and every wait is doubled⟧
+      await sleep(delay, opts.signal);
+    }
+  }
+  throw lastError;
+}
+=== y1-ts-02-lru-cache|TypeScript LRU cache with TTL|typescript|src/lruCache.ts
+CONTEXT: LRU cache holding at most max entries. get() marks an entry most recently used; set() on a full cache evicts the least recently used entry, and setting an existing key just replaces it and makes it most recent. Entries expire ttlMs after they were set and expired entries must behave as missing everywhere; size counts stored entries, expired or not.
+---
+interface Entry<V> {
+  value: V;
+  expiresAt: number;
+}
+
+export class LruCache<K, V> {
+  private map = new Map<K, Entry<V>>();
+
+  constructor(
+    private readonly max: number,
+    private readonly ttlMs: number,
+    private readonly now: () => number = Date.now,
+  ) {
+    if (max < 1) throw new RangeError("max must be at least 1");
+  }
+
+  get(key: K): V | undefined {
+    const e = this.map.get(key);
+    if (!e) return undefined;
+    if (e.expiresAt <= this.now()) {
+      this.map.delete(key);
+      return undefined;
+    }
+    return e.value; ⟦BUG correctness|the entry is not moved to the most-recent end (delete and re-set), so recently read entries are still evicted first⟧
+  }
+
+  set(key: K, value: V): void {
+    if (this.map.size >= this.max) { ⟦BUG correctness|an existing key is not deleted first, so updating it on a full cache evicts another entry and the key keeps its old LRU position⟧
+      const oldest = this.map.keys().next().value as K;
+      this.map.delete(oldest);
+    }
+    this.map.set(key, { value, expiresAt: this.now() + this.ttlMs });
+  }
+
+  has(key: K): boolean {
+    return this.map.has(key); ⟦BUG correctness|ignores expiry, so has() returns true for an expired entry that get() treats as missing⟧
+  }
+
+  get size(): number {
+    return this.map.size;
+  }
+
+  prune(): number {
+    let removed = 0;
+    for (const [k, e] of this.map) {
+      if (e.expiresAt <= this.now()) {
+        this.map.delete(k); ⟦OK⟧
+        removed++;
+      }
+    }
+    return removed;
+  }
+}
+=== y1-ts-03-bill-split|TypeScript bill splitting in cents|typescript|src/split.ts
+CONTEXT: Splits a bill. All amounts are integer cents. taxPercent is a percentage such as 8.5, and tax is rounded to the nearest cent. split() divides a total by weight: shares are integer cents that must add up exactly to the total, and leftover cents go to the participants with the largest fractional remainders. parseAmount accepts user input like "12", "12.5" or "12.50" dollars.
+---
+export interface Participant {
+  id: string;
+  weight: number;
+}
+
+export interface Share {
+  id: string;
+  cents: number;
+}
+
+export function parseAmount(input: string): number {
+  const s = input.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) throw new RangeError(`invalid amount: ${input}`);
+  return parseInt(s.replace(".", ""), 10); ⟦BUG correctness|"12" becomes 12 cents and "12.5" becomes 125 cents; the dollars part must be scaled by 100 and one decimal digit means tens of cents⟧
+}
+
+export function withTax(subtotalCents: number, taxPercent: number): number {
+  return subtotalCents + Math.round(subtotalCents * taxPercent); ⟦BUG correctness|taxPercent is a percentage and is not divided by 100, so 8.5% tax adds 850%⟧
+}
+
+export function split(totalCents: number, people: Participant[]): Share[] {
+  if (!Number.isInteger(totalCents) || totalCents < 0) throw new RangeError("total must be non-negative integer cents");
+  const weightSum = people.reduce((s, p) => s + p.weight, 0);
+  if (weightSum <= 0) throw new RangeError("weights must sum to a positive number");
+  const raw = people.map((p) => (totalCents * p.weight) / weightSum);
+  const shares = raw.map((r, i) => ({ id: people[i].id, cents: Math.round(r), rem: r - Math.floor(r) })); ⟦BUG data-integrity|Math.round can already exceed the total (e.g. 3 x 0.5 rounds up), leftover goes negative and shares no longer add up; use Math.floor⟧
+  let left = totalCents - shares.reduce((s, x) => s + x.cents, 0);
+  const order = [...shares].sort((a, b) => a.rem - b.rem); ⟦BUG correctness|sorted ascending, so leftover cents go to the smallest remainders instead of the largest⟧
+  for (let i = 0; left > 0; i++, left--) {
+    order[i % order.length].cents += 1; ⟦OK⟧
+  }
+  return shares.map(({ id, cents }) => ({ id, cents }));
+}
+
+export function formatCents(cents: number, currency = "USD"): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100); ⟦OK⟧
+}
+=== y1-ts-04-event-emitter|TypeScript typed event emitter|typescript|src/emitter.ts
+CONTEXT: Typed event emitter. once() listeners run at most one time, even if they throw. off() removes exactly the given listener and does nothing if it is not registered. A throwing listener must not stop the others; its error goes to onError. Every listener registered when emit starts must be called once.
+---
+type Listener<T> = (payload: T) => void;
+
+export class Emitter<Events extends Record<string, unknown>> {
+  private listeners = new Map<keyof Events, Listener<any>[]>();
+
+  constructor(private readonly onError: (err: unknown) => void = () => {}) {}
+
+  on<K extends keyof Events>(event: K, fn: Listener<Events[K]>): () => void {
+    const list = this.listeners.get(event) ?? [];
+    list.push(fn);
+    this.listeners.set(event, list);
+    return () => this.off(event, fn);
+  }
+
+  once<K extends keyof Events>(event: K, fn: Listener<Events[K]>): () => void {
+    const wrapper: Listener<Events[K]> = (payload) => {
+      fn(payload);
+      this.off(event, wrapper); ⟦BUG correctness|removal happens after fn; if fn throws (emit catches it) the wrapper is never removed and runs again on the next emit⟧
+    };
+    return this.on(event, wrapper);
+  }
+
+  off<K extends keyof Events>(event: K, fn: Listener<Events[K]>): void {
+    const list = this.listeners.get(event);
+    if (!list) return;
+    const i = list.indexOf(fn);
+    list.splice(i, 1); ⟦BUG correctness|when fn is not registered indexOf is -1 and splice(-1, 1) removes the last listener⟧
+  }
+
+  emit<K extends keyof Events>(event: K, payload: Events[K]): number {
+    const list = this.listeners.get(event);
+    if (!list) return 0;
+    let called = 0;
+    for (const fn of list) { ⟦BUG correctness|iterates the live array; a once() listener splicing itself out shifts the array and the next listener is skipped; iterate a copy⟧
+      try {
+        fn(payload);
+      } catch (err) {
+        this.onError(err);
+      }
+      called++; ⟦OK⟧
+    }
+    return called;
+  }
+
+  listenerCount(event: keyof Events): number {
+    return this.listeners.get(event)?.length ?? 0;
+  }
+}
+=== y1-ts-05-jwt-claims|TypeScript JWT claim validation|typescript|src/claims.ts
+CONTEXT: Checks the claims of a JWT whose signature was already verified. exp and nbf are NumericDate values (seconds since the epoch) and clockSkewSec of leeway is allowed. A token without exp must be rejected. aud may be a string or an array and must contain exactly the expected audience.
+---
+export interface Claims {
+  sub?: string;
+  iss?: string;
+  aud?: string | string[];
+  exp?: number;
+  nbf?: number;
+}
+
+export class ClaimError extends Error {}
+
+export function parseBearer(header: string | null): string | null {
+  if (!header) return null;
+  const [scheme, token] = header.split(" ");
+  if (scheme.toLowerCase() !== "bearer" || !token) return null; ⟦OK⟧
+  return token;
+}
+
+export function decodePayload(token: string): Claims {
+  const parts = token.split(".");
+  if (parts.length !== 3) throw new ClaimError("malformed token");
+  const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4); ⟦OK⟧
+  const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+export function checkClaims(c: Claims, expected: { aud: string; iss: string; clockSkewSec: number }, nowMs = Date.now()): void {
+  const now = nowMs / 1000;
+  if (c.iss !== expected.iss) throw new ClaimError("bad issuer");
+  if (c.exp && c.exp + expected.clockSkewSec < now) throw new ClaimError("expired"); ⟦BUG security|a missing exp (or 0) skips the check, so tokens without expiry are accepted⟧
+  if (!c.sub) throw new ClaimError("missing subject");
+  if (c.nbf !== undefined && c.nbf - expected.clockSkewSec > nowMs) throw new ClaimError("not yet valid"); ⟦BUG security|nbf in seconds is compared with nowMs in milliseconds, so not-yet-valid tokens are always accepted⟧
+  const auds = Array.isArray(c.aud) ? c.aud : [c.aud];
+  if (!auds.some((a) => a?.includes(expected.aud))) throw new ClaimError("bad audience"); ⟦BUG security|String.includes is a substring match, so aud "api-internal" or "evilapi" is accepted for "api"; compare with ===⟧
+}
+
+export function secondsLeft(c: Claims, nowMs = Date.now()): number {
+  return c.exp === undefined ? 0 : Math.max(0, c.exp - Math.floor(nowMs / 1000));
+}
+=== y1-ts-06-token-bucket|TypeScript token bucket rate limiter|typescript|src/tokenBucket.ts
+CONTEXT: Per-key token bucket. Each bucket holds at most capacity tokens and refills at refillPerSec tokens per second; now() returns milliseconds. take(key, cost) consumes cost tokens and returns true only when enough are available; otherwise it consumes nothing and returns false. sweep() removes buckets that are full and have been idle for more than idleMs milliseconds.
+---
+interface Bucket {
+  tokens: number;
+  updatedAt: number;
+}
+
+export class TokenBucketLimiter {
+  private buckets = new Map<string, Bucket>();
+
+  constructor(
+    private readonly capacity: number,
+    private readonly refillPerSec: number,
+    private readonly idleMs: number,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  private refill(b: Bucket): void {
+    const t = this.now();
+    const elapsedSec = (t - b.updatedAt) / 1000; ⟦OK⟧
+    b.tokens = b.tokens + elapsedSec * this.refillPerSec; ⟦BUG correctness|tokens are not capped at capacity, so an idle key builds up an unlimited burst⟧
+    b.updatedAt = t;
+  }
+
+  take(key: string, cost = 1): boolean {
+    let b = this.buckets.get(key);
+    if (!b) {
+      b = { tokens: this.capacity, updatedAt: this.now() };
+      this.buckets.set(key, b);
+    }
+    this.refill(b);
+    b.tokens -= cost; ⟦BUG correctness|tokens are subtracted before the check, so a rejected request still consumes tokens and drives the bucket negative⟧
+    if (b.tokens < 0) return false;
+    return true;
+  }
+
+  retryAfterMs(key: string, cost = 1): number {
+    const b = this.buckets.get(key);
+    if (!b) return 0;
+    this.refill(b);
+    const missing = cost - b.tokens;
+    return missing <= 0 ? 0 : Math.ceil((missing / this.refillPerSec) * 1000);
+  }
+
+  sweep(): number {
+    const now = this.now();
+    let removed = 0;
+    for (const [key, b] of this.buckets) {
+      const full = b.tokens + ((now - b.updatedAt) / 1000) * this.refillPerSec >= this.capacity;
+      if (full && now - b.updatedAt > this.idleMs * 1000) { ⟦BUG correctness|idleMs is already milliseconds; multiplying by 1000 keeps idle buckets 1000 times too long (memory growth)⟧
+        this.buckets.delete(key);
+        removed++;
+      }
+    }
+    return removed;
+  }
+}
+=== y1-ts-07-config-merge|TypeScript deep config merge|typescript|src/configMerge.ts
+CONTEXT: mergeConfig(defaults, override) returns a new object and must not modify either input. override is parsed from a JSON file uploaded by the user. Arrays in override replace the default arrays (no concatenation), and null in override deletes the key.
+---
+type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
+type Obj = { [k: string]: Json };
+
+const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+
+export function parseOverride(text: string): Obj {
+  const v = JSON.parse(text);
+  if (!isObj(v)) throw new TypeError("config must be a JSON object");
+  return v;
+}
+
+export function mergeConfig(defaults: Obj, override: Obj): Obj {
+  const out: Obj = defaults; ⟦BUG data-integrity|out is the defaults object itself, so merging modifies the caller's defaults; copy it ({ ...defaults })⟧
+  if (!isObj(override)) throw new TypeError("override must be an object");
+  for (const key of Object.keys(override)) { ⟦BUG security|keys from user JSON such as __proto__ are not skipped; merging into out["__proto__"] pollutes Object.prototype⟧
+    const value = override[key];
+    if (value === null) {
+      delete out[key];
+      continue;
+    }
+    const base = out[key];
+    if (isObj(base) && isObj(value)) {
+      out[key] = mergeConfig(base, value);
+    } else if (Array.isArray(base) && Array.isArray(value)) {
+      out[key] = [...base, ...value]; ⟦BUG correctness|arrays are concatenated, but override arrays must replace the default ones⟧
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+export function getPath(cfg: Obj, path: string): Json | undefined {
+  let cur: Json | undefined = cfg;
+  for (const part of path.split(".")) {
+    if (!isObj(cur)) return undefined;
+    cur = Object.hasOwn(cur, part) ? cur[part] : undefined; ⟦OK⟧
+  }
+  return cur;
+}
+=== y1-ts-08-list-client|TypeScript paginated list client|typescript|src/listClient.ts
+CONTEXT: Client for a REST list endpoint. Pages are 0-based (page=0 is the first page) and the server returns {items, total}. Filter values are free text typed by users. listAll must return every item, fetch at most maxPages pages, and fail (reject) if any page request fails.
+---
+export interface ListQuery {
+  page: number;
+  pageSize: number;
+  filters: Record<string, string>;
+  sort?: string;
+}
+
+export interface PageResult<T> {
+  items: T[];
+  total: number;
+}
+
+export function buildUrl(base: string, q: ListQuery): string {
+  const parts = [`page=${q.page}`, `pageSize=${q.pageSize}`];
+  for (const [k, v] of Object.entries(q.filters)) {
+    parts.push(`filter[${encodeURIComponent(k)}]=${v}`); ⟦BUG correctness|filter values are not URL-encoded, so text containing & or = injects extra parameters or breaks the query⟧
+  }
+  if (q.sort) parts.push(`sort=${encodeURIComponent(q.sort)}`);
+  return `${base}?${parts.join("&")}`;
+}
+
+export async function fetchPage<T>(base: string, q: ListQuery, signal?: AbortSignal): Promise<PageResult<T>> {
+  const r = await fetch(buildUrl(base, q), { signal, headers: { Accept: "application/json" } });
+  if (!r.ok) throw new Error(`list failed: HTTP ${r.status}`);
+  return (await r.json()) as PageResult<T>;
+}
+
+export async function listAll<T>(base: string, filters: Record<string, string>, pageSize = 100, maxPages = 50): Promise<T[]> {
+  const all: T[] = [];
+  for (let page = 1; page < maxPages; page++) { ⟦BUG correctness|pages are 0-based, so starting at 1 skips the first page (and fetches only maxPages - 1 pages)⟧
+    let res: PageResult<T>;
+    try {
+      res = await fetchPage<T>(base, { page, pageSize, filters });
+    } catch {
+      break; ⟦BUG error-handling|a failed page is swallowed and listAll resolves with a silently truncated list instead of rejecting⟧
+    }
+    all.push(...res.items);
+    if (res.items.length < pageSize || all.length >= res.total) break; ⟦OK⟧
+  }
+  return all;
+}
+=== y2-ts-01-semver|TypeScript semantic version compare|typescript|src/semver.ts
+CONTEXT: Compares versions "MAJOR.MINOR.PATCH[-prerelease]". Numeric parts compare as numbers. A prerelease sorts before the same version without one (1.0.0-rc.1 < 1.0.0). satisfiesCaret(v, base) for base major >= 1 is true when v has the same major and v >= base (so v equal to base satisfies). maxVersion returns the highest version by these rules.
+---
+export interface SemVer {
+  major: number;
+  minor: number;
+  patch: number;
+  pre: string[];
+}
+
+const RE = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
+
+export function parse(v: string): SemVer {
+  const m = RE.exec(v.trim());
+  if (!m) throw new Error(`invalid version: ${v}`);
+  return { major: +m[1], minor: +m[2], patch: +m[3], pre: m[4] ? m[4].split(".") : [] };
+}
+
+function comparePre(a: string[], b: string[]): number {
+  if (!a.length || !b.length) return a.length - b.length; ⟦BUG correctness|a release (no prerelease) gets a negative result and sorts before its prerelease; it must be greater, i.e. b.length - a.length⟧
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (a[i] === undefined) return -1;
+    if (b[i] === undefined) return 1;
+    const na = /^\d+$/.test(a[i]), nb = /^\d+$/.test(b[i]);
+    if (na && nb) {
+      const d = Number(a[i]) - Number(b[i]);
+      if (d !== 0) return d;
+    } else if (a[i] !== b[i]) {
+      return a[i] < b[i] ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+export function compare(a: string, b: string): number {
+  const x = parse(a), y = parse(b);
+  for (const k of ["major", "minor", "patch"] as const) {
+    if (x[k] !== y[k]) return x[k] - y[k]; ⟦OK⟧
+  }
+  return comparePre(x.pre, y.pre);
+}
+
+export function maxVersion(list: string[]): string | undefined {
+  return [...list].sort().pop(); ⟦BUG correctness|default sort is lexicographic, so "1.9.0" is ranked above "1.10.0"; sort with compare⟧
+}
+
+export function satisfiesCaret(v: string, base: string): boolean {
+  const pv = parse(v), pb = parse(base);
+  if (pb.major === 0) return pv.major === 0 && pv.minor === pb.minor && compare(v, base) >= 0;
+  return pv.major === pb.major && compare(v, base) > 0; ⟦BUG correctness|> excludes v equal to base; must be >= 0⟧
+}
+=== y2-ts-02-map-limit|TypeScript concurrency-limited map|typescript|src/mapLimit.ts
+CONTEXT: mapLimit(items, limit, fn) runs fn on every item with at most limit calls in flight and resolves to the results in input order. After any call rejects, mapLimit rejects with that error and no new calls may start. withTimeout(p, ms) rejects after ms milliseconds and must clear its timer as soon as p settles.
+---
+export async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (!Number.isInteger(limit) || limit < 1) throw new RangeError("limit must be a positive integer");
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  let failed = false;
+
+  async function worker(): Promise<void> {
+    while (next < items.length) { ⟦BUG correctness|failed is never checked, so after one call rejects the other workers keep starting new calls⟧
+      const i = next++; ⟦OK⟧
+      try {
+        results.push(await fn(items[i], i)); ⟦BUG correctness|push appends after the pre-sized array in completion order; results must be stored at results[i]⟧
+      } catch (err) {
+        failed = true;
+        throw err;
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([p, timeout]); ⟦BUG resource|the timer is never cleared when p settles first (no finally clearTimeout), leaving a pending timer for every call⟧
+}
+=== y2-ts-03-csv-parse|TypeScript CSV parser|typescript|src/csv.ts
+CONTEXT: Parses RFC 4180 CSV. Fields may be quoted; a doubled "" inside quotes is one literal quote; quoted fields may contain commas and line breaks. Rows end with \n or \r\n. A trailing line break at the end of the file must not produce an extra row. toObjects uses the first row (trimmed) as headers.
+---
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"'; ⟦BUG correctness|i is not advanced past the second quote, so it is read next as a closing quote and the field ends early⟧
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(field);
+      field = "";
+    } else if (ch === "\n") {
+      row.push(field.replace(/\r$/, "")); ⟦OK⟧
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += ch;
+    }
+  }
+  rows.push([...row, field]); ⟦BUG correctness|always pushes a final row, so a file ending in a line break gets an extra [""] row; push only if row or field is non-empty⟧
+  return rows;
+}
+
+export function toObjects(rows: string[][]): Record<string, string>[] {
+  const [header, ...body] = rows;
+  if (!header) return [];
+  const keys = header.map((h) => h.trim());
+  return body.map((r) => Object.fromEntries(keys.map((k, i) => [k, r[i + 1] ?? ""]))); ⟦BUG correctness|off by one: r[i + 1] shifts every value one column left and drops the first; use r[i]⟧
+}
+=== y2-ts-04-feature-flags|TypeScript feature flag evaluation|typescript|src/flags.ts
+CONTEXT: Feature flags. With rollout p (0-100) a flag is on when bucket(`${key}:${userId}`) < p, where bucket is 0..99, so rollout 0 is off for everyone. Admin overrides per user win over rollout, but a flag with enabled=false is off for everyone, overrides included. Query-string overrides ("?ff=key:on") are honoured only when allowQueryOverrides is true (dev builds).
+---
+export interface Flag {
+  key: string;
+  enabled: boolean;
+  rollout: number;
+  overrides: Record<string, boolean>;
+}
+
+export function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0; ⟦OK⟧
+}
+
+export function bucket(seed: string): number {
+  return fnv1a(seed) % 100;
+}
+
+export function isOn(flag: Flag, userId: string): boolean {
+  const override = flag.overrides[userId];
+  if (override !== undefined) return override; ⟦BUG correctness|the override is returned before enabled is checked, so a disabled flag is still on for overridden users⟧
+  if (!flag.enabled) return false;
+  return bucket(`${flag.key}:${userId}`) <= flag.rollout; ⟦BUG correctness|<= turns rollout 0 on for bucket 0 (1% of users) and gives p+1 percent; must be <⟧
+}
+
+export function parseQueryOverrides(search: string, allowQueryOverrides: boolean): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  const params = new URLSearchParams(search);
+  for (const v of params.getAll("ff")) { ⟦BUG security|allowQueryOverrides is never checked, so any visitor can switch flags in production via the URL⟧
+    const [key, state] = v.split(":");
+    if (key && (state === "on" || state === "off")) out[key] = state === "on";
+  }
+  return out;
+}
+
+export function evaluateAll(flags: Flag[], userId: string, query: Record<string, boolean>): Record<string, boolean> {
+  const result: Record<string, boolean> = {};
+  for (const f of flags) {
+    result[f.key] = Object.hasOwn(query, f.key) ? query[f.key] : isOn(f, userId); ⟦BUG correctness|a query override is applied even when the flag is disabled, which must stay off for everyone⟧
+  }
+  return result;
+}

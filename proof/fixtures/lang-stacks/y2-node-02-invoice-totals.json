@@ -1,0 +1,78 @@
+{
+  "id": "y2-node-02-invoice-totals",
+  "title": "Express invoice totals",
+  "holdout": false,
+  "language": "javascript",
+  "filename": "src/invoices.js",
+  "context": "Express 4 routes for invoices. Line prices are integer cents; tax rates are stored in basis points (825 means 8.25%) and tax is rounded to the nearest cent. The discount applies before tax and a total can never be negative. req.user is set by auth middleware, and customers may only read their own invoices.",
+  "code": [
+    "const express = require(\"express\");",
+    "const db = require(\"./db\");",
+    "",
+    "const router = express.Router();",
+    "",
+    "function computeTotals(lines, taxBps, discountCents) {",
+    "  const subtotal = lines.reduce((sum, l) => sum + l.priceCents * l.qty, 0);",
+    "  const discounted = subtotal - discountCents;",
+    "  if (taxBps < 0) throw new RangeError(\"negative tax rate\");",
+    "  const tax = Math.round((discounted * taxBps) / 100);",
+    "  return { subtotal, discounted, tax, total: discounted + tax };",
+    "}",
+    "",
+    "router.get(\"/invoices/:id\", async (req, res, next) => {",
+    "  try {",
+    "    const invoice = await db.one(\"SELECT * FROM invoices WHERE id = $1\", [req.params.id]);",
+    "    const lines = await db.any('SELECT price_cents AS \"priceCents\", qty FROM invoice_lines WHERE invoice_id = $1', [invoice.id]);",
+    "    res.json({ id: invoice.id, ...computeTotals(lines, invoice.tax_bps, invoice.discount_cents) });",
+    "  } catch (err) {",
+    "    next(err);",
+    "  }",
+    "});",
+    "",
+    "router.get(\"/invoices\", async (req, res, next) => {",
+    "  try {",
+    "    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);",
+    "    const offset = (page - 1) * 20;",
+    "    const rows = await db.any(",
+    "      `SELECT id, issued_on FROM invoices WHERE customer_id = $1 ORDER BY issued_on DESC LIMIT 20 OFFSET ${offset}`,",
+    "      [req.user.id]",
+    "    );",
+    "    res.json(rows);",
+    "  } catch (err) {",
+    "    next(err);",
+    "  }",
+    "});",
+    "",
+    "module.exports = router;"
+  ],
+  "expected": [
+    {
+      "line": 8,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "a discount larger than the subtotal makes the amount and total negative; it must be Math.max(0, ...)"
+    },
+    {
+      "line": 10,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "basis points need / 10000; dividing by 100 makes tax 100x too large"
+    },
+    {
+      "line": 16,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the query does not filter on customer_id = req.user.id, so any logged-in customer can read any invoice by id (IDOR)"
+    }
+  ],
+  "benign": [
+    20,
+    29
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "id": "y1-elysia-08-bulk-import",
+  "title": "Elysia bulk contact import",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/import.ts",
+  "context": "Bulk contact import of up to 1000 contacts. The geocoding provider allows at most 10 requests in flight. All contacts are inserted in one transaction, so a failed import leaves nothing behind and the pooled connection is clean. Emails are deduplicated case-insensitively within the batch.",
+  "code": [
+    "import { Elysia, t } from \"elysia\";",
+    "import { geocode } from \"./geo\";",
+    "import { pool } from \"./db\";",
+    "",
+    "const Contact = t.Object({",
+    "  name: t.String({ minLength: 1 }),",
+    "  email: t.String({ format: \"email\" }),",
+    "  address: t.String({ minLength: 1 }),",
+    "});",
+    "",
+    "export const importer = new Elysia()",
+    "  .post(\"/contacts/import\", async ({ body, set }) => {",
+    "    const seen = new Set<string>();",
+    "    const unique = body.contacts.filter((c) => {",
+    "      const key = c.email.toLowerCase();",
+    "      if (seen.has(key)) return false;",
+    "      seen.add(c.email);",
+    "      return true;",
+    "    });",
+    "    const located = await Promise.all(unique.map((c) => geocode(c.address)));",
+    "    const client = await pool.connect();",
+    "    try {",
+    "      await client.query(\"BEGIN\");",
+    "      for (let i = 0; i <= unique.length; i++) {",
+    "        const c = unique[i];",
+    "        await client.query(\"INSERT INTO contacts (name, email, lat, lng) VALUES ($1, $2, $3, $4)\", [c.name, c.email, located[i].lat, located[i].lng]);",
+    "      }",
+    "      await client.query(\"COMMIT\");",
+    "    } catch (err) {",
+    "      console.error(\"import failed\", err);",
+    "      set.status = 500;",
+    "      return { error: \"import failed\" };",
+    "    } finally {",
+    "      client.release();",
+    "    }",
+    "    return { imported: unique.length };",
+    "  }, { body: t.Object({ contacts: t.Array(Contact, { maxItems: 1000 }) }) });"
+  ],
+  "expected": [
+    {
+      "line": 17,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "stores the original-case email, so case variants are never detected as duplicates"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "performance"
+      ],
+      "severity": "medium",
+      "why": "fires up to 1000 geocoding requests at once, breaking the 10-in-flight provider limit"
+    },
+    {
+      "line": 24,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "off-by-one: the last iteration reads unique[length] (undefined) and throws, so every import fails"
+    },
+    {
+      "line": 32,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "no ROLLBACK: the connection goes back to the pool inside an open, failed transaction"
+    }
+  ],
+  "benign": [
+    34
+  ]
+}

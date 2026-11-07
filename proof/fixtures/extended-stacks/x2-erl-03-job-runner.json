@@ -1,0 +1,66 @@
+{
+  "id": "x2-erl-03-job-runner",
+  "title": "Erlang parallel job runner",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/job_runner.erl",
+  "context": "Runs jobs in parallel and returns their results in the same order as Jobs. A job that crashes must give {error, Reason} in its place instead of stalling the others. After a timeout no workers may keep running.",
+  "code": [
+    "-module(job_runner).",
+    "-export([run_all/2, worker/3]).",
+    "",
+    "run_all(Jobs, Timeout) ->",
+    "    Parent = self(),",
+    "    Pids = [spawn(?MODULE, worker, [Parent, Job, make_ref()]) || Job <- Jobs],",
+    "    collect(length(Pids), Timeout, []).",
+    "",
+    "worker(Parent, Job, Ref) ->",
+    "    Fun = maps:get(fn, Job),",
+    "    Parent ! {done, Ref, Fun()}.",
+    "",
+    "collect(0, _Timeout, Acc) ->",
+    "    lists:reverse(Acc);",
+    "collect(N, Timeout, Acc) ->",
+    "    receive",
+    "        {done, _Ref, Result} ->",
+    "            collect(N - 1, Timeout, [Result | Acc])",
+    "    after Timeout ->",
+    "        {error, timeout}",
+    "    end."
+  ],
+  "expected": [
+    {
+      "line": 6,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "plain spawn without a link or monitor: a crashing job never reports, so the caller waits for the whole timeout instead of getting {error, Reason}"
+    },
+    {
+      "line": 14,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "results are collected in completion order, not in the order of Jobs"
+    },
+    {
+      "line": 17,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "the reference is ignored, so late messages from an earlier timed-out call are taken as results of this one"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "resource-leak"
+      ],
+      "severity": "medium",
+      "why": "workers are not killed on timeout and keep running"
+    }
+  ],
+  "benign": []
+}

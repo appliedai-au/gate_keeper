@@ -1,0 +1,95 @@
+{
+  "id": "y1-node-02-orders-csv",
+  "title": "Node streaming CSV export",
+  "holdout": false,
+  "language": "javascript",
+  "filename": "src/export.js",
+  "context": "Streams a large orders table to CSV files. Fields may contain commas, quotes, CR and LF and must be quoted per RFC 4180 (embedded quotes doubled). exportOrders must respect write-stream backpressure, reject if the export fails, and resolve only after all data has been flushed to the file. exportAll resolves with every written path once all exports have finished.",
+  "code": [
+    "const fs = require(\"fs\");",
+    "const { once } = require(\"events\");",
+    "",
+    "function csvField(value) {",
+    "  if (value === null || value === undefined) return \"\";",
+    "  const s = String(value);",
+    "  if (/[\",\\r\\n]/.test(s)) {",
+    "    return `\"${s.replace(/\"/, '\"\"')}\"`;",
+    "  }",
+    "  return s;",
+    "}",
+    "",
+    "async function exportOrders(db, file) {",
+    "  const out = fs.createWriteStream(file);",
+    "  out.write(\"id,customer,total,note\\n\");",
+    "  try {",
+    "    for await (const row of db.iterate(\"SELECT id, customer, total_cents, note FROM orders\")) {",
+    "      const total = (row.total_cents / 100).toFixed(2);",
+    "      const line = [row.id, row.customer, total, row.note].map(csvField).join(\",\") + \"\\n\";",
+    "      if (!out.write(line)) {",
+    "        once(out, \"drain\");",
+    "      }",
+    "    }",
+    "  } catch (err) {",
+    "    console.error(\"export failed\", err);",
+    "  } finally {",
+    "    out.end();",
+    "  }",
+    "  return file;",
+    "}",
+    "",
+    "async function exportAll(db, jobs) {",
+    "  const results = [];",
+    "  jobs.forEach(async (job) => {",
+    "    results.push(await exportOrders(db, job.file));",
+    "  });",
+    "  return results;",
+    "}",
+    "",
+    "module.exports = { csvField, exportOrders, exportAll };"
+  ],
+  "expected": [
+    {
+      "line": 8,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "replace without the g flag doubles only the first quote, producing invalid CSV for fields with several quotes"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "performance"
+      ],
+      "severity": "medium",
+      "why": "the drain promise is not awaited, so backpressure is ignored and the whole table is buffered in memory"
+    },
+    {
+      "line": 25,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the error is logged and swallowed, so exportOrders resolves as if the export succeeded"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "returns before the stream has emitted finish, so callers may read a file that is not fully flushed; await once(out, \"finish\") first"
+    },
+    {
+      "line": 35,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "forEach does not wait for async callbacks, so exportAll returns an empty array before any export has finished"
+    }
+  ],
+  "benign": [
+    18
+  ]
+}

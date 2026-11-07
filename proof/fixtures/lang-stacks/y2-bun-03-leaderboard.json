@@ -1,0 +1,94 @@
+{
+  "id": "y2-bun-03-leaderboard",
+  "title": "Bun SQLite leaderboard",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/leaderboard.ts",
+  "context": "Leaderboard on bun:sqlite. A player's best score is kept; a lower new score must not overwrite it. Rank 1 is the highest score and tied players share a rank. order may only be \"asc\" or \"desc\"; limit is 1-100. Only the game server (x-game-key header equal to GAME_KEY) submits scores.",
+  "code": [
+    "import { Database } from \"bun:sqlite\";",
+    "import { timingSafeEqual } from \"node:crypto\";",
+    "",
+    "const db = new Database(\"board.db\");",
+    "db.run(\"CREATE TABLE IF NOT EXISTS scores (player TEXT PRIMARY KEY, score INTEGER NOT NULL, updated_at INTEGER NOT NULL)\");",
+    "const GAME_KEY = Bun.env.GAME_KEY ?? \"\";",
+    "",
+    "const upsert = db.query(",
+    "  \"INSERT INTO scores (player, score, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(player) DO UPDATE SET score = excluded.score, updated_at = excluded.updated_at\",",
+    ");",
+    "const scoreOf = db.query(\"SELECT score FROM scores WHERE player = ?\");",
+    "const higherThan = db.query(\"SELECT COUNT(*) AS n FROM scores WHERE score >= ?\");",
+    "",
+    "function keyOk(h: string | null) {",
+    "  const a = Buffer.from(h ?? \"\"), b = Buffer.from(GAME_KEY);",
+    "  return GAME_KEY.length > 0 && a.length === b.length && timingSafeEqual(a, b);",
+    "}",
+    "",
+    "function top(order: string, limit: number) {",
+    "  return db.query(`SELECT player, score FROM scores ORDER BY score ${order} LIMIT ?`).all(limit);",
+    "}",
+    "",
+    "Bun.serve({",
+    "  port: 4400,",
+    "  async fetch(req) {",
+    "    const url = new URL(req.url);",
+    "    if (req.method === \"POST\" && url.pathname === \"/scores\") {",
+    "      if (!keyOk(req.headers.get(\"x-game-key\"))) return new Response(\"forbidden\", { status: 403 });",
+    "      const { player, score } = await req.json();",
+    "      if (typeof player !== \"string\" || !Number.isSafeInteger(score) || score < 0) return new Response(\"bad score\", { status: 400 });",
+    "      upsert.run(player, score, Date.now());",
+    "      return new Response(null, { status: 204 });",
+    "    }",
+    "    if (req.method === \"GET\" && url.pathname === \"/top\") {",
+    "      const limit = Math.min(parseInt(url.searchParams.get(\"limit\") ?? \"\", 10) || 10, 100);",
+    "      return Response.json(top(url.searchParams.get(\"order\") ?? \"desc\", limit));",
+    "    }",
+    "    if (req.method === \"GET\" && url.pathname.startsWith(\"/rank/\")) {",
+    "      const player = decodeURIComponent(url.pathname.slice(\"/rank/\".length));",
+    "      const row = scoreOf.get(player) as { score: number } | null;",
+    "      if (!row) return new Response(\"unknown player\", { status: 404 });",
+    "      const { n } = higherThan.get(row.score) as { n: number };",
+    "      return Response.json({ player, rank: n + 1 });",
+    "    }",
+    "    return new Response(\"not found\", { status: 404 });",
+    "  },",
+    "});"
+  ],
+  "expected": [
+    {
+      "line": 9,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "always overwrites, so a lower score replaces the player's best; needs WHERE excluded.score > scores.score"
+    },
+    {
+      "line": 12,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": ">= counts the player and everyone tied with them, so rank = n + 1 is too low by at least one and ties do not share a rank; must be >"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "order is interpolated unchecked into the SQL text (injection); it must be validated against asc/desc"
+    },
+    {
+      "line": 35,
+      "categories": [
+        "performance"
+      ],
+      "severity": "medium",
+      "why": "a negative limit is kept, and LIMIT -1 means no limit in SQLite, so one request dumps the whole table; clamp to at least 1"
+    }
+  ],
+  "benign": [
+    16
+  ]
+}

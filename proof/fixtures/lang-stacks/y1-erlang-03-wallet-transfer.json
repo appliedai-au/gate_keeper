@@ -1,0 +1,72 @@
+{
+  "id": "y1-erlang-03-wallet-transfer",
+  "title": "Erlang Mnesia wallet transfers",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/wallet.erl",
+  "context": "Moves credit between user wallets stored in Mnesia (#wallet{user, balance}, integer cents). A transfer must be atomic, amounts must be positive integers, a balance must never go negative even under concurrent transfers, and failures must be returned as {error, Reason} rather than crashing the caller.",
+  "code": [
+    "-module(wallet).",
+    "-export([balance/1, deposit/2, transfer/3]).",
+    "",
+    "-record(wallet, {user, balance = 0}).",
+    "",
+    "balance(User) ->",
+    "    case mnesia:dirty_read(wallet, User) of",
+    "        [#wallet{balance = B}] -> {ok, B};",
+    "        [] -> {error, no_wallet}",
+    "    end.",
+    "",
+    "deposit(User, Amount) when is_integer(Amount), Amount > 0 ->",
+    "    mnesia:transaction(fun() ->",
+    "        [W] = mnesia:read(wallet, User, write),",
+    "        mnesia:write(W#wallet{balance = W#wallet.balance + Amount})",
+    "    end).",
+    "",
+    "transfer(From, To, Amount) when is_integer(Amount) ->",
+    "    case balance(From) of",
+    "        {ok, FromBal} when FromBal >= Amount ->",
+    "            F = fun() ->",
+    "                [Src] = mnesia:read(wallet, From, write),",
+    "                [Dst] = mnesia:read(wallet, To, write),",
+    "                mnesia:write(Src#wallet{balance = Src#wallet.balance - Amount}),",
+    "                mnesia:write(Dst#wallet{balance = Dst#wallet.balance + Amount})",
+    "            end,",
+    "            {atomic, ok} = mnesia:transaction(F),",
+    "            ok;",
+    "        {ok, _} ->",
+    "            {error, insufficient_funds};",
+    "        {error, Reason} ->",
+    "            {error, Reason}",
+    "    end."
+  ],
+  "expected": [
+    {
+      "line": 18,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "the guard accepts zero and negative amounts, so a negative transfer pulls money out of To and skips the balance check"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "the balance is checked on a dirty read outside the transaction, so two concurrent transfers can both pass and overdraw the wallet"
+    },
+    {
+      "line": 27,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "an aborted transaction (for example a missing To wallet) raises badmatch in the caller instead of returning {error, Reason}"
+    }
+  ],
+  "benign": [
+    7
+  ]
+}

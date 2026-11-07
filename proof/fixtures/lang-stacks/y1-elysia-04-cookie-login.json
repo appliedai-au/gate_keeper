@@ -1,0 +1,70 @@
+{
+  "id": "y1-elysia-04-cookie-login",
+  "title": "Elysia cookie session login",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/session.ts",
+  "context": "Cookie login backed by a server-side `sessions` store (get/set(id, data, ttlSeconds)/del). The session id must be freshly generated at every login. The cookie must be httpOnly, secure, sameSite lax and expire together with the 8-hour session. Logout must destroy the server-side session.",
+  "code": [
+    "import { Elysia, t } from \"elysia\";",
+    "import { sessions } from \"./sessionStore\";",
+    "import { verifyPassword, findUserByEmail } from \"./users\";",
+    "",
+    "const EIGHT_HOURS = 8 * 60 * 60;",
+    "",
+    "export const auth = new Elysia({ name: \"auth\" })",
+    "  .derive({ as: \"global\" }, async ({ cookie: { sid } }) => {",
+    "    if (!sid.value) return { user: null };",
+    "    const s = await sessions.get(sid.value);",
+    "    return { user: s ? s.user : null };",
+    "  })",
+    "  .post(\"/login\", async ({ body, cookie: { sid }, set }) => {",
+    "    const user = await findUserByEmail(body.email.toLowerCase());",
+    "    if (!user || !(await verifyPassword(body.password, user.passwordHash))) {",
+    "      set.status = 401;",
+    "      return { error: \"invalid credentials\" };",
+    "    }",
+    "    const id = sid.value ?? crypto.randomUUID();",
+    "    await sessions.set(id, { user: { id: user.id, role: user.role } }, EIGHT_HOURS);",
+    "    sid.set({ value: id, httpOnly: true, secure: true, sameSite: \"lax\", maxAge: EIGHT_HOURS * 1000, path: \"/\" });",
+    "    return { id: user.id };",
+    "  }, { body: t.Object({ email: t.String(), password: t.String() }) })",
+    "  .post(\"/logout\", ({ cookie: { sid } }) => {",
+    "    sid.remove();",
+    "    return { ok: true };",
+    "  })",
+    "  .get(\"/me\", ({ user, set }) => {",
+    "    if (!user) { set.status = 401; return { error: \"not logged in\" }; }",
+    "    return user;",
+    "  });"
+  ],
+  "expected": [
+    {
+      "line": 19,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "reuses a pre-existing session id (session fixation); a new id must be issued on every login"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "cookie maxAge is in seconds; * 1000 makes the cookie last about 11 months instead of 8 hours"
+    },
+    {
+      "line": 25,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "only the cookie is cleared; the server-side session is never deleted, so a stolen sid keeps working"
+    }
+  ],
+  "benign": [
+    8
+  ]
+}

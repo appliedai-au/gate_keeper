@@ -1,0 +1,98 @@
+{
+  "id": "y2-rust-02-api-keys",
+  "title": "Rust API key verification",
+  "holdout": false,
+  "language": "rust",
+  "filename": "src/keys.rs",
+  "context": "Verifies API keys presented in request headers. Stored records are looked up by the key's first 8 characters and hold the hex SHA-256 digest of the full key; the digest comparison must be constant-time. Revoked keys must be rejected. `expires_at` is Unix seconds and a key is valid strictly before that time. Presented keys are untrusted input of any length and must never cause a panic.",
+  "code": [
+    "use sha2::{Digest, Sha256};",
+    "use std::collections::HashMap;",
+    "use std::sync::RwLock;",
+    "use std::time::{SystemTime, UNIX_EPOCH};",
+    "use subtle::ConstantTimeEq;",
+    "",
+    "pub struct KeyRecord {",
+    "    pub owner: String,",
+    "    pub digest_hex: String,",
+    "    pub expires_at: u64,",
+    "    pub revoked: bool,",
+    "}",
+    "",
+    "pub struct KeyStore {",
+    "    by_prefix: RwLock<HashMap<String, KeyRecord>>,",
+    "}",
+    "",
+    "fn now_secs() -> u64 {",
+    "    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)",
+    "}",
+    "",
+    "impl KeyStore {",
+    "    pub fn verify(&self, presented: &str) -> Option<String> {",
+    "        let prefix = &presented[..8];",
+    "        let map = self.by_prefix.read().unwrap();",
+    "        let rec = map.get(prefix)?;",
+    "        let digest = hex::encode(Sha256::digest(presented.as_bytes()));",
+    "        if digest != rec.digest_hex {",
+    "            return None;",
+    "        }",
+    "        if rec.expires_at < now_secs() {",
+    "            return None;",
+    "        }",
+    "        Some(rec.owner.clone())",
+    "    }",
+    "",
+    "    pub fn revoke(&self, prefix: &str) -> bool {",
+    "        let mut map = self.by_prefix.write().unwrap();",
+    "        match map.get_mut(prefix) {",
+    "            Some(rec) => {",
+    "                rec.revoked = true;",
+    "                true",
+    "            }",
+    "            None => false,",
+    "        }",
+    "    }",
+    "",
+    "    pub fn insert(&self, prefix: String, rec: KeyRecord) {",
+    "        self.by_prefix.write().unwrap().insert(prefix, rec);",
+    "    }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 24,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "slicing panics on keys shorter than 8 bytes or when byte 8 is not a char boundary; untrusted input can crash the handler"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "String != short-circuits on the first differing byte; the digest must be compared with ct_eq"
+    },
+    {
+      "line": 31,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "a key is valid only strictly before expires_at, so the check must be expires_at <= now; this accepts it at the expiry second"
+    },
+    {
+      "line": 34,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "rec.revoked is never checked, so revoked keys still authenticate"
+    }
+  ],
+  "benign": [
+    19
+  ]
+}

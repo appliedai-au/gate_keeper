@@ -1,0 +1,107 @@
+{
+  "id": "y1-rust-07-log-rotate",
+  "title": "Rust size-rotating log writer",
+  "holdout": false,
+  "language": "rust",
+  "filename": "src/rotate.rs",
+  "context": "Size-based log writer. When writing a line (including its newline) would push the current file past max_bytes, it rotates: app.log becomes app.log.1, app.log.1 becomes app.log.2, and so on, keeping `keep` old files and deleting the oldest. The writer may be reopened on an existing log file. Each line must be on disk when write_line returns, and I/O errors must be returned, never panic.",
+  "code": [
+    "use std::fs::{self, File, OpenOptions};",
+    "use std::io::{self, BufWriter, Write};",
+    "use std::path::PathBuf;",
+    "",
+    "pub struct RotatingLog {",
+    "    path: PathBuf,",
+    "    max_bytes: u64,",
+    "    keep: u32,",
+    "    size: u64,",
+    "    out: BufWriter<File>,",
+    "}",
+    "",
+    "fn open_append(path: &PathBuf) -> io::Result<File> {",
+    "    OpenOptions::new().create(true).append(true).open(path)",
+    "}",
+    "",
+    "impl RotatingLog {",
+    "    pub fn open(path: PathBuf, max_bytes: u64, keep: u32) -> io::Result<Self> {",
+    "        let file = open_append(&path)?;",
+    "        let size = 0;",
+    "        Ok(RotatingLog { path, max_bytes, keep, size, out: BufWriter::new(file) })",
+    "    }",
+    "",
+    "    fn rotated(&self, n: u32) -> PathBuf {",
+    "        PathBuf::from(format!(\"{}.{}\", self.path.display(), n))",
+    "    }",
+    "",
+    "    fn rotate(&mut self) -> io::Result<()> {",
+    "        self.out.flush()?;",
+    "        let _ = fs::remove_file(self.rotated(self.keep));",
+    "        for n in 1..self.keep {",
+    "            let from = self.rotated(n);",
+    "            if from.exists() {",
+    "                fs::rename(&from, self.rotated(n + 1))?;",
+    "            }",
+    "        }",
+    "        fs::rename(&self.path, self.rotated(1))?;",
+    "        self.out = BufWriter::new(open_append(&self.path)?);",
+    "        self.size = 0;",
+    "        Ok(())",
+    "    }",
+    "",
+    "    pub fn write_line(&mut self, line: &str) -> io::Result<()> {",
+    "        let len = line.len() as u64;",
+    "        if self.size + len > self.max_bytes {",
+    "            self.rotate()?;",
+    "        }",
+    "        writeln!(self.out, \"{}\", line).expect(\"log write failed\");",
+    "        self.size += len;",
+    "        Ok(())",
+    "    }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 20,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "ignores the size of an existing file (file.metadata()?.len()), so a reopened log grows past max_bytes before rotating"
+    },
+    {
+      "line": 31,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "renames run in ascending order, so .1 overwrites .2 before .2 is moved; the loop must go from keep-1 down to 1"
+    },
+    {
+      "line": 44,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the newline written by writeln! is not counted, so the size undercounts by one byte per line and files exceed max_bytes"
+    },
+    {
+      "line": 48,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "expect panics on an I/O error instead of returning it"
+    },
+    {
+      "line": 50,
+      "categories": [
+        "data-integrity"
+      ],
+      "severity": "medium",
+      "why": "the BufWriter is never flushed, so the line can still be in memory (and lost on crash) when write_line returns"
+    }
+  ],
+  "benign": [
+    30
+  ]
+}

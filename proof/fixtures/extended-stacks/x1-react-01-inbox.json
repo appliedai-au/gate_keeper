@@ -1,0 +1,78 @@
+{
+  "id": "x1-react-01-inbox",
+  "title": "React inbox component",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/Inbox.tsx",
+  "context": "Inbox that polls for new messages every 5 seconds. Message html is raw input from other users. \"Mark all read\" adds the number of shown messages to the read counter when clicked.",
+  "code": [
+    "import { useEffect, useState } from \"react\";",
+    "",
+    "type Msg = { id: string; author: string; html: string };",
+    "",
+    "export function Inbox({ userId }: { userId: string }) {",
+    "  const [msgs, setMsgs] = useState<Msg[]>([]);",
+    "  const [count, setCount] = useState(0);",
+    "",
+    "  useEffect(() => {",
+    "    const timer = setInterval(async () => {",
+    "      const r = await fetch(`/api/users/${encodeURIComponent(userId)}/messages`);",
+    "      if (r.ok) setMsgs(await r.json());",
+    "    }, 5000);",
+    "  }, [userId]);",
+    "",
+    "  function markAllRead() {",
+    "    msgs.forEach(() => {",
+    "      setCount(count + 1);",
+    "    });",
+    "  }",
+    "",
+    "  return (",
+    "    <ul>",
+    "      {msgs.map((m) => (",
+    "        <li key={m.id}>",
+    "          <b>{m.author}</b>",
+    "          <div dangerouslySetInnerHTML={{ __html: m.html }} />",
+    "        </li>",
+    "      ))}",
+    "      <button onClick={markAllRead()}>Mark all read ({count})</button>",
+    "    </ul>",
+    "  );",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 14,
+      "categories": [
+        "resource-leak"
+      ],
+      "severity": "medium",
+      "why": "the interval is never cleared (no cleanup), so pollers keep running after unmount or a userId change"
+    },
+    {
+      "line": 18,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "stale value: every call sets count + 1 from the same render, so the counter rises by 1 instead of msgs.length"
+    },
+    {
+      "line": 27,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "other users' raw HTML is rendered unsanitised (XSS)"
+    },
+    {
+      "line": 30,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "markAllRead() is called during render instead of on click, causing a render loop"
+    }
+  ],
+  "benign": []
+}

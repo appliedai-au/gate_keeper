@@ -1,0 +1,94 @@
+{
+  "id": "y1-go-04-broadcast",
+  "title": "Go concurrent notification broadcast",
+  "holdout": false,
+  "language": "go",
+  "filename": "notify/broadcast.go",
+  "context": "Broadcast sends a message to every subscriber concurrently with at most 10 sends in flight, gives up on the whole operation after 30 seconds or when ctx is cancelled (starting no further sends), and returns the number of successful sends only after every started goroutine has finished. The module uses Go 1.22 loop variable semantics.",
+  "code": [
+    "package notify",
+    "",
+    "import (",
+    "\t\"context\"",
+    "\t\"sync\"",
+    "\t\"time\"",
+    ")",
+    "",
+    "type Sender interface {",
+    "\tSend(ctx context.Context, to string, msg string) error",
+    "}",
+    "",
+    "func Broadcast(ctx context.Context, s Sender, subscribers []string, msg string) int {",
+    "\ttctx, _ := context.WithTimeout(ctx, 30*time.Second)",
+    "\tsem := make(chan struct{}, 10)",
+    "\tvar wg sync.WaitGroup",
+    "\tvar ok int",
+    "\tfor _, sub := range subscribers {",
+    "\t\tselect {",
+    "\t\tcase <-tctx.Done():",
+    "\t\t\tbreak",
+    "\t\tcase sem <- struct{}{}:",
+    "\t\t}",
+    "\t\tgo func() {",
+    "\t\t\twg.Add(1)",
+    "\t\t\tdefer wg.Done()",
+    "\t\t\tdefer func() { <-sem }()",
+    "\t\t\tif err := s.Send(tctx, sub, msg); err == nil {",
+    "\t\t\t\tok++",
+    "\t\t\t}",
+    "\t\t}()",
+    "\t}",
+    "\twg.Wait()",
+    "\treturn ok",
+    "}",
+    "",
+    "func Unique(subscribers []string) []string {",
+    "\tseen := make(map[string]struct{}, len(subscribers))",
+    "\tout := subscribers[:0:0]",
+    "\tfor _, s := range subscribers {",
+    "\t\tif _, dup := seen[s]; !dup {",
+    "\t\t\tseen[s] = struct{}{}",
+    "\t\t\tout = append(out, s)",
+    "\t\t}",
+    "\t}",
+    "\treturn out",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 14,
+      "categories": [
+        "resource"
+      ],
+      "severity": "medium",
+      "why": "the cancel func is discarded, so the timer and context live until the timeout even after Broadcast returns (lostcancel)"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "break only leaves the select, so the loop keeps starting goroutines without a semaphore slot, and their deferred <-sem then blocks forever"
+    },
+    {
+      "line": 25,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "wg.Add inside the goroutine races with wg.Wait, which can return before the goroutines have registered"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "ok is incremented from many goroutines without synchronisation (data race, lost counts)"
+    }
+  ],
+  "benign": [
+    39
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "id": "y1-ts-04-event-emitter",
+  "title": "TypeScript typed event emitter",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/emitter.ts",
+  "context": "Typed event emitter. once() listeners run at most one time, even if they throw. off() removes exactly the given listener and does nothing if it is not registered. A throwing listener must not stop the others; its error goes to onError. Every listener registered when emit starts must be called once.",
+  "code": [
+    "type Listener<T> = (payload: T) => void;",
+    "",
+    "export class Emitter<Events extends Record<string, unknown>> {",
+    "  private listeners = new Map<keyof Events, Listener<any>[]>();",
+    "",
+    "  constructor(private readonly onError: (err: unknown) => void = () => {}) {}",
+    "",
+    "  on<K extends keyof Events>(event: K, fn: Listener<Events[K]>): () => void {",
+    "    const list = this.listeners.get(event) ?? [];",
+    "    list.push(fn);",
+    "    this.listeners.set(event, list);",
+    "    return () => this.off(event, fn);",
+    "  }",
+    "",
+    "  once<K extends keyof Events>(event: K, fn: Listener<Events[K]>): () => void {",
+    "    const wrapper: Listener<Events[K]> = (payload) => {",
+    "      fn(payload);",
+    "      this.off(event, wrapper);",
+    "    };",
+    "    return this.on(event, wrapper);",
+    "  }",
+    "",
+    "  off<K extends keyof Events>(event: K, fn: Listener<Events[K]>): void {",
+    "    const list = this.listeners.get(event);",
+    "    if (!list) return;",
+    "    const i = list.indexOf(fn);",
+    "    list.splice(i, 1);",
+    "  }",
+    "",
+    "  emit<K extends keyof Events>(event: K, payload: Events[K]): number {",
+    "    const list = this.listeners.get(event);",
+    "    if (!list) return 0;",
+    "    let called = 0;",
+    "    for (const fn of list) {",
+    "      try {",
+    "        fn(payload);",
+    "      } catch (err) {",
+    "        this.onError(err);",
+    "      }",
+    "      called++;",
+    "    }",
+    "    return called;",
+    "  }",
+    "",
+    "  listenerCount(event: keyof Events): number {",
+    "    return this.listeners.get(event)?.length ?? 0;",
+    "  }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 18,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "removal happens after fn; if fn throws (emit catches it) the wrapper is never removed and runs again on the next emit"
+    },
+    {
+      "line": 27,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "when fn is not registered indexOf is -1 and splice(-1, 1) removes the last listener"
+    },
+    {
+      "line": 34,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "iterates the live array; a once() listener splicing itself out shifts the array and the next listener is skipped; iterate a copy"
+    }
+  ],
+  "benign": [
+    40
+  ]
+}

@@ -1,0 +1,100 @@
+{
+  "id": "y1-rust-03-lru-cache",
+  "title": "Rust LRU page cache",
+  "holdout": false,
+  "language": "rust",
+  "filename": "src/lru.rs",
+  "context": "Fixed-capacity LRU cache for rendered pages. It must never hold more than `capacity` entries. `get` marks an entry as most recently used and `peek` does not. Inserting a new key into a full cache evicts the least recently used entry; overwriting an existing key must not evict anything. `shrink_to` lowers the capacity and evicts down to it.",
+  "code": [
+    "use std::collections::{HashMap, VecDeque};",
+    "",
+    "pub struct LruCache {",
+    "    capacity: usize,",
+    "    map: HashMap<String, Vec<u8>>,",
+    "    order: VecDeque<String>,",
+    "}",
+    "",
+    "impl LruCache {",
+    "    pub fn new(capacity: usize) -> Self {",
+    "        assert!(capacity > 0, \"capacity must be positive\");",
+    "        LruCache { capacity, map: HashMap::with_capacity(capacity), order: VecDeque::new() }",
+    "    }",
+    "",
+    "    fn touch(&mut self, key: &str) {",
+    "        if let Some(pos) = self.order.iter().position(|k| k == key) {",
+    "            self.order.remove(pos);",
+    "        }",
+    "        self.order.push_back(key.to_string());",
+    "    }",
+    "",
+    "    pub fn get(&mut self, key: &str) -> Option<&Vec<u8>> {",
+    "        if self.map.contains_key(key) {",
+    "            self.touch(key);",
+    "        }",
+    "        self.map.get(key)",
+    "    }",
+    "",
+    "    pub fn peek(&self, key: &str) -> Option<&Vec<u8>> {",
+    "        self.map.get(key)",
+    "    }",
+    "",
+    "    pub fn put(&mut self, key: String, value: Vec<u8>) {",
+    "        let full = self.map.len() >= self.capacity;",
+    "        if full {",
+    "            if let Some(old) = self.order.pop_back() {",
+    "                self.map.remove(&old);",
+    "            }",
+    "        }",
+    "        self.touch(&key);",
+    "        self.map.insert(key, value);",
+    "    }",
+    "",
+    "    pub fn remove(&mut self, key: &str) -> Option<Vec<u8>> {",
+    "        self.order.retain(|k| k != key);",
+    "        self.map.remove(key)",
+    "    }",
+    "",
+    "    pub fn shrink_to(&mut self, new_capacity: usize) {",
+    "        self.capacity = new_capacity.max(1);",
+    "        if self.order.len() > self.capacity {",
+    "            let old = self.order.pop_front().unwrap();",
+    "            self.map.remove(&old);",
+    "        }",
+    "    }",
+    "",
+    "    pub fn len(&self) -> usize {",
+    "        self.map.len()",
+    "    }",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 34,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "does not check whether the key already exists, so overwriting a key in a full cache evicts an unrelated entry"
+    },
+    {
+      "line": 36,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the back of the deque is the most recently used entry; eviction must pop_front to drop the least recently used"
+    },
+    {
+      "line": 51,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "if evicts at most one entry; it must loop until len <= capacity, otherwise the cache stays over capacity"
+    }
+  ],
+  "benign": [
+    11,
+    30
+  ]
+}

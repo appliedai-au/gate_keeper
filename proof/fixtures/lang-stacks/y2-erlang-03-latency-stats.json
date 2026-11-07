@@ -1,0 +1,64 @@
+{
+  "id": "y2-erlang-03-latency-stats",
+  "title": "Erlang latency statistics",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/latency_stats.erl",
+  "context": "Summarises request latencies given as integer microseconds for a dashboard that shows milliseconds. summary/1 returns #{count, mean_ms, p95_ms, max_ms}, with all zeros for an empty list. p95 uses nearest rank: the element at 1-based rank ceil(0.95 * N) of the sorted samples. merge/2 combines two summaries; its mean must equal the mean over all underlying samples and p95 becomes undefined.",
+  "code": [
+    "-module(latency_stats).",
+    "-export([summary/1, merge/2, format/1]).",
+    "",
+    "summary([]) ->",
+    "    #{count => 0, mean_ms => 0, p95_ms => 0, max_ms => 0};",
+    "summary(Samples) ->",
+    "    Sorted = lists:sort(Samples),",
+    "    N = length(Sorted),",
+    "    Mean = lists:sum(Sorted) / N / 1000,",
+    "    Rank = trunc(0.95 * N),",
+    "    P95 = lists:nth(Rank, Sorted),",
+    "    Max = lists:last(Sorted) / 1000,",
+    "    #{count => N, mean_ms => Mean, p95_ms => P95, max_ms => Max}.",
+    "",
+    "merge(#{count := 0}, B) ->",
+    "    B;",
+    "merge(A, #{count := 0}) ->",
+    "    A;",
+    "merge(#{count := C1, mean_ms := M1, max_ms := X1}, #{count := C2, mean_ms := M2, max_ms := X2}) ->",
+    "    Count = C1 + C2,",
+    "    Mean = (M1 + M2) / 2,",
+    "    #{count => Count, mean_ms => Mean, p95_ms => undefined, max_ms => max(X1, X2)}.",
+    "",
+    "format(#{count := N, mean_ms := Mean, p95_ms := P95, max_ms := Max}) ->",
+    "    io_lib:format(\"n=~b mean=~p ms p95=~p ms max=~p ms\", [N, Mean, P95, Max])."
+  ],
+  "expected": [
+    {
+      "line": 10,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "nearest rank needs ceil; trunc picks the wrong element and gives rank 0 for fewer than 20 samples, so lists:nth crashes"
+    },
+    {
+      "line": 13,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "p95 is returned in microseconds while the other fields are converted to milliseconds"
+    },
+    {
+      "line": 21,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the two means are averaged without weighting by count, so the result is not the mean of all samples; use (M1 * C1 + M2 * C2) / Count"
+    }
+  ],
+  "benign": [
+    9
+  ]
+}

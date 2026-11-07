@@ -1,0 +1,60 @@
+{
+  "id": "x1-erl-02-csv-import",
+  "title": "Erlang CSV order import",
+  "holdout": false,
+  "language": "erlang",
+  "filename": "src/csv_import.erl",
+  "context": "Imports order lines from CSV. The file has a header row (name,qty,price) and ends with a newline. Prices may be whole numbers (\"10\") or decimals (\"9.95\"). Totals are money and must be exact, in integer cents.",
+  "code": [
+    "-module(csv_import).",
+    "-export([parse_line/1, import/1, total/1]).",
+    "",
+    "parse_line(Line) ->",
+    "    Fields = binary:split(Line, <<\",\">>),",
+    "    [Name, Qty, Price] = Fields,",
+    "    {Name, binary_to_integer(Qty), binary_to_float(Price)}.",
+    "",
+    "import(Path) ->",
+    "    {ok, Bin} = file:read_file(Path),",
+    "    Lines = binary:split(Bin, <<\"\\n\">>, [global]),",
+    "    [parse_line(L) || L <- Lines].",
+    "",
+    "total(Rows) ->",
+    "    lists:foldl(fun({_Name, Qty, Price}, Acc) -> Acc + Qty * Price end, 0, Rows)."
+  ],
+  "expected": [
+    {
+      "line": 5,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "binary:split without [global] splits only at the first comma, so the 3-field match always fails"
+    },
+    {
+      "line": 7,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "binary_to_float crashes on whole-number prices such as \"10\""
+    },
+    {
+      "line": 12,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "the header row and the empty line after the final newline are parsed too, so import crashes"
+    },
+    {
+      "line": 15,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "money is summed as floats, so totals are not exact; use integer cents"
+    }
+  ],
+  "benign": []
+}

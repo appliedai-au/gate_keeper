@@ -1,0 +1,75 @@
+{
+  "id": "y1-elysia-07-admin-plugin",
+  "title": "Elysia admin API with guard plugin",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/app.ts",
+  "context": "Admin API. The adminOnly plugin must reject every /admin route for non-admins (target: Elysia 1.x, where plugin hooks are local unless scoped). 500 responses must not leak internal error messages. deleteUser returns a Promise that rejects on failure, and a failed delete must not report success.",
+  "code": [
+    "import { Elysia, t } from \"elysia\";",
+    "import { getSessionUser } from \"./session\";",
+    "import { listUsers, deleteUser, setRole } from \"./users\";",
+    "",
+    "const adminOnly = new Elysia({ name: \"admin-only\" })",
+    "  .derive(async ({ headers }) => ({ user: await getSessionUser(headers.authorization) }))",
+    "  .onBeforeHandle(({ user, set }) => {",
+    "    if (!user || user.role !== \"admin\") {",
+    "      set.status = 403;",
+    "      return { error: \"admin only\" };",
+    "    }",
+    "  });",
+    "",
+    "export const app = new Elysia()",
+    "  .onError(({ code, error, set }) => {",
+    "    if (code === \"VALIDATION\") { set.status = 400; return { error: \"invalid input\" }; }",
+    "    if (code === \"NOT_FOUND\") { set.status = 404; return { error: \"not found\" }; }",
+    "    console.error(error);",
+    "    set.status = 500;",
+    "    return { error: (error as Error).message };",
+    "  })",
+    "  .group(\"/admin\", (g) =>",
+    "    g",
+    "      .use(adminOnly)",
+    "      .get(\"/users\", ({ query }) => listUsers(query.page ?? 1), {",
+    "        query: t.Object({ page: t.Optional(t.Numeric({ minimum: 1 })) }),",
+    "      })",
+    "      .delete(\"/users/:id\", ({ params }) => {",
+    "        deleteUser(params.id);",
+    "        return new Response(null, { status: 204 });",
+    "      })",
+    "      .patch(\"/users/:id/role\", ({ params, body }) => setRole(params.id, body.role), {",
+    "        body: t.Object({ role: t.Union([t.Literal(\"user\"), t.Literal(\"admin\")]) }),",
+    "      }),",
+    "  )",
+    "  .listen(3000);"
+  ],
+  "expected": [
+    {
+      "line": 7,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "without { as: \"scoped\" } (on derive too) this hook is local to the plugin and never runs for the /admin routes registered on the parent"
+    },
+    {
+      "line": 20,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "returns the internal error message to the client on 500"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "not awaited: a failed delete becomes an unhandled rejection while the client gets 204"
+    }
+  ],
+  "benign": [
+    26
+  ]
+}

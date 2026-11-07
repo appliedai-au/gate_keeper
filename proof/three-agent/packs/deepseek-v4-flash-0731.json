@@ -1,0 +1,43 @@
+{
+  "model": "gk-allmodels/deepseek-v4-flash-0731",
+  "base": "2e4569f7fbd81b3f6c973e6391fc7032212330ae5b586832a63f2aed1b3950cc",
+  "base_file": "gate-keeper-v13.1-core.md",
+  "learned": {
+    "commit": "93adc0862cb7e60e50e3edf08f20c9be8ed32f84",
+    "railway_deployment": "0845fd56-0b66-4f06-98ad-eda1cfe96726",
+    "payload": "train-lang-packs-v13.1.b64",
+    "trials": 2,
+    "rounds": 3,
+    "min_gain": 2,
+    "frozen": "2026-11-07T09:30Z"
+  },
+  "packs": {
+    "bun": [
+      "Catch: serving a BunFile without awaiting its exists() first, since a missing file yields an error instead of a 404.",
+      "Catch: sharing one Bun prepared statement across concurrent requests, since a re-bind resets the other stream.",
+      "Catch: a retry counter that returns locked when tries >= MAX_TRIES, since the final allowed attempt is never reached.",
+      "Catch: a date-range query whose exclusive upper bound is the start of the last day, excluding that whole day."
+    ],
+    "elysia": [
+      "Catch: Elysia `.onBeforeHandle`/`.onDerive` hooks without `{ as: \"scoped\" }` that are meant to guard parent routes, since they only run for the plugin's own routes.",
+      "Catch: Elysia `t.String()` validation missing `maxLength` when the field is capped, allowing oversized input through."
+    ],
+    "erlang": [
+      "Catch: a query-string value concatenated into a SQL statement instead of passed as a bound parameter, allowing injection.",
+      "Catch: lists:sort/2 with a strict comparator returning false for equal keys, so ties are reordered instead of kept stable."
+    ],
+    "go": [],
+    "node": [],
+    "php": [
+      "Catch: FILTER_VALIDATE_IP without FILTER_FLAG_NO_RES_RANGE, letting loopback and link-local addresses pass the check.",
+      "Catch: CURLOPT_FOLLOWLOCATION enabled without re-validating the redirect target, so a public URL can redirect to an internal address."
+    ],
+    "python": [],
+    "react": [],
+    "rust": [
+      "Catch: unwrap() on a Result from file or IO that panics on a missing or unreadable resource instead of returning an error to the caller.",
+      "Catch: token-bucket rate limiting that admits a request when the fractional balance is greater than zero, driving the balance negative."
+    ],
+    "ts": []
+  }
+}

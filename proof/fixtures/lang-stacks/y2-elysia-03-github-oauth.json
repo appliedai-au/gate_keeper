@@ -1,0 +1,83 @@
+{
+  "id": "y2-elysia-03-github-oauth",
+  "title": "Elysia GitHub OAuth login",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/oauth.ts",
+  "context": "GitHub OAuth login. The state sent to GitHub is kept in a short-lived httpOnly cookie and must be present and match on callback. returnTo must be a same-site relative path. The GitHub access token must never reach the browser. A failed GitHub API call must not create a session.",
+  "code": [
+    "import { Elysia, t } from \"elysia\";",
+    "import { createSession } from \"./sessions\";",
+    "",
+    "const CLIENT_ID = process.env.GH_CLIENT_ID!;",
+    "const CLIENT_SECRET = process.env.GH_CLIENT_SECRET!;",
+    "",
+    "export const oauth = new Elysia({ prefix: \"/auth/github\" })",
+    "  .get(\"/start\", ({ query, cookie: { oauth_state, return_to }, redirect }) => {",
+    "    const state = crypto.randomUUID();",
+    "    oauth_state.set({ value: state, httpOnly: true, secure: true, sameSite: \"lax\", maxAge: 600, path: \"/auth/github\" });",
+    "    return_to.set({ value: query.returnTo ?? \"/\", httpOnly: true, secure: true, sameSite: \"lax\", maxAge: 600, path: \"/auth/github\" });",
+    "    const url = new URL(\"https://github.com/login/oauth/authorize\");",
+    "    url.searchParams.set(\"client_id\", CLIENT_ID);",
+    "    url.searchParams.set(\"state\", state);",
+    "    url.searchParams.set(\"scope\", \"read:user user:email\");",
+    "    return redirect(url.href);",
+    "  }, { query: t.Object({ returnTo: t.Optional(t.String({ maxLength: 200 })) }) })",
+    "  .get(\"/callback\", async ({ query, cookie: { oauth_state, return_to, sid, gh_token }, redirect, set }) => {",
+    "    if (oauth_state.value && query.state !== oauth_state.value) { set.status = 400; return \"bad state\"; }",
+    "    oauth_state.remove();",
+    "    const res = await fetch(\"https://github.com/login/oauth/access_token\", {",
+    "      method: \"POST\",",
+    "      headers: { accept: \"application/json\", \"content-type\": \"application/json\" },",
+    "      body: JSON.stringify({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, code: query.code }),",
+    "    });",
+    "    const tokenJson = (await res.json()) as { access_token?: string };",
+    "    if (!res.ok || !tokenJson.access_token) { set.status = 502; return \"token exchange failed\"; }",
+    "    const user = await fetch(\"https://api.github.com/user\", { headers: { authorization: `Bearer ${tokenJson.access_token}` } }).then((r) => r.json());",
+    "    const id = await createSession({ githubId: user.id, login: user.login });",
+    "    sid.set({ value: id, httpOnly: true, secure: true, sameSite: \"lax\", path: \"/\" });",
+    "    gh_token.set({ value: tokenJson.access_token, secure: true, sameSite: \"lax\", path: \"/\" });",
+    "    const dest = return_to.value ?? \"/\";",
+    "    return_to.remove();",
+    "    if (!dest.startsWith(\"/\")) return redirect(\"/\");",
+    "    return redirect(dest);",
+    "  }, { query: t.Object({ code: t.String(), state: t.String() }) });"
+  ],
+  "expected": [
+    {
+      "line": 19,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "when the state cookie is missing the check is skipped entirely, allowing login CSRF"
+    },
+    {
+      "line": 28,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the response status is never checked, so an error body (no id) still creates a session for an undefined GitHub user"
+    },
+    {
+      "line": 31,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "puts the GitHub access token in a script-readable cookie sent to the browser"
+    },
+    {
+      "line": 34,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "\"//evil.example\" starts with \"/\" and is a protocol-relative open redirect"
+    }
+  ],
+  "benign": [
+    10
+  ]
+}

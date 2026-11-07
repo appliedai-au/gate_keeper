@@ -1,0 +1,85 @@
+{
+  "id": "y1-php-07-fragment-cache",
+  "title": "PHP fragment cache and prefs cookie",
+  "holdout": false,
+  "language": "php",
+  "filename": "src/FragmentCache.php",
+  "context": "Caches rendered HTML fragments on disk under /var/cache/fragments. Keys are arbitrary strings that may contain user input; entries expire after their TTL, given in seconds. Many requests run concurrently and a reader must never see a half-written entry. load_prefs() reads display preferences from the 'prefs' cookie, which the client controls.",
+  "code": [
+    "<?php",
+    "",
+    "final class FragmentCache",
+    "{",
+    "    private const DIR = '/var/cache/fragments';",
+    "",
+    "    public function get(string $key): ?string",
+    "    {",
+    "        $path = $this->path($key);",
+    "        if (!is_file($path)) {",
+    "            return null;",
+    "        }",
+    "        $entry = unserialize(file_get_contents($path), ['allowed_classes' => false]);",
+    "        if (time() > $entry['created'] + $entry['ttl'] * 1000) {",
+    "            @unlink($path);",
+    "            return null;",
+    "        }",
+    "        return $entry['html'];",
+    "    }",
+    "",
+    "    public function set(string $key, string $html, int $ttl): void",
+    "    {",
+    "        $data = serialize(['created' => time(), 'ttl' => $ttl, 'html' => $html]);",
+    "        file_put_contents($this->path($key), $data);",
+    "    }",
+    "",
+    "    private function path(string $key): string",
+    "    {",
+    "        return self::DIR . '/' . $key . '.cache';",
+    "    }",
+    "}",
+    "",
+    "function load_prefs(): array",
+    "{",
+    "    $raw = $_COOKIE['prefs'] ?? '';",
+    "    $prefs = $raw !== '' ? unserialize(base64_decode($raw)) : [];",
+    "    return is_array($prefs) ? $prefs : [];",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 14,
+      "categories": [
+        "correctness"
+      ],
+      "severity": "medium",
+      "why": "the TTL is in seconds but multiplied by 1000, so entries live 1000 times longer than intended"
+    },
+    {
+      "line": 24,
+      "categories": [
+        "concurrency"
+      ],
+      "severity": "medium",
+      "why": "the file is written in place, so concurrent readers can read a truncated or half-written entry; write a temp file and rename() it"
+    },
+    {
+      "line": 29,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "the raw key is used as a path, so \"../\" in a key reads or writes outside the cache directory; hash the key"
+    },
+    {
+      "line": 36,
+      "categories": [
+        "security"
+      ],
+      "severity": "medium",
+      "why": "unserialize on a client-controlled cookie allows PHP object injection; use json_decode"
+    }
+  ],
+  "benign": [
+    13
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "id": "x1-go-01-stats-fanout",
+  "title": "Go stats handler and fan-out",
+  "holdout": false,
+  "language": "go",
+  "filename": "api/stats.go",
+  "context": "HTTP handlers run concurrently. FanOut checks a list of partner URLs and must return every status code.",
+  "code": [
+    "package api",
+    "",
+    "import (",
+    "\t\"encoding/json\"",
+    "\t\"net/http\"",
+    "\t\"sync\"",
+    ")",
+    "",
+    "type Stats struct {",
+    "\tmu    sync.Mutex",
+    "\tCount map[string]int",
+    "}",
+    "",
+    "var stats = Stats{Count: map[string]int{}}",
+    "",
+    "func Track(w http.ResponseWriter, r *http.Request) {",
+    "\tvar ev struct {",
+    "\t\tName string `json:\"name\"`",
+    "\t}",
+    "\tjson.NewDecoder(r.Body).Decode(&ev)",
+    "\tname := ev.Name",
+    "\tstats.Count[name]++",
+    "\tw.WriteHeader(http.StatusNoContent)",
+    "}",
+    "",
+    "func Report(w http.ResponseWriter, r *http.Request) {",
+    "\tstats.mu.Lock()",
+    "\tdefer stats.mu.Unlock()",
+    "\tjson.NewEncoder(w).Encode(stats.Count)",
+    "}",
+    "",
+    "func FanOut(urls []string) []int {",
+    "\tcodes := make([]int, len(urls))",
+    "\tvar wg sync.WaitGroup",
+    "\tfor i, u := range urls {",
+    "\t\tgo func() {",
+    "\t\t\twg.Add(1)",
+    "\t\t\tdefer wg.Done()",
+    "\t\t\tresp, err := http.Get(u)",
+    "\t\t\tif err != nil {",
+    "\t\t\t\treturn",
+    "\t\t\t}",
+    "\t\t\tcodes[i] = resp.StatusCode",
+    "\t\t}()",
+    "\t}",
+    "\twg.Wait()",
+    "\treturn codes",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 20,
+      "categories": [
+        "error-handling"
+      ],
+      "severity": "medium",
+      "why": "the decode error is ignored, so bad JSON is counted under an empty name"
+    },
+    {
+      "line": 22,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "the map is written without holding stats.mu, so concurrent requests cause a concurrent map write panic"
+    },
+    {
+      "line": 37,
+      "categories": [
+        "bug"
+      ],
+      "severity": "medium",
+      "why": "wg.Add runs inside the goroutine, so wg.Wait can return before the workers have started"
+    },
+    {
+      "line": 39,
+      "categories": [
+        "resource-leak"
+      ],
+      "severity": "medium",
+      "why": "the response body is never closed, and http.Get uses the default client with no timeout"
+    }
+  ],
+  "benign": []
+}
