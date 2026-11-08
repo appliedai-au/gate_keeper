@@ -1,0 +1,33 @@
+{
+	admin off
+	auto_https off
+}
+
+:{$PORT} {
+	handle /proxy-healthz {
+		respond "OK" 200
+	}
+
+	@product path /gatekeeper/product-v1 /gatekeeper/product-v1/*
+	handle @product {
+		# Independent OAuth/session/Bearer authorization lives in this product handler.
+		# Never remove Basic Auth from the ordinary TrueForge catch-all below.
+		reverse_proxy http://{$G8S_PRODUCT_HOST}:{$G8S_PRODUCT_PORT}
+	}
+
+	handle /gatekeeper/learning-v3/status {
+		rewrite * /gatekeeper/learning-v2/status
+		reverse_proxy http://{$UPSTREAM_HOST}:{$UPSTREAM_PORT}
+	}
+
+	handle /gatekeeper/reviews-v1 {
+		reverse_proxy http://{$UPSTREAM_HOST}:{$UPSTREAM_PORT}
+	}
+
+	handle {
+		basic_auth {
+			{$BASIC_AUTH_USERNAME} {$GK_PROXY_PASSWORD_HASH}
+		}
+		reverse_proxy http://{$UPSTREAM_HOST}:{$UPSTREAM_PORT}
+	}
+}
