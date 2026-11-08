@@ -279,6 +279,7 @@ export function createProductService({ store, github, config, entropy = size => 
         if (req.method === 'POST' && segments.length === 4 && segments[3] === 'refresh') {
           const configured = await store.settings(userId, slug, 'configuration');
           for (const installation of configured.connections) {
+            if (installation.disabledReason) continue;
             const client = await github.installationClient(String(installation.id));
             const repositories = [];
             for (const repository of await client.repositories())

@@ -68,13 +68,17 @@ export function createStatusRoutingHandler({ statusHandler, proxyHandler, review
     let pathname;
     try {
       const rawPath = target.split('?')[0];
-      const decoded = decodeURIComponent(rawPath);
-      // A public prefix must never normalize into an ordinary TrueForge route
-      // after the outer proxy has selected its independent-auth handler.
-      if (/%(?:2f|5c|25)/iu.test(rawPath) || decoded.includes('\\') ||
-          decoded.split('/').some(segment => segment === '.' || segment === '..'))
-        throw new Error('noncanonical_path');
       pathname = new URL(target, 'http://localhost').pathname;
+      // Strict canonical check only for paths that could resolve to the product
+      // prefix; ordinary TrueForge routes keep their previous behaviour.
+      const mayBeProduct = pathname.startsWith(PRODUCT_PATH) || /product-v1/iu.test(rawPath) ||
+        /%/u.test(rawPath) && decodeURIComponent(rawPath).startsWith(PRODUCT_PATH);
+      if (mayBeProduct) {
+        const decoded = decodeURIComponent(rawPath);
+        if (/%(?:2f|5c|25)/iu.test(rawPath) || decoded.includes('\\') ||
+            decoded.split('/').some(segment => segment === '.' || segment === '..'))
+          throw new Error('noncanonical_path');
+      }
     }
     catch { res.writeHead(400, noStore); res.end('{"error":"bad_request"}'); return; }
     const isProduct = pathname === PRODUCT_PATH || pathname.startsWith(PRODUCT_PATH + '/');
