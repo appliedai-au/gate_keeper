@@ -1,0 +1,14 @@
+# Dashboard integration qualification only. Not a production or backend release image.
+FROM node:24.19.0-bookworm-slim
+WORKDIR /qualification
+COPY integrations/base44/product ./integrations/base44/product
+COPY scripts/product/contracts.mjs scripts/product/github.mjs scripts/product/service.mjs ./scripts/product/
+COPY tests/dashboard-product-client.test.mjs tests/dashboard-product-state.test.mjs ./tests/
+RUN node --check integrations/base44/product/product-client.mjs \
+ && node --check integrations/base44/product/product-state.mjs \
+ && node --check integrations/base44/product/react-bindings.mjs \
+ && node --test tests/dashboard-product-client.test.mjs tests/dashboard-product-state.test.mjs > /tmp/g8s-dashboard-tests.log 2>&1 \
+ || { cat /tmp/g8s-dashboard-tests.log 2>/dev/null; exit 1; }
+RUN cat /tmp/g8s-dashboard-tests.log
+USER node
+CMD ["node", "-e", "const f=require('node:fs'),c=require('node:crypto');const b=f.readFileSync('/tmp/g8s-dashboard-tests.log');console.log('G8S_DASHBOARD_QUALIFICATION '+JSON.stringify({sourceCommit:process.env.RAILWAY_GIT_COMMIT_SHA,deploymentId:process.env.RAILWAY_DEPLOYMENT_ID,bytes:b.length,sha256:c.createHash('sha256').update(b).digest('hex'),summary:b.toString().split('\\n').filter(x=>/^ℹ |^# (tests|pass|fail|skipped|cancelled|todo)/.test(x))}));setInterval(()=>{},60000)"]
