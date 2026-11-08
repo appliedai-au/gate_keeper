@@ -1,0 +1,22 @@
+# Targeted independent HTTP-role qualification; not an archive/learning release recipe.
+FROM caddy:2-alpine AS edge
+FROM node:24.19.0-bookworm-slim
+COPY --from=edge /usr/bin/caddy /usr/bin/caddy
+RUN apt-get update && apt-get install --no-install-recommends -y git postgresql-15 postgresql-client-15 \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund \
+ && npm install --no-save --package-lock=false --no-audit --no-fund @truefoundry/trueforge@0.182.0
+COPY . .
+RUN timeout --signal=TERM --kill-after=10s 180s node --test tests/api-serving*.test.mjs tests/product*.test.mjs tests/client-api*.test.mjs \
+ > /tmp/g8s-api-serving-source.log 2>&1 \
+ || { cat /tmp/g8s-api-serving-source.log; exit 1; }
+RUN cat /tmp/g8s-api-serving-source.log
+RUN /bin/sh scripts/product/qualify-postgres.sh > /tmp/g8s-api-serving-postgres.log 2>&1 \
+ || { cat /tmp/g8s-api-serving-postgres.log; exit 1; }
+RUN /bin/sh scripts/product/qualify-client-api.sh \
+ && chown node:node /tmp/g8s-api-serving-source.log /tmp/g8s-api-serving-postgres.log \
+ /tmp/g8s-client-api-unit.log /tmp/g8s-client-api-postgres.log
+USER node
+CMD ["node", "-e", "const f=require('node:fs'),c=require('node:crypto');for(const name of ['g8s-api-serving-source','g8s-api-serving-postgres','g8s-client-api-unit','g8s-client-api-postgres']){const b=f.readFileSync('/tmp/'+name+'.log');console.log('G8S_API_SERVING_QUALIFICATION '+JSON.stringify({sourceCommit:process.env.RAILWAY_GIT_COMMIT_SHA,deploymentId:process.env.RAILWAY_DEPLOYMENT_ID,stage:name,bytes:b.length,sha256:c.createHash('sha256').update(b).digest('hex'),summary:b.toString().split('\\n').filter(x=>/^ℹ |^# (tests|pass|fail|skipped|cancelled|todo)/.test(x))}));}console.log('G8S_API_SERVING_TARGETED_COMPLETE');setInterval(()=>{},60000)"]
