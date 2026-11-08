@@ -27,6 +27,13 @@ const noStore = Object.freeze({ 'Content-Type': 'application/json', 'Cache-Contr
 const isProductPath = value => typeof value === 'string' &&
   (value === PRODUCT_PATH || value.startsWith(PRODUCT_PATH + '/'));
 
+/** Product bindings belong to this gateway, not its model-serving child.
+ * This filters inherited environment only; it does not claim OS isolation. */
+export function trueforgeTransportEnvironment(env = process.env) {
+  return { ...Object.fromEntries(Object.entries(env).filter(([name]) => !name.startsWith('G8S_'))),
+    HOST: '127.0.0.1', PORT: String(UPSTREAM_PORT) };
+}
+
 function unavailable(_req, res) {
   res.writeHead(503, noStore);
   res.end('{"error":"learning_status_unavailable"}');
@@ -233,7 +240,7 @@ export async function startTrueForgeStatusGateway({ env = process.env, run = spa
   const product = await configuredProduct({ env });
   const child = run(process.execPath, ['node_modules/@truefoundry/trueforge/dist/main.js'], {
     cwd: '/app', stdio: 'inherit',
-    env: { ...env, HOST: '127.0.0.1', PORT: String(UPSTREAM_PORT) },
+    env: trueforgeTransportEnvironment(env),
   });
   const server = createServer(createStatusRoutingHandler({
     statusHandler, proxyHandler: forwardTrueForge, reviewHandler: reviews.handler, productHandler: product.handler,
