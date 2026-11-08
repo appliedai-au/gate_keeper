@@ -1,0 +1,16 @@
+# Synthetic DOM/transport qualification, NOT a hosted Base44 or backend release image.
+FROM node:24.19.0-bookworm-slim
+WORKDIR /qualification
+COPY tests/dashboard-react/package.json ./package.json
+# Fixed direct test dependencies. No lifecycle scripts, application dependency changes or private registry binding.
+RUN npm install --ignore-scripts --no-audit --no-fund \
+ && npm ls --all --json > /tmp/g8s-react-dependencies.json
+COPY integrations/base44/product ./integrations/base44/product
+COPY scripts/product/contracts.mjs scripts/product/github.mjs scripts/product/service.mjs ./scripts/product/
+COPY tests/dashboard-*.test.mjs tests/dashboard-react.integration.mjs ./tests/
+RUN node --check integrations/base44/product/react-bindings.mjs \
+ && timeout --signal=TERM --kill-after=10s 120s node --test tests/dashboard-*.test.mjs tests/dashboard-react.integration.mjs > /tmp/g8s-dashboard-react-tests.log 2>&1 \
+ || { cat /tmp/g8s-dashboard-react-tests.log 2>/dev/null; exit 1; }
+RUN cat /tmp/g8s-dashboard-react-tests.log
+USER node
+CMD ["node", "-e", "const f=require('node:fs'),c=require('node:crypto');const hash=b=>c.createHash('sha256').update(b).digest('hex');const b=f.readFileSync('/tmp/g8s-dashboard-react-tests.log');console.log('G8S_REACT_QUALIFICATION '+JSON.stringify({sourceCommit:process.env.RAILWAY_GIT_COMMIT_SHA,deploymentId:process.env.RAILWAY_DEPLOYMENT_ID,bytes:b.length,sha256:hash(b),lockSha256:hash(f.readFileSync('package-lock.json')),dependenciesSha256:hash(f.readFileSync('/tmp/g8s-react-dependencies.json')),react:require('react/package.json').version,reactDom:require('react-dom/package.json').version,jsdom:require('jsdom/package.json').version,summary:b.toString().split('\\n').filter(x=>/^ℹ |^# (tests|pass|fail|skipped|cancelled|todo)/.test(x))}));setInterval(()=>{},60000)"]
