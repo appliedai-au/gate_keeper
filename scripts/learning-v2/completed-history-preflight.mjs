@@ -30,8 +30,10 @@ export function assertCompletedRoleEnvironment(env, role) {
 
 export function completedChildEnvironment(env) {
   assertCompletedRoleEnvironment(env, 'serve');
+  // This launcher rebuilds the child's environment instead of using the
+  // gateway's options.env, so it must independently exclude product bindings.
   return Object.fromEntries(Object.entries(env).filter(([name]) => !name.startsWith('GK_') &&
-    !name.startsWith('GATEKEEPER_')));
+    !name.startsWith('GATEKEEPER_') && !name.startsWith('G8S_')));
 }
 
 export function verifyCompletedVolume({ env = process.env, currentUid = process.getuid?.(),
