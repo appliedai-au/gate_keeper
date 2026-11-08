@@ -2,7 +2,7 @@
 # Run only in Dockerfile.reviews-qualify on an isolated remote source-gate service.
 # Every stage is mandatory; preserve a nonzero result and bounded log evidence.
 set -eu
-for name in TRUEFORGE_API_KEY TRUEFOUNDRY_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GATEKEEPER_REVIEW_TOKEN GATEKEEPER_LEARNING_READ_TOKEN; do
+for name in TRUEFORGE_API_KEY TRUEFORGE_TOKEN TRUEFOUNDRY_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GATEKEEPER_REVIEW_TOKEN GATEKEEPER_LEARNING_READ_TOKEN G8S_GITHUB_CLIENT_SECRET G8S_GITHUB_APP_PRIVATE_KEY G8S_GITHUB_WEBHOOK_SECRET GK_AUTHORITY_DRIVER_TOKEN; do
   if printenv "$name" >/dev/null 2>&1; then
     echo "Qualification refused: production/provider credential binding is present."
     exit 1
@@ -39,4 +39,7 @@ runuser -u postgres -- /usr/lib/postgresql/15/bin/pg_ctl -D "$gk_pg_dir" -l "$gk
 runuser -u postgres -- /usr/lib/postgresql/15/bin/createdb -h 127.0.0.1 -p 55432 gk_reviews_qualification
 export GK_REVIEWS_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:55432/gk_reviews_qualification
 run_gate real-postgres node --test tests/reviews-postgres.integration.mjs
-echo 'P6 qualification passed: canary, typecheck, scorer selftest, full source suite, real PostgreSQL suite.'
+# A green inherited review suite is not a product concurrency qualification.
+# The product suite uses another empty loopback cluster and independent pools.
+run_gate product-postgres /bin/sh scripts/product/qualify-postgres.sh
+echo 'P6 qualification passed: canary, typecheck, scorer selftest, full source suite, real PostgreSQL suite and G8S product PostgreSQL suite.'
