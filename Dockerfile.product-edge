@@ -1,0 +1,8 @@
+# New product edge composition. Historical Dockerfile.status-proxy and Caddyfile stay unchanged.
+FROM caddy:2-alpine
+WORKDIR /app
+COPY scripts/learning-v2/start-status-proxy.sh /app/scripts/learning-v2/start-status-proxy.sh
+COPY config/g8s-product-edge.Caddyfile /app/config/gatekeeper-status-proxy.Caddyfile
+ENV PORT=8080
+EXPOSE 8080
+CMD ["/bin/sh", "/app/scripts/learning-v2/start-status-proxy.sh"]
