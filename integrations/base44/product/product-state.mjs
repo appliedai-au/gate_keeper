@@ -1,5 +1,6 @@
 import { ProductError } from './product-client.mjs';
 const clone = value => structuredClone(value);
+const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const deepFreeze = value => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -37,25 +38,28 @@ export function createResource(request) {
   return Object.freeze({ getSnapshot: state.getSnapshot, subscribe: state.subscribe, load, clear });
 }
 
-/** save/read return {value, revision}. Drafts edited during save are never replaced. */
+/** save/read return {value: object, revision}. Drafts edited during save are never replaced. */
 export function createEditor({ save, read }) {
   const empty = () => ({ status: 'empty', baseline: null, draft: null, revision: null, dirty: false, error: null });
   const state = atom(empty()); let generation = 0, editVersion = 0, pending = false, controller = null;
   function clear() { generation++; controller?.abort(); controller = null; pending = false; editVersion = 0; state.set(empty()); }
   function seed({ value, revision = null }) {
     if (pending || state.getSnapshot().status === 'readback_required') throw new Error('Use reconcile for a pending or uncertain write.');
+    if (!record(value)) throw new ProductError('invalid_request');
     generation++; editVersion = 0;
     state.set({ status: 'ready', baseline: clone(value), draft: clone(value), revision, dirty: false, error: null });
   }
   function edit(value) {
-    const current = state.getSnapshot(); if (current.status === 'empty') throw new Error('Load settings before editing.');
+    const current = state.getSnapshot();
+    if (current.baseline === null) throw new Error('Load settings before editing.');
+    if (!record(value)) throw new ProductError('invalid_request');
     editVersion++;
     state.set({ ...current, draft: clone(value), dirty: !equal(value, current.baseline),
       status: ['saving', 'reconciling', 'readback_required'].includes(current.status) ? current.status : 'ready' });
   }
   async function saveDraft() {
     const current = state.getSnapshot();
-    if (pending || current.status === 'empty' || current.status === 'readback_required') return { blocked: true };
+    if (pending || current.baseline === null || current.status === 'readback_required') return { blocked: true };
     if (!current.dirty) return { unchanged: true };
     const mine = generation, submitted = clone(current.draft), editAtSubmit = editVersion;
     pending = true; controller = new AbortController();
@@ -63,7 +67,7 @@ export function createEditor({ save, read }) {
     try {
       const saved = await save({ value: submitted, revision: current.revision }, { signal: controller.signal });
       if (mine !== generation) return { applied: false };
-      if (!saved || !Object.hasOwn(saved, 'value')) throw new ProductError('protocol_error', { uncertain: true });
+      if (!record(saved) || !record(saved.value)) throw new ProductError('protocol_error', { uncertain: true });
       const draft = editVersion === editAtSubmit ? clone(saved.value) : state.getSnapshot().draft;
       state.set({ status: 'ready', baseline: clone(saved.value), draft, revision: saved.revision ?? null,
         dirty: !equal(draft, saved.value), error: null });
@@ -84,8 +88,9 @@ export function createEditor({ save, read }) {
     try {
       const saved = await read({}, { signal: controller.signal });
       if (mine !== generation) return { applied: false };
-      if (!saved || !Object.hasOwn(saved, 'value')) throw new ProductError('protocol_error');
-      const draft = previous.status === 'empty' ? clone(saved.value) : state.getSnapshot().draft;
+      if (!record(saved) || !record(saved.value)) throw new ProductError('protocol_error');
+      // An initial failed read changes status, but does not create a baseline.
+      const draft = previous.baseline === null ? clone(saved.value) : state.getSnapshot().draft;
       state.set({ status: 'ready', baseline: clone(saved.value), draft, revision: saved.revision ?? null,
         dirty: !equal(draft, saved.value), error: null }); return { applied: true };
     } catch (error) {
@@ -95,6 +100,24 @@ export function createEditor({ save, read }) {
     } finally { if (mine === generation) { pending = false; controller = null; } }
   }
   return Object.freeze({ getSnapshot: state.getSnapshot, subscribe: state.subscribe, seed, edit, saveDraft, reconcile, clear });
+}
+
+/** The configuration UI never falls back to an unconditional save. */
+export function createConfigurationEditor(request) {
+  const revisionValid = revision => Number.isSafeInteger(revision) && revision >= 1;
+  function checked(saved, uncertain = false) {
+    if (!record(saved) || !record(saved.configuration) || !revisionValid(saved.revision))
+      throw new ProductError('protocol_error', { uncertain });
+    return { value: saved.configuration, revision: saved.revision };
+  }
+  return createEditor({
+    read: async (_input, options) => checked(await request('settings', { section: 'configuration' }, options)),
+    save: async ({ value, revision }, options) => {
+      if (!revisionValid(revision)) throw new ProductError('revision_conflict', { status: 409 });
+      return checked(await request('saveSettings', { section: 'configuration',
+        value: { configuration: value, revision } }, options), true);
+    },
+  });
 }
 
 const administrative = action => ['admin', 'saveLimits', 'savePause'].includes(action);
