@@ -8,6 +8,7 @@ import { createProductWorker } from './worker.mjs';
 import { productReviewRuntime } from './trueforge.mjs';
 import { GITHUB_ID, SHA, PRODUCT_PATH } from './contracts.mjs';
 import { configuredClientApi } from './client-api.mjs';
+import { configuredComparisonApi } from './comparison-api.mjs';
 
 const require = createRequire(import.meta.url);
 const unavailable = () => ({ handler: productUnavailable, start() {}, stop() {}, async close() {} });
@@ -46,7 +47,7 @@ export function productConfiguration(env) {
 /** Disabled by default; no DDL, registration, environment mutation or provider fallback. */
 export async function configuredProduct({ env = process.env } = {}) {
   if (env.G8S_PRODUCT_ENABLED !== 'enabled') return unavailable();
-  let pool, worker, clientApi, service;
+  let pool, worker, clientApi, comparisonApi, service;
   try {
     const config = productConfiguration(env);
     pool = openReviewPool(env);
@@ -57,6 +58,7 @@ export async function configuredProduct({ env = process.env } = {}) {
       callbackUrl: config.apiOrigin + PRODUCT_PATH + '/auth/github/callback' });
     service = createProductService({ store, github, config });
     clientApi = await configuredClientApi({ env, product: store, github, config, fallback: service.handler });
+    comparisonApi = await configuredComparisonApi({ env, product: store, github, config, fallback: clientApi.handler });
     if (config.workerEnabled) {
       if (!env.TRUEFORGE_API_KEY?.trim()) refused();
       const sdkVersion = JSON.parse(readFileSync(require.resolve('@truefoundry/trueforge-sdk/package.json'), 'utf8')).version;
@@ -81,12 +83,12 @@ export async function configuredProduct({ env = process.env } = {}) {
           } catch { return false; }
         } });
     }
-    return { handler: clientApi.handler,
+    return { handler: comparisonApi.handler,
       start() { worker?.start(); },
-      stop() { service.stop(); clientApi.stop(); worker?.stop(); },
-      async close() { service.stop(); clientApi.stop(); worker?.stop(); await worker?.drained(); await pool.end(); } };
+      stop() { service.stop(); clientApi.stop(); comparisonApi.stop(); worker?.stop(); },
+      async close() { service.stop(); clientApi.stop(); comparisonApi.stop(); worker?.stop(); await worker?.drained(); await pool.end(); } };
   } catch {
-    service?.stop(); clientApi?.stop(); worker?.stop();
+    service?.stop(); clientApi?.stop(); comparisonApi?.stop(); worker?.stop();
     if (pool) await pool.end().catch(() => {});
     return unavailable();
   }
