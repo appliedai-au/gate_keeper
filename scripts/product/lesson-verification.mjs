@@ -29,13 +29,10 @@ export function validateLessonChange(change, headSha) {
   if (change === null) return null;
   if (!exact(change, ['beforeSha', 'afterSha', 'diffSha256']) || change.beforeSha !== headSha ||
       !SHA.test(change.afterSha || '') || change.afterSha === headSha || !HASH.test(change.diffSha256 || '')) refuseLesson();
-  // A caller-provided change is a CLAIM until signed runner evidence verifies its actual bytes.
-  return { ...change };
+  return { ...change }; // A claim until signed runner evidence verifies the actual bytes.
 }
-
-/** Bind every review artifact, all latest feedback and the proposed change, not just one chosen quote. */
 export function buildLessonSubject(detail, policy, change = null) {
-  if (!record(detail) || !UUID.test(detail.snapshotId || '') || !HASH.test(detail.payloadHash || '') ||
+  if (!record(detail) || !UUID.test(detail.comparisonId || '') || !UUID.test(detail.snapshotId || '') || !HASH.test(detail.payloadHash || '') ||
       !record(policy) || !Number.isSafeInteger(policy.revision) || policy.revision < 1 ||
       typeof policy.requireAdversarialVerification !== 'boolean' || !record(detail.observedRevision) ||
       !SHA.test(detail.observedRevision.headSha || '') || !SHA.test(detail.observedRevision.baseSha || '') ||
@@ -44,15 +41,13 @@ export function buildLessonSubject(detail, policy, change = null) {
     verdict: row.verdict, rationale: row.rationale, trainingUse: row.trainingUse, linkedItemKey: row.linkedItemKey })).sort((a, b) => a.id.localeCompare(b.id));
   const candidates = feedback.filter(row => row.trainingUse === 'candidate' && !['retracted', 'insufficient_context'].includes(row.verdict));
   if (!candidates.length) refuseLesson('no_learning_candidates', 409);
-  const items = [...detail.g8s.findings, ...detail.gitar.artifacts];
-  const itemKeys = items.map(item => item.key).sort();
-  if (new Set(itemKeys).size !== itemKeys.length || itemKeys.length > 500) refuseLesson();
+  const items = [...detail.g8s.findings, ...detail.gitar.artifacts], itemKeys = items.map(item => item.key).sort();
+  if (new Set(itemKeys).size !== itemKeys.length || itemKeys.length > 600) refuseLesson();
   const selected = new Set(candidates.flatMap(row => [row.itemKey, ...(row.linkedItemKey ? [row.linkedItemKey] : [])]));
   for (const key of selected) {
     const item = items.find(row => row.key === key);
     if (!item) refuseLesson();
-    // General PR dashboards and different-head artifacts are not trusted exact-revision lessons.
-    if (item.source !== 'g8s' && item.binding !== 'head_only') refuseLesson('unbound_lesson_evidence', 409);
+    if (item.source !== 'g8s' && item.revisionBinding !== 'head_only') refuseLesson('unbound_lesson_evidence', 409);
   }
   const subject = { schema: 'g8s-lesson-subject-v1', comparisonId: detail.comparisonId, snapshotId: detail.snapshotId,
     payloadHash: detail.payloadHash, feedbackHash: lessonHash(feedback), policyRevision: policy.revision,
@@ -61,12 +56,11 @@ export function buildLessonSubject(detail, policy, change = null) {
     headSha: detail.observedRevision.headSha, baseSha: detail.observedRevision.baseSha,
     baseBranch: detail.observedRevision.baseBranch, itemKeys,
     candidateFeedbackIds: candidates.map(row => row.id).sort(),
-    change: validateLessonChange(change, detail.observedRevision.headSha), benchmark: 'gitar_process',
-    checks: [...REQUIRED_CHECKS] };
+    change: validateLessonChange(change, detail.observedRevision.headSha), benchmark: 'gitar_process', checks: [...REQUIRED_CHECKS] };
   return { subject, subjectHash: lessonHash(subject), candidates };
 }
 
-/** Trust roots are explicitly commissioned public Ed25519 keys; never accept a caller's key. */
+/** Explicit public trust roots; neither a browser nor a model supplies a verification key. */
 export function verificationTrust(raw) {
   if (raw === undefined || raw === '') return Object.freeze({});
   try {
@@ -74,8 +68,9 @@ export function verificationTrust(raw) {
     if (!record(input) || Object.keys(input).length > 10) throw Error();
     const result = {};
     for (const [id, value] of Object.entries(input)) {
-      if (!/^[a-zA-Z0-9_-]{1,64}$/u.test(id) || !exact(value, ['role', 'publicKey']) ||
-          !['deterministic', 'adversarial'].includes(value.role) || typeof value.publicKey !== 'string' || value.publicKey.length > 2048) throw Error();
+      if (!/^[a-zA-Z0-9_-]{1,64}$/u.test(id) || ['__proto__', 'constructor', 'prototype'].includes(id) ||
+          !exact(value, ['role', 'publicKey']) || !['deterministic', 'adversarial'].includes(value.role) ||
+          typeof value.publicKey !== 'string' || value.publicKey.length > 2048) throw Error();
       const key = createPublicKey(value.publicKey);
       if (key.asymmetricKeyType !== 'ed25519') throw Error();
       result[id] = Object.freeze({ role: value.role, key,
@@ -86,8 +81,8 @@ export function verificationTrust(raw) {
 }
 function authenticatedReceipt(envelope, role, subjectHash, trust, now) {
   if (!exact(envelope, ['keyId', 'payload', 'signature']) || typeof envelope.keyId !== 'string' ||
-      typeof envelope.signature !== 'string' || !/^[A-Za-z0-9_-]{86}$/u.test(envelope.signature) ||
-      !record(envelope.payload)) refuseLesson('verification_required', 409);
+      typeof envelope.signature !== 'string' || !/^[A-Za-z0-9_-]{86}$/u.test(envelope.signature) || !record(envelope.payload))
+    refuseLesson('verification_required', 409);
   const authority = Object.hasOwn(trust, envelope.keyId) ? trust[envelope.keyId] : null;
   if (!authority || authority.role !== role) refuseLesson('verification_required', 409);
   const bytes = Buffer.from(canonicalLesson(envelope.payload));
@@ -103,9 +98,8 @@ function authenticatedReceipt(envelope, role, subjectHash, trust, now) {
     refuseLesson('verification_required', 409);
   return { payload: p, fingerprint: authority.fingerprint, keyId: envelope.keyId, receiptHash: lessonHash(envelope) };
 }
-
 export function verifyLessonAdmission({ subject, subjectHash, evidence, trust, now = Date.now() }) {
-  if (!same(subjectHash, lessonHash(subject)) || !exact(evidence, ['deterministic', 'adversarial'])) refuseLesson();
+  if (subjectHash !== lessonHash(subject) || !exact(evidence, ['deterministic', 'adversarial'])) refuseLesson();
   if (!Object.keys(trust).length) refuseLesson('verification_setup_required', 503);
   const deterministic = authenticatedReceipt(evidence.deterministic, 'deterministic', subjectHash, trust, now);
   const d = deterministic.payload, expectedHead = subject.change?.afterSha ?? subject.headSha;
