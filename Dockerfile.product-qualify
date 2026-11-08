@@ -1,0 +1,24 @@
+# G8S product qualification only: synthetic SDK, disposable PostgreSQL, no credentials.
+# Keep Dockerfile.reviews-qualify and its pinned runner byte-identical for history.
+FROM caddy:2-alpine AS status-proxy
+FROM node:24.19.0-bookworm-slim
+COPY --from=status-proxy /usr/bin/caddy /usr/bin/caddy
+RUN apt-get update && apt-get install --no-install-recommends -y git postgresql-15 postgresql-client-15 \
+  && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --no-audit --no-fund \
+  && npm install --no-save --package-lock=false --no-audit --no-fund @truefoundry/trueforge@0.182.0
+COPY scripts ./scripts
+COPY evals ./evals
+COPY tests ./tests
+COPY integrations ./integrations
+COPY docs ./docs
+COPY agent ./agent
+COPY config ./config
+COPY proof ./proof
+COPY Dockerfile Dockerfile.proof Dockerfile.v2-host Dockerfile.v3-integrated Dockerfile.status-proxy Dockerfile.qualify Dockerfile.reviews-qualify Dockerfile.product-qualify ./
+RUN /bin/sh scripts/product/qualify.sh
+RUN adduser --disabled-password --gecos '' --uid 10001 verifier
+USER verifier
+CMD ["node", "-e", "console.log('G8S complete product and inherited release qualification finished');setInterval(()=>{},60000)"]
