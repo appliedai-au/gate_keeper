@@ -16,9 +16,10 @@ test('full release qualifier requires inherited gates and the product PostgreSQL
     'run_gate canary node --test tests/proof-log-redaction-canary.test.mjs',
     'run_gate typecheck npm run typecheck',
     'run_gate score npm run score -- --selftest',
-    'run_gate full-source npm run test:learning-policy',
+    'run_gate product-source node --test tests/product*.test.mjs',
     'run_gate real-postgres node --test tests/reviews-postgres.integration.mjs',
     'run_gate product-postgres /bin/sh scripts/product/qualify-postgres.sh',
+    'run_gate full-source npm run test:learning-policy',
   ];
   let previous = -1;
   for (const line of required) {
@@ -29,6 +30,10 @@ test('full release qualifier requires inherited gates and the product PostgreSQL
   }
   assert.ok(source.indexOf("echo 'P6 qualification passed:") > previous);
   assert.match(source, /exit "\$gate_result"/u, 'a failing stage must preserve its nonzero status');
+  assert.match(source, /full-source\) gate_deadline=90m/u, 'full suite budget must cover its observed accepted runtime');
+  assert.match(source, /timeout --signal=TERM --kill-after=30s "\$gate_deadline"/u);
+  assert.match(source, /cleanup\ntrap - EXIT INT TERM\nunset GK_REVIEWS_TEST_DATABASE_URL\nrun_gate full-source/u,
+    'the full suite must retain its database-free environment');
 });
 
 test('product database qualifier is pinned to disposable loopback and runs the independent-pool suite', () => {
