@@ -24,6 +24,8 @@ const CONFIG_PATH = '/var/lib/gk-v2-private-journal/status-config.json';
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 const reject = reason => { throw new Error('GK_STATUS_ROUTER_REFUSED: ' + reason); };
 const noStore = Object.freeze({ 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' });
+const isProductPath = value => typeof value === 'string' &&
+  (value === PRODUCT_PATH || value.startsWith(PRODUCT_PATH + '/'));
 
 function unavailable(_req, res) {
   res.writeHead(503, noStore);
@@ -69,19 +71,19 @@ export function createStatusRoutingHandler({ statusHandler, proxyHandler, review
     try {
       const rawPath = target.split('?')[0];
       pathname = new URL(target, 'http://localhost').pathname;
-      // Strict canonical check only for paths that could resolve to the product
-      // prefix; ordinary TrueForge routes keep their previous behaviour.
-      const mayBeProduct = pathname.startsWith(PRODUCT_PATH) || /product-v1/iu.test(rawPath) ||
-        /%/u.test(rawPath) && decodeURIComponent(rawPath).startsWith(PRODUCT_PATH);
-      if (mayBeProduct) {
-        const decoded = decodeURIComponent(rawPath);
-        if (/%(?:2f|5c|25)/iu.test(rawPath) || decoded.includes('\\') ||
-            decoded.split('/').some(segment => segment === '.' || segment === '..'))
-          throw new Error('noncanonical_path');
+      let decoded = null;
+      try { decoded = decodeURIComponent(rawPath); } catch { /* Unrelated proxy paths stay opaque. */ }
+      // Classify exact prefix boundaries, including aliases that normalize out
+      // of or into the product route. Never reject unrelated transport just
+      // because it contains a percent sign or the words "product-v1".
+      const mayBeProduct = isProductPath(pathname) || isProductPath(rawPath) || isProductPath(decoded);
+      if (mayBeProduct && (decoded === null || decoded !== rawPath || pathname !== rawPath ||
+          decoded.includes('\\') || decoded.split('/').some(segment => segment === '.' || segment === '..'))) {
+        throw new Error('noncanonical_path');
       }
     }
     catch { res.writeHead(400, noStore); res.end('{"error":"bad_request"}'); return; }
-    const isProduct = pathname === PRODUCT_PATH || pathname.startsWith(PRODUCT_PATH + '/');
+    const isProduct = isProductPath(pathname);
     if (pathname === LEARNING_STATUS_PATH || pathname === REVIEW_PATH || isProduct) {
       const handler = isProduct ? productHandler : pathname === LEARNING_STATUS_PATH ? statusHandler : reviewHandler;
       void Promise.resolve(handler(req, res)).catch(() => {
@@ -115,8 +117,8 @@ export function forwardTrueForge(req, res, createRequest = httpRequest) {
       failResponse();
     };
     // pipe() handles backpressure, but does not forward readable failures.
-    // Once headers were sent, end the broken stream without inventing a
-    // successful HTTP/SSE terminator or retrying the upstream operation.
+    // Once headers were sent, end the broken stream without an invented
+    // successful HTTP/SSE terminator or retry of the upstream operation.
     incoming.once('aborted', truncated);
     incoming.on('error', truncated);
     incoming.once('close', () => {
