@@ -1,4 +1,8 @@
+import { ProductError } from './product-client.mjs';
 import { createResource, createConfigurationEditor, createDashboardSession } from './product-state.mjs';
+
+// Auto-loading hooks are for reports only. Mutations and exports require explicit UI actions.
+const REPORT_ACTIONS = Object.freeze(['overview', 'reviews', 'run', 'settings', 'repositories', 'admin']);
 
 /** Pass the application's existing React instance; do not install a second React. */
 export function createDashboardBindings(React) {
@@ -9,7 +13,9 @@ export function createDashboardBindings(React) {
     state.session.user.id, state.organization?.id ?? null, state.organization?.slug ?? null, state.session.isAdmin]) : state.status;
 
   function Provider({ client, initialSlug, children }) {
-    const model = useMemo(() => createDashboardSession(client), [client]);
+    // A route change must start with an empty model during render, not briefly
+    // expose the previous org until a passive refresh effect runs.
+    const model = useMemo(() => createDashboardSession(client), [client, initialSlug]);
     useEffect(() => { void model.refreshSession(initialSlug); return () => model.reset(); }, [model, initialSlug]);
     return createElement(Context.Provider, { value: model }, children);
   }
@@ -19,31 +25,62 @@ export function createDashboardBindings(React) {
     const state = useStore(model);
     return { model, state, scopeKey: scope(state) };
   }
+  // Captured snapshot identity also distinguishes same-org reauthentication.
+  // Mount custody prevents a saved callback from reviving an unmounted view.
+  function scopedCall(model, session, enabled = true) {
+    const lifetime = { active: false };
+    const current = () => lifetime.active && enabled && session.status === 'ready' && model.getSnapshot() === session;
+    const request = (...args) => {
+      if (!current()) throw new ProductError('aborted');
+      return model.call(...args);
+    };
+    return { lifetime, current, request };
+  }
   function useReport(action, params = {}, { enabled = true } = {}) {
-    const { model, state: session, scopeKey } = useDashboard();
+    const { model, state: session } = useDashboard();
+    if (!REPORT_ACTIONS.includes(action)) throw new ProductError('invalid_request');
     // Parameters must be small serializable UI filters, never secret/authority data.
     const serialized = JSON.stringify(params);
-    const resource = useMemo(() => createResource((input, options) => model.call(action, input, options)),
-      [model, action, scopeKey, serialized, enabled]);
-    useEffect(() => model.track(resource), [model, resource]);
+    const handle = useMemo(() => {
+      const bound = scopedCall(model, session, enabled);
+      return { ...bound, resource: createResource((input, options) => bound.request(action, input, options)) };
+    }, [model, action, session, serialized, enabled]);
+    const { resource } = handle;
     useEffect(() => {
-      if (enabled && session.status === 'ready') void resource.load(JSON.parse(serialized));
+      handle.lifetime.active = true;
+      const untrack = model.track(resource);
+      return () => { handle.lifetime.active = false; untrack(); };
+    }, [model, handle, resource]);
+    useEffect(() => {
+      if (handle.current()) void resource.load(JSON.parse(serialized));
       else resource.clear();
       return () => resource.clear();
-    }, [resource, enabled, session.status, serialized]);
+    }, [handle, resource, serialized]);
     const result = useStore(resource);
-    return { ...result, reload: () => enabled && session.status === 'ready'
+    return { ...result, reload: () => handle.current()
       ? resource.load(JSON.parse(serialized)) : Promise.resolve({ blocked: true }) };
   }
   function useConfigurationEditor() {
-    const { model, state: session, scopeKey } = useDashboard();
-    const editor = useMemo(() => createConfigurationEditor((...args) => model.call(...args)), [model, scopeKey]);
-    useEffect(() => model.track(editor), [model, editor]);
+    const { model, state: session } = useDashboard();
+    const handle = useMemo(() => {
+      const bound = scopedCall(model, session);
+      return { ...bound, editor: createConfigurationEditor(bound.request) };
+    }, [model, session]);
+    const { editor } = handle;
     useEffect(() => {
-      if (session.status === 'ready') void editor.reconcile();
+      handle.lifetime.active = true;
+      const untrack = model.track(editor);
+      return () => { handle.lifetime.active = false; untrack(); };
+    }, [model, handle, editor]);
+    useEffect(() => {
+      if (handle.current()) void editor.reconcile();
       return () => editor.clear();
-    }, [editor, session.status]);
-    return { ...useStore(editor), edit: editor.edit, save: editor.saveDraft, readBack: editor.reconcile };
+    }, [handle, editor]);
+    return { ...useStore(editor),
+      edit(value) { if (!handle.current()) throw new ProductError('aborted'); editor.edit(value); },
+      save: () => handle.current() ? editor.saveDraft() : Promise.resolve({ blocked: true }),
+      readBack: () => handle.current() ? editor.reconcile() : Promise.resolve({ blocked: true }),
+    };
   }
   /** The existing UI renders the controls. No redirects or writes occur during render. */
   return Object.freeze({ Provider, useDashboard, useReport, useConfigurationEditor });
