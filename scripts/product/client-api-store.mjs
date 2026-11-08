@@ -86,7 +86,10 @@ export class ClientApiStore {
       ON CONFLICT(owner_user_id,window_start) DO UPDATE SET requests=g8s_product.client_rate_windows.requests+1
       WHERE g8s_product.client_rate_windows.requests<$2 RETURNING requests`, [user.id, this.requestsPerMinute]);
     if (!result.rows.length) fail('rate_limited', 429);
-    await this.pool.query(`DELETE FROM g8s_product.client_rate_windows WHERE owner_user_id=$1
+    // Only an insert returns one; all updates increment an existing positive
+    // count. Concurrent callers therefore prune at most once per owner/minute.
+    // Do not cache authority across this check, GitHub I/O and final admission.
+    if (result.rows[0].requests === 1) await this.pool.query(`DELETE FROM g8s_product.client_rate_windows WHERE owner_user_id=$1
       AND window_start<clock_timestamp()-interval '1 day'`, [user.id]);
   }
   async repository(principal, slug, repositoryId, scope, client = this.pool, lock = false) {
