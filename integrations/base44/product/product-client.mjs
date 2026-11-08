@@ -23,7 +23,7 @@ const messages = Object.freeze({
   quota_exceeded: 'The run allowance has been reached.',
   runs_paused: 'New review runs are paused.',
   rate_limited: 'Requests are temporarily limited. Try the read again later.',
-  export_too_large: 'Choose a shorter date range for the export.',
+  export_too_large: 'This organization export exceeds the supported size.',
   aborted: 'The read was cancelled.', timeout: 'The read timed out. Try again.',
   network_error: 'The service could not be reached. Check the connection.',
   protocol_error: 'The service returned an unexpected response.',
@@ -94,7 +94,10 @@ function route(action, p, now) {
     case 'removeMember':
       if (p.confirmed !== true) invalid();
       return { path: orgPath(p) + '/members/' + segment(p.id, UUID), method: 'DELETE', body: {} };
-    case 'auditExport': return { path: orgPath(p) + '/audit/export', filters: reportFilters(p.filters, now), csv: true };
+    case 'auditExport':
+      // The current backend exports the organization audit, not a filtered range.
+      if (p.filters !== undefined) invalid();
+      return { path: orgPath(p) + '/settings/audit/export', csv: true };
     case 'admin':
       if (!ADMIN_SECTIONS.includes(p.section)) invalid();
       return { path: '/admin/' + p.section, filters: reportFilters(p.filters, now) };
@@ -167,7 +170,8 @@ export function createProductClient({ baseUrl, mode = 'preview', fetcher = globa
         return { filename: 'g8s-audit.csv', text: await responseText(response) };
       }
       if (type !== 'application/json') throw new ProductError('protocol_error');
-      let payload; try { payload = JSON.parse(await responseText(response)); }
+      const raw = await responseText(response);
+      let payload; try { payload = JSON.parse(raw); }
       catch { throw new ProductError('protocol_error'); }
       if (!response.ok) throw new ProductError(record(payload?.error) ? payload.error.code : 'product_unavailable',
         { status, uncertain: writing && status >= 500 });
@@ -176,7 +180,7 @@ export function createProductClient({ baseUrl, mode = 'preview', fetcher = globa
       return payload.data;
     } catch (error) {
       const code = status === 401 ? 'unauthenticated' : status === 403 ? 'forbidden' :
-        error instanceof ProductError ? error.code : timedOut ? 'timeout' : abort.signal.aborted ? 'aborted' : 'network_error';
+        timedOut ? 'timeout' : abort.signal.aborted ? 'aborted' : error instanceof ProductError ? error.code : 'network_error';
       const uncertain = writing && dispatched && (status === 0 || status >= 500 || status >= 200 && status < 300);
       throw new ProductError(code, { status, uncertain });
     } finally { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); abort.abort(); }
