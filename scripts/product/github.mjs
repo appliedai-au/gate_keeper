@@ -94,12 +94,12 @@ export function createGitHubClient({ appId, clientId, clientSecret, privateKey, 
     const body = Buffer.from(JSON.stringify({ iat: now - 30, exp: now + 480, iss: appId })).toString('base64url');
     return `${head}.${body}.${sign('RSA-SHA256', Buffer.from(`${head}.${body}`), signingKey).toString('base64url')}`;
   }
-  async function api(path, authorization, { method = 'GET', body, accepted = [200] } = {}) {
+  async function api(path, authorization, { method = 'GET', body, accepted = [200], signal } = {}) {
     if (!path.startsWith('/') || path.startsWith('//') || /[\u0000-\u0020\\]/u.test(path)) throw failure();
     let response;
     try {
       response = await fetchImpl('https://api.github.com' + path, { method, redirect: 'error',
-        signal: timeout(), headers: { Accept: 'application/vnd.github+json',
+        signal: signal ? AbortSignal.any([signal, timeout()]) : timeout(), headers: { Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'G8S-Gatekeeper',
           Authorization: `Bearer ${authorization}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -163,8 +163,6 @@ export function createGitHubClient({ appId, clientId, clientSecret, privateKey, 
     const actual = await api(`/app/installations/${installationId}`, appAuthorization());
     if (String(actual.app_id) !== appId || actual.suspended_at ||
         String(actual.account?.id) !== String(installation.account.id)) throw failure('installation_not_authorized', 403);
-    // An attacker-controlled callback id is never sufficient. These are the
-    // selected repositories that this authenticated user can actually access.
     const repositories = (await paged(`/user/installations/${installationId}/repositories`, authorization, 'repositories'))
       .filter(repository => repository.permissions?.push === true || repository.permissions?.maintain === true || repository.permissions?.admin === true)
       .map(projectRepository);
@@ -174,10 +172,10 @@ export function createGitHubClient({ appId, clientId, clientSecret, privateKey, 
       repositorySelection: actual.repository_selection }, repositories };
   }
 
-  async function installationClient(installationId, repositoryId = null) {
-    if (!GITHUB_ID.test(installationId) || repositoryId !== null &&
+  async function installationClient(installationId, repositoryId = null, { readOnly = false } = {}) {
+    if (typeof readOnly !== 'boolean' || !GITHUB_ID.test(installationId) || repositoryId !== null &&
         (!GITHUB_ID.test(repositoryId) || !Number.isSafeInteger(Number(repositoryId)))) throw failure();
-    const requested = { permissions: { contents: 'read', pull_requests: 'write', issues: 'read', metadata: 'read' },
+    const requested = { permissions: { contents: 'read', pull_requests: readOnly ? 'read' : 'write', issues: 'read', metadata: 'read' },
       ...(repositoryId === null ? {} : { repository_ids: [Number(repositoryId)] }) };
     const receipt = await api(`/app/installations/${installationId}/access_tokens`, appAuthorization(),
       { method: 'POST', body: requested, accepted: [201] });
@@ -212,9 +210,6 @@ export function createGitHubClient({ appId, clientId, clientSecret, privateKey, 
       async files(fullName, baseSha, headSha, expectedFileCount) {
         if (!SHA.test(baseSha || '') || !SHA.test(headSha || '') || !Number.isSafeInteger(expectedFileCount) ||
             expectedFileCount < 1 || expectedFileCount > 300) throw failure('pull_request_too_large', 422);
-        // GitHub compares exact commit identities across the repository network,
-        // including fork heads. Never fall back to mutable branch names or a live
-        // paginated PR-files snapshot that can mix two revisions.
         const comparison = await api(`${repositoryPath(fullName)}/compare/${baseSha}...${headSha}`, authorization);
         return comparisonFiles(comparison, baseSha, headSha, expectedFileCount);
       },
@@ -228,13 +223,37 @@ export function createGitHubClient({ appId, clientId, clientSecret, privateKey, 
           if (bytes.length > 16000) throw failure('repository_instructions_invalid', 422);
           return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
         } catch (error) {
-          // Only an absent file is optional; access/transport failures stay closed.
           if (error.code === 'github_not_found') return '';
           throw error;
         }
       },
+      /** Read source artifacts, not an imitation of Gitar. No dispatch or inference. */
+      async comparisonEvidence(fullName, number) {
+        const root = pullPath(fullName, number), deadline = AbortSignal.timeout(20000);
+        let bytes = 0;
+        const collect = async path => {
+          const rows = [], ids = new Set();
+          for (let page = 1; page <= 5; page++) {
+            if (deadline.aborted) throw failure();
+            const batch = await api(`${path}?per_page=100&page=${page}`, authorization, { signal: deadline });
+            if (!Array.isArray(batch) || batch.length > 100) throw failure('invalid_github_response');
+            for (const row of batch) {
+              if (!numericId(row?.id) || ids.has(String(row.id))) throw failure('invalid_github_response');
+              ids.add(String(row.id)); rows.push(row);
+            }
+            bytes += Buffer.byteLength(JSON.stringify(batch));
+            if (bytes > 2 * 1024 * 1024) throw failure('github_response_too_large');
+            if (batch.length < 100) return rows;
+          }
+          // A full last page does not prove that no further page exists.
+          throw failure('github_response_too_large');
+        };
+        return { reviews: await collect(root + '/reviews'), inline: await collect(root + '/comments'),
+          comments: await collect(`${repositoryPath(fullName)}/issues/${number}/comments`) };
+      },
       // Call only AFTER a durable post intent. No automatic retry or repair.
       async postReview(fullName, number, body) {
+        if (readOnly) throw failure('github_access_denied', 403);
         const receipt = await api(`${pullPath(fullName, number)}/reviews`, authorization,
           { method: 'POST', body, accepted: [200] });
         if (!numericId(receipt.id) || !SHA.test(receipt.commit_id || '') ||
