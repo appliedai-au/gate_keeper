@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
-import { createProductClient, ProductError, PRODUCT_PATH, reportFilters, costDisplay, githubPullRequestHref } from '../integrations/base44/product/product-client.mjs';
+import { createProductClient, PRODUCT_PATH, reportFilters, costDisplay, githubPullRequestHref } from '../integrations/base44/product/product-client.mjs';
 import { parseFilters } from '../scripts/product/contracts.mjs';
 import { createProductService } from '../scripts/product/service.mjs';
 import { sha256 } from '../scripts/product/github.mjs';
@@ -79,7 +79,8 @@ test('arbitrary routes, product aliases and unconfirmed destructive actions are 
   for (const [action, params] of [['https://foreign.test', {}], ['run', { slug: '../admin', id: ID }],
     ['settings', { slug: 'team', section: '../users' }], ['saveRepository', { slug: 'team', id: ID, value: {} }],
     ['disableAllRepositories', { slug: 'team' }], ['removeMember', { slug: 'team', id: ID }],
-    ['savePause', { paused: false, reason: '', confirmed: true }]]) await assert.rejects(c.call(action, params), { code: 'invalid_request' });
+    ['savePause', { paused: false, reason: '', confirmed: true }],
+    ['auditExport', { slug: 'team', filters: { from: '2026-10-01' } }]]) await assert.rejects(c.call(action, params), { code: 'invalid_request' });
   assert.equal(calls, 0);
 });
 
@@ -128,7 +129,8 @@ test('abort before dispatch issues no request; timeout after dispatch marks a wr
 test('audit CSV stays inert text with a fixed filename', async () => {
   const csv = '"Timestamp","User"\r\n"test","name"\r\n';
   const c = client(async (url) => {
-    assert.equal(new URL(url).pathname, PRODUCT_PATH + '/orgs/team/audit/export');
+    assert.equal(new URL(url).pathname, PRODUCT_PATH + '/orgs/team/settings/audit/export');
+    assert.equal(new URL(url).search, '');
     return new Response(csv, { headers: { 'Content-Type': 'text/csv; charset=utf-8' } });
   });
   assert.deepEqual(await c.call('auditExport', { slug: 'team' }), { filename: 'g8s-audit.csv', text: csv });
@@ -151,8 +153,10 @@ test('client talks to actual product handlers with synthetic cookie/origin trans
     adminGithubIds: new Set(), githubClientId: 'TEST_ONLY', githubAppSlug: 'test-only', webhookSecret: 'test-only' }, github: {},
     store: {
       async getSession(hash) { assert.equal(hash, sha256(sessionToken)); return { user: { id: ID, githubId: '101', login: 'test' }, organizations: [] }; },
+      async membership(userId, slug) { assert.equal(userId, ID); assert.equal(slug, 'team'); return { id: 'TEST_ONLY_ORG' }; },
       async overview(userId, slug, filters) { calls.push({ userId, slug, filters }); return { hasData: false, filters }; },
       async resolveFinding(userId, slug, id, value) { calls.push({ userId, slug, id, value }); return { id, ...value }; },
+      async exportAudit() { return { entries: [] }; },
     } });
   t.after(() => service.stop());
   const c = client(async (url, options) => {
@@ -171,5 +175,6 @@ test('client talks to actual product handlers with synthetic cookie/origin trans
   assert.equal((await c.call('overview', { slug: 'team', filters: { merged: false } })).hasData, false);
   assert.deepEqual(await c.call('finding', { slug: 'team', id: ID, status: 'closed' }), { id: ID, status: 'closed' });
   assert.equal(calls[0].slug, 'team'); assert.equal(calls[0].filters.merged, false);
+  assert.match((await c.call('auditExport', { slug: 'team' })).text, /^"Timestamp"/u);
   await assert.rejects(c.call('admin', { section: 'users' }), { code: 'forbidden', status: 403 });
 });
