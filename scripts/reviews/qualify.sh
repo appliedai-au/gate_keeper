@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run only in Dockerfile.reviews-qualify on an isolated remote source-gate service.
-# Every stage is mandatory; preserve a nonzero result and bounded log evidence.
+# Every stage is mandatory; preserve a nonzero result and complete log evidence.
 set -eu
 for name in TRUEFORGE_API_KEY TRUEFORGE_TOKEN TRUEFOUNDRY_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GATEKEEPER_REVIEW_TOKEN GATEKEEPER_LEARNING_READ_TOKEN G8S_GITHUB_CLIENT_SECRET G8S_GITHUB_APP_PRIVATE_KEY G8S_GITHUB_WEBHOOK_SECRET GK_AUTHORITY_DRIVER_TOKEN; do
   if printenv "$name" >/dev/null 2>&1; then
@@ -11,11 +11,21 @@ done
 run_gate() {
   gate_name=$1
   shift
-  if "$@" >"/tmp/gk-p6-$gate_name.log" 2>&1; then
-    tail -n 160 "/tmp/gk-p6-$gate_name.log"
-  else
-    gate_result=$?
-    cat "/tmp/gk-p6-$gate_name.log"
+  gate_log="/tmp/gk-p6-$gate_name.log"
+  printf '\nG8S_QUAL_STAGE_START %s\n' "$gate_name"
+  # The complete synthetic log remains in the image. Stream it as well so a
+  # hanging test cannot hide all evidence until the build eventually expires.
+  # This wrapper deadline is a failure (124), never a skip or a passing result.
+  timeout --signal=TERM --kill-after=30s 20m "$@" >"$gate_log" 2>&1 &
+  gate_pid=$!
+  tail --pid="$gate_pid" -n +1 -f "$gate_log" &
+  gate_tail=$!
+  if wait "$gate_pid"; then gate_result=0; else gate_result=$?; fi
+  # tail follows only the local synthetic log and exits after the command ends.
+  wait "$gate_tail" || true
+  printf 'G8S_QUAL_STAGE_END %s exit=%s\n' "$gate_name" "$gate_result"
+  if [ "$gate_result" -ne 0 ]; then
+    tail -n 160 "$gate_log"
     exit "$gate_result"
   fi
 }
