@@ -668,3 +668,9 @@ test("real CLI rejects legacy paid run before S3 once-claim; no environment esca
   assert.match(source, /if \(mode === "provider-remove"\) await guardRunOnce\(process\.env\)/);
   assert.doesNotMatch(source, /if \(mode === "compare"\) await guardRunOnce/);
 });
+
+test("pollValidation never reports PASS for a finished job with no level results", async () => {
+  const r = await pollValidation({ status: "done", rounds: [] }, { intervalMs: 5 });
+  assert.equal(r.terminal, true);
+  assert.equal(r.verdict, "FAIL");
+});
