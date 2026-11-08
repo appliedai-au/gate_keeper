@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { ClientApiStore, validateIdempotency } from './client-api-store.mjs';
 import { ProductError } from './store.mjs';
 import { UUID, SHA } from './contracts.mjs';
-import { normalizeComparator, comparatorIdentity, validateFeedback, comparisonDigest, comparisonSummary } from './comparison-contract.mjs';
+import { normalizeComparator, comparatorIdentity, validateFeedback, comparisonDigest, comparisonSummary, COMPARISON_LIMITS } from './comparison-contract.mjs';
 
 const fail = (code = 'invalid_request', status = 400) => { throw new ProductError(code, status); };
 const uuid = value => typeof value === 'string' && UUID.test(value);
@@ -72,12 +72,18 @@ export class ComparisonStore {
     return this.product.transaction(client => this.runContext(principal, slug, runId, client));
   }
   async capture(principal, slug, runId, { evidence, observedRevision, expectedG8sDigest }) {
-    if (!observedRevision || typeof observedRevision.repositoryId !== 'string' || !Number.isSafeInteger(observedRevision.prNumber) ||
-        !SHA.test(observedRevision.headSha || '') || !SHA.test(observedRevision.baseSha || '')) fail();
+    if (!observedRevision || typeof observedRevision !== 'object' || Array.isArray(observedRevision) ||
+        Object.keys(observedRevision).sort().join(',') !== 'baseBranch,baseSha,headSha,prNumber,repositoryId' ||
+        typeof observedRevision.repositoryId !== 'string' || !Number.isSafeInteger(observedRevision.prNumber) ||
+        typeof observedRevision.headSha !== 'string' || !SHA.test(observedRevision.headSha) ||
+        typeof observedRevision.baseSha !== 'string' || !SHA.test(observedRevision.baseSha) ||
+        typeof observedRevision.baseBranch !== 'string' || observedRevision.baseBranch.length < 1 || observedRevision.baseBranch.length > 250) fail();
     return this.product.transaction(async client => {
       const ctx = await this.runContext(principal, slug, runId, client);
       if (ctx.g8sDigest !== expectedG8sDigest || observedRevision.repositoryId !== ctx.repository.github_repo_id ||
-          observedRevision.prNumber !== ctx.run.pr_number) fail('revision_changed', 409);
+          observedRevision.prNumber !== ctx.run.pr_number || observedRevision.headSha !== ctx.run.head_sha ||
+          observedRevision.baseSha !== ctx.run.base_sha || observedRevision.baseBranch !== ctx.run.base_branch)
+        fail('revision_changed', 409);
       const artifacts = normalizeComparator(evidence, { fullName: ctx.repository.full_name, prNumber: ctx.run.pr_number,
         headSha: ctx.run.head_sha, identity: this.identity });
       const payload = { schemaVersion: 1, repositoryId: ctx.repository.github_repo_id, repository: ctx.repository.full_name,
@@ -85,7 +91,7 @@ export class ComparisonStore {
         gitar: { identity: this.identity, artifacts, collection: 'bounded_github_rest_lists',
           model: null, costUsd: null, baseBinding: 'not_provided_by_github_review' },
         independence: 'not_verified', trainingPromoted: false };
-      if (Buffer.byteLength(JSON.stringify(payload)) > 1024 * 1024) fail('comparison_too_large', 413);
+      if (Buffer.byteLength(JSON.stringify(payload)) > COMPARISON_LIMITS.snapshotBytes) fail('comparison_too_large', 413);
       const hash = comparisonDigest(payload);
       // Per-owner quota and per-run snapshots serialize without a read-before-insert race.
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['g8s-comparison:' + ctx.user.id]);
@@ -147,8 +153,8 @@ export class ComparisonStore {
         WHERE comparison_id=$1 AND ($2::int IS NULL OR version=$2) ORDER BY version DESC LIMIT 1`, [id, version])).rows[0];
       if (!snapshot) fail('not_found', 404);
       const events = (await client.query(`SELECT * FROM g8s_product.comparison_feedback WHERE snapshot_id=$1
-        ORDER BY created_at,id LIMIT 2001`, [snapshot.id])).rows;
-      if (events.length > 2000) fail('comparison_limit', 409);
+        ORDER BY created_at,id LIMIT $2`, [snapshot.id, COMPARISON_LIMITS.feedbackEvents + 1])).rows;
+      if (events.length > COMPARISON_LIMITS.feedbackEvents) fail('comparison_limit', 409);
       const latest = new Map();
       for (const event of events) if ((latest.get(event.item_key)?.revision ?? 0) < event.revision) latest.set(event.item_key, event);
       const labels = [...latest.values()].map(projectFeedback);
@@ -177,7 +183,7 @@ export class ComparisonStore {
       if (!items.some(item => item.key === body.itemKey) || body.linkedItemKey !== null && !items.some(item => item.key === body.linkedItemKey)) fail();
       const events = (await client.query(`SELECT count(*)::int AS count,COALESCE(max(revision) FILTER(WHERE item_key=$2),0)::int AS revision
         FROM g8s_product.comparison_feedback WHERE snapshot_id=$1`, [snapshot.id, body.itemKey])).rows[0];
-      if (events.count >= 2000) fail('comparison_limit', 409);
+      if (events.count >= COMPARISON_LIMITS.feedbackEvents) fail('comparison_limit', 409);
       if (events.revision !== body.expectedRevision) fail('revision_conflict', 409);
       const saved = (await client.query(`INSERT INTO g8s_product.comparison_feedback
         (id,comparison_id,snapshot_id,owner_user_id,org_id,item_key,revision,verdict,rationale,training_use,linked_item_key,idempotency_hash,request_hash)
