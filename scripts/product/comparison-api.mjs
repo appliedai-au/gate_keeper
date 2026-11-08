@@ -1,6 +1,7 @@
 import { PRODUCT_PATH, SLUG, UUID } from './contracts.mjs';
 import { clientPrincipal } from './client-api.mjs';
 import { ComparisonStore } from './comparison-store.mjs';
+import { comparisonCandidates, COMPARISON_LIMITS } from './comparison-contract.mjs';
 
 export const COMPARISON_PATH = PRODUCT_PATH + '/comparison-v1';
 const fail = (code, status) => { throw Object.assign(new Error(code), { code, status }); };
@@ -41,7 +42,7 @@ export function createComparisonApi({ store, github, config, fallback }) {
     const cors = req.headers.origin === config.frontendOrigin
       ? { 'Access-Control-Allow-Origin': config.frontendOrigin, 'Access-Control-Allow-Credentials': 'true' } : {};
     const body = JSON.stringify(value);
-    if (Buffer.byteLength(body) > 4 * 1024 * 1024) fail('comparison_too_large', 413);
+    if (Buffer.byteLength(body) > COMPARISON_LIMITS.responseBytes) fail('comparison_too_large', 413);
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store, max-age=0',
       'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', Vary: 'Origin',
       'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'", ...cors,
@@ -93,7 +94,7 @@ export function createComparisonApi({ store, github, config, fallback }) {
         if (stopped) fail('product_unavailable', 503);
         const captured = await store.capture(principal, slug, body.runId, { evidence, expectedG8sDigest: ctx.g8sDigest,
           observedRevision: { repositoryId: ctx.repository.github_repo_id, prNumber: ctx.run.pr_number,
-            headSha: after.head.sha, baseSha: after.base.sha } });
+            headSha: after.head.sha, baseSha: after.base.sha, baseBranch: after.base.ref } });
         return send(req, res, 200, { data: { ...captured, reviewersTriggered: false, trainingStarted: false } });
       }
       if (parts.length === 4 && req.method === 'GET') return send(req, res, 200, { data: await store.detail(principal, slug, id,
@@ -106,14 +107,7 @@ export function createComparisonApi({ store, github, config, fallback }) {
         { data: await store.feedback(principal, slug, id, await readBody(req), req.headers['idempotency-key']) });
       if (parts.length === 5 && parts[4] === 'candidates' && req.method === 'GET') {
         const detail = await store.detail(principal, slug, id);
-        const items = [...detail.g8s.findings, ...detail.gitar.artifacts];
-        return send(req, res, 200, { data: { comparisonId: id, snapshotId: detail.snapshotId, payloadHash: detail.payloadHash,
-          headSha: detail.g8s.headSha, baseSha: detail.g8s.baseSha,
-          candidates: detail.feedback.filter(label => label.trainingUse === 'candidate' && label.verdict !== 'retracted')
-            .map(label => ({ feedback: label, item: items.find(item => item.key === label.itemKey),
-              linkedItem: label.linkedItemKey ? items.find(item => item.key === label.linkedItemKey) : null })),
-          automaticTrainingEligible: false, blockers: ['independence_not_verified', 'comparator_base_not_verified', 'held_out_evaluation_required'],
-          trainingStarted: false } });
+        return send(req, res, 200, { data: comparisonCandidates({ ...detail, comparisonId: id }) });
       }
       fail('not_found', 404);
     } catch (error) {
