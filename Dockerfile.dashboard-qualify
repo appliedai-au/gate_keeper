@@ -3,11 +3,11 @@ FROM node:24.19.0-bookworm-slim
 WORKDIR /qualification
 COPY integrations/base44/product ./integrations/base44/product
 COPY scripts/product/contracts.mjs scripts/product/github.mjs scripts/product/service.mjs ./scripts/product/
-COPY tests/dashboard-product-client.test.mjs tests/dashboard-product-state.test.mjs ./tests/
+COPY tests/dashboard-*.test.mjs ./tests/
 RUN node --check integrations/base44/product/product-client.mjs \
  && node --check integrations/base44/product/product-state.mjs \
  && node --check integrations/base44/product/react-bindings.mjs \
- && node --test tests/dashboard-product-client.test.mjs tests/dashboard-product-state.test.mjs > /tmp/g8s-dashboard-tests.log 2>&1 \
+ && timeout --signal=TERM --kill-after=10s 120s node --test tests/dashboard-*.test.mjs > /tmp/g8s-dashboard-tests.log 2>&1 \
  || { cat /tmp/g8s-dashboard-tests.log 2>/dev/null; exit 1; }
 RUN cat /tmp/g8s-dashboard-tests.log
 USER node
