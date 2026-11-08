@@ -166,7 +166,8 @@ export async function pollValidation(job, { intervalMs = 250, timeoutMs = 120000
   const byLevel = {};
   for (const res of flat) (byLevel[res.level] ||= []).push(res.status);
   const levels = Object.fromEntries(Object.entries(byLevel).map(([k, s]) => [k, s.every((x) => x === "PASS") ? "PASS" : s.some((x) => x === "PASS") ? "FLAKY" : "FAIL"]));
-  const verdict = job.status !== "done" ? "ERROR" : Object.values(levels).every((s) => s === "PASS") ? "PASS" : "FAIL";
+  // A finished job with no level results proves nothing; never report that as PASS.
+  const verdict = job.status !== "done" ? "ERROR" : Object.keys(levels).length === 0 ? "FAIL" : Object.values(levels).every((s) => s === "PASS") ? "PASS" : "FAIL";
   return { terminal: true, polls, status: job.status, verdict, levels, waited_ms: Date.now() - start };
 }
 
