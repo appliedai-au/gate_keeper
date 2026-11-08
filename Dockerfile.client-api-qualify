@@ -7,7 +7,8 @@ RUN printf '%s\n' '{"name":"g8s-client-api-qualification","private":true,"type":
  && npm install --ignore-scripts --no-audit --no-fund --save-exact pg@8.16.3 \
  && npm ls --all --json > /tmp/g8s-client-api-dependencies.json
 COPY scripts/product ./scripts/product
-COPY tests/client-api.test.mjs tests/client-api-postgres.integration.mjs ./tests/
-RUN /bin/sh scripts/product/qualify-client-api.sh
+COPY tests/client-api*.test.mjs tests/client-api-postgres.integration.mjs ./tests/
+RUN /bin/sh scripts/product/qualify-client-api.sh \
+ && chown node:node /tmp/g8s-client-api-unit.log /tmp/g8s-client-api-postgres.log
 USER node
-CMD ["node", "-e", "const fs=require('node:fs'),c=require('node:crypto');const sha=b=>c.createHash('sha256').update(b).digest('hex');for(const stage of ['unit','postgres']){const b=fs.readFileSync('/tmp/g8s-client-api-'+stage+'.log');console.log('G8S_CLIENT_API_QUALIFICATION '+JSON.stringify({sourceCommit:process.env.RAILWAY_GIT_COMMIT_SHA,deploymentId:process.env.RAILWAY_DEPLOYMENT_ID,stage,bytes:b.length,sha256:sha(b),lockSha256:sha(fs.readFileSync('package-lock.json')),pg:require('pg/package.json').version,summary:b.toString().split('\\n').filter(x=>/^ℹ |^# (tests|pass|fail|skipped|cancelled|todo)/.test(x))}));}console.log('G8S_CLIENT_API_TARGETED_COMPLETE');setInterval(()=>{},60000)"]
+CMD ["node", "-e", "const fs=require('node:fs'),c=require('node:crypto');const sha=b=>c.createHash('sha256').update(b).digest('hex');if(!/^[a-f0-9]{40}$/.test(process.env.RAILWAY_GIT_COMMIT_SHA||''))throw Error('source identity missing');for(const stage of ['unit','postgres']){const b=fs.readFileSync('/tmp/g8s-client-api-'+stage+'.log');console.log('G8S_CLIENT_API_QUALIFICATION '+JSON.stringify({sourceCommit:process.env.RAILWAY_GIT_COMMIT_SHA,deploymentId:process.env.RAILWAY_DEPLOYMENT_ID,stage,bytes:b.length,sha256:sha(b),lockSha256:sha(fs.readFileSync('package-lock.json')),dependenciesSha256:sha(fs.readFileSync('/tmp/g8s-client-api-dependencies.json')),pg:JSON.parse(fs.readFileSync('node_modules/pg/package.json')).version,summary:b.toString().split('\\n').filter(x=>/^ℹ |^# (tests|pass|fail|skipped|cancelled|todo)/.test(x))}));}console.log('G8S_CLIENT_API_TARGETED_COMPLETE');setInterval(()=>{},60000)"]
