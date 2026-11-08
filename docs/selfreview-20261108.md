@@ -37,6 +37,6 @@ Checked by reading the code at `6775548` (and running Node where a behaviour cla
 ## What this does and does not show
 
 - It shows Gate Keeper can find genuine, minor defects in real production code, including one fail-open verdict, at a cost of well under US$1 per full pass.
-- Of the 15 checked, 6 were real, 5 were false alarms and 4 were unresolved: roughly 40% precision on what was checked, with the highest-confidence finding (0.8) a false alarm. Confidence did not rank real above false in this sample.
+- Of the 15 findings checked, 7 were real, 4 were false alarms, 1 was likely unreachable and 3 were unresolved. The two revision-check findings are the same issue in two files and are counted as two findings, as they were reported. That is roughly 47% precision on what was checked (7 of 15; 7 of 12 if the 3 unresolved are set aside), with the highest-confidence finding (0.8) a false alarm. Confidence did not rank real above false in this sample.
 - It does not show recall, because there is no list of the real defects in this code.
 - One model, one pass, no repair outcomes. The findings above are candidates for fix PRs, not fixed.
