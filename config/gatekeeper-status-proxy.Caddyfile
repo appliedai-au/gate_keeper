@@ -21,6 +21,13 @@
 		reverse_proxy http://{$UPSTREAM_HOST}:{$UPSTREAM_PORT}
 	}
 
+	# This prefix authenticates browser sessions and signed GitHub webhooks itself.
+	# No general proxy credentials or owner review capability is injected.
+	@product path /gatekeeper/product-v1 /gatekeeper/product-v1/*
+	handle @product {
+		reverse_proxy http://{$UPSTREAM_HOST}:{$UPSTREAM_PORT}
+	}
+
 	# All original TrueForge routes retain the existing Basic Auth credentials.
 	handle {
 		basic_auth {

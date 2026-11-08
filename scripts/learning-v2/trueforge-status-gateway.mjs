@@ -15,6 +15,9 @@ import { createReadOnlyStatusHandler } from './status-listener.mjs';
 import { REVIEW_PATH } from '../../integrations/base44/shared/review-contract.js';
 import { configuredReviews } from '../reviews/runtime.mjs';
 import { reviewUnavailable } from '../reviews/service.mjs';
+import { PRODUCT_PATH } from '../product/contracts.mjs';
+import { configuredProduct } from '../product/runtime.mjs';
+import { productUnavailable } from '../product/service.mjs';
 
 const UPSTREAM_PORT = 8790;
 const CONFIG_PATH = '/var/lib/gk-v2-private-journal/status-config.json';
@@ -50,7 +53,8 @@ export function configuredStatusHandler({ env = process.env, readConfig = readSt
 }
 
 /** Dedicated scoped routes precede unchanged ordinary TrueForge transport. */
-export function createStatusRoutingHandler({ statusHandler, proxyHandler, reviewHandler = reviewUnavailable }) {
+export function createStatusRoutingHandler({ statusHandler, proxyHandler, reviewHandler = reviewUnavailable,
+  productHandler = productUnavailable }) {
   if (typeof statusHandler !== 'function' || typeof proxyHandler !== 'function') reject('invalid handler');
   return (req, res) => {
     const target = req.url;
@@ -62,12 +66,22 @@ export function createStatusRoutingHandler({ statusHandler, proxyHandler, review
       return;
     }
     let pathname;
-    try { pathname = new URL(target, 'http://localhost').pathname; }
+    try {
+      const rawPath = target.split('?')[0];
+      const decoded = decodeURIComponent(rawPath);
+      // A public prefix must never normalize into an ordinary TrueForge route
+      // after the outer proxy has selected its independent-auth handler.
+      if (/%(?:2f|5c|25)/iu.test(rawPath) || decoded.includes('\\') ||
+          decoded.split('/').some(segment => segment === '.' || segment === '..'))
+        throw new Error('noncanonical_path');
+      pathname = new URL(target, 'http://localhost').pathname;
+    }
     catch { res.writeHead(400, noStore); res.end('{"error":"bad_request"}'); return; }
-    if (pathname === LEARNING_STATUS_PATH || pathname === REVIEW_PATH) {
-      const handler = pathname === LEARNING_STATUS_PATH ? statusHandler : reviewHandler;
+    const isProduct = pathname === PRODUCT_PATH || pathname.startsWith(PRODUCT_PATH + '/');
+    if (pathname === LEARNING_STATUS_PATH || pathname === REVIEW_PATH || isProduct) {
+      const handler = isProduct ? productHandler : pathname === LEARNING_STATUS_PATH ? statusHandler : reviewHandler;
       void Promise.resolve(handler(req, res)).catch(() => {
-        if (!res.headersSent) (pathname === LEARNING_STATUS_PATH ? unavailable : reviewUnavailable)(req, res);
+        if (!res.headersSent) (isProduct ? productUnavailable : pathname === LEARNING_STATUS_PATH ? unavailable : reviewUnavailable)(req, res);
         else res.destroy();
       });
     } else {
@@ -210,15 +224,17 @@ export async function startTrueForgeStatusGateway({ env = process.env, run = spa
       port === 8791) reject('invalid external port');
   const shutdownGraceMs = configuredShutdownGraceMs(env);
   const reviews = await configuredReviews({ env });
+  const product = await configuredProduct({ env });
   const child = run(process.execPath, ['node_modules/@truefoundry/trueforge/dist/main.js'], {
     cwd: '/app', stdio: 'inherit',
     env: { ...env, HOST: '127.0.0.1', PORT: String(UPSTREAM_PORT) },
   });
   const server = createServer(createStatusRoutingHandler({
-    statusHandler, proxyHandler: forwardTrueForge, reviewHandler: reviews.handler,
+    statusHandler, proxyHandler: forwardTrueForge, reviewHandler: reviews.handler, productHandler: product.handler,
   }));
-  const lifecycle = superviseTrueForgeGateway({ server, child, shutdownGraceMs, onStopping: reviews.stop });
-  void lifecycle.stopped.then(() => reviews.close()).catch(() => {});
+  const lifecycle = superviseTrueForgeGateway({ server, child, shutdownGraceMs,
+    onStopping() { reviews.stop(); product.stop(); } });
+  void lifecycle.stopped.then(() => Promise.allSettled([reviews.close(), product.close()])).catch(() => {});
   try {
     await new Promise((resolve, fail) => {
       server.once('error', fail);
@@ -231,5 +247,6 @@ export async function startTrueForgeStatusGateway({ env = process.env, run = spa
     await lifecycle.stop();
     throw error;
   }
+  product.start();
   return { server, child };
 }
