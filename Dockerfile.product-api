@@ -1,0 +1,18 @@
+# The same G8S application, HTTP role only. No archive mount, model credential or worker.
+FROM node:24.19.0-bookworm-slim
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund \
+ && npm install --no-save --package-lock=false --no-audit --no-fund @truefoundry/trueforge@0.182.0
+COPY scripts ./scripts
+COPY integrations ./integrations
+COPY agent ./agent
+COPY config ./config
+ENV NODE_ENV=production STANDALONE=false PORT=8080 G8S_API_SERVICE=enabled \
+ G8S_PRODUCT_ENABLED=disabled G8S_PRODUCT_WORKER_ENABLED=disabled G8S_CLIENT_API_ENABLED=disabled
+USER node
+EXPOSE 8080
+# Liveness only. /readyz and the startup receipt separately report API readiness.
+HEALTHCHECK --interval=20s --timeout=5s --start-period=30s --retries=3 \
+ CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/healthz',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "scripts/product/api-entry.mjs"]
