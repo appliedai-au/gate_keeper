@@ -1,4 +1,4 @@
-import { createResource, createEditor, createDashboardSession } from './product-state.mjs';
+import { createResource, createConfigurationEditor, createDashboardSession } from './product-state.mjs';
 
 /** Pass the application's existing React instance; do not install a second React. */
 export function createDashboardBindings(React) {
@@ -24,7 +24,7 @@ export function createDashboardBindings(React) {
     // Parameters must be small serializable UI filters, never secret/authority data.
     const serialized = JSON.stringify(params);
     const resource = useMemo(() => createResource((input, options) => model.call(action, input, options)),
-      [model, action, scopeKey, serialized]);
+      [model, action, scopeKey, serialized, enabled]);
     useEffect(() => model.track(resource), [model, resource]);
     useEffect(() => {
       if (enabled && session.status === 'ready') void resource.load(JSON.parse(serialized));
@@ -32,21 +32,12 @@ export function createDashboardBindings(React) {
       return () => resource.clear();
     }, [resource, enabled, session.status, serialized]);
     const result = useStore(resource);
-    return { ...result, reload: () => resource.load(JSON.parse(serialized)) };
+    return { ...result, reload: () => enabled && session.status === 'ready'
+      ? resource.load(JSON.parse(serialized)) : Promise.resolve({ blocked: true }) };
   }
   function useConfigurationEditor() {
     const { model, state: session, scopeKey } = useDashboard();
-    const editor = useMemo(() => createEditor({
-      read: async (_input, options) => {
-        const saved = await model.call('settings', { section: 'configuration' }, options);
-        return { value: saved.configuration, revision: saved.revision };
-      },
-      save: async ({ value, revision }, options) => {
-        const saved = await model.call('saveSettings', { section: 'configuration',
-          value: { configuration: value, revision } }, options);
-        return { value: saved.configuration, revision: saved.revision };
-      },
-    }), [model, scopeKey]);
+    const editor = useMemo(() => createConfigurationEditor((...args) => model.call(...args)), [model, scopeKey]);
     useEffect(() => model.track(editor), [model, editor]);
     useEffect(() => {
       if (session.status === 'ready') void editor.reconcile();
