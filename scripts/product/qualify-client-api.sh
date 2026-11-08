@@ -13,7 +13,7 @@ for name in DATABASE_URL PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGSERVICE PG
   fi
 done
 [ "$(id -u)" -eq 0 ] || exit 1
-if timeout --signal=TERM --kill-after=10s 180s node --test tests/client-api.test.mjs > /tmp/g8s-client-api-unit.log 2>&1; then
+if timeout --signal=TERM --kill-after=10s 180s node --test tests/client-api*.test.mjs > /tmp/g8s-client-api-unit.log 2>&1; then
   cat /tmp/g8s-client-api-unit.log
 else
   result=$?; cat /tmp/g8s-client-api-unit.log; exit "$result"
