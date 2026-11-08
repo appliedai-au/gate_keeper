@@ -7,6 +7,7 @@ import { ProductStore, DEFAULT_CONFIGURATION } from '../scripts/product/store.mj
 import { ComparisonStore } from '../scripts/product/comparison-store.mjs';
 import { tokenHash } from '../scripts/product/client-api-store.mjs';
 import { createComparisonApi, COMPARISON_PATH } from '../scripts/product/comparison-api.mjs';
+import { COMPARISON_LIMITS } from '../scripts/product/comparison-contract.mjs';
 
 if (process.env.G8S_COMPARISON_POSTGRES_TEST !== 'isolated-loopback') throw new Error('Explicit isolated comparison qualification required');
 for (const name of ['DATABASE_URL','PGHOST','PGPORT','PGDATABASE','PGUSER','PGPASSWORD','PGSERVICE','PGSERVICEFILE','PGPASSFILE',
@@ -20,7 +21,7 @@ const identity = { userId: '901', login: 'test-reviewer[bot]' };
 const evidence = (body = 'PRIVATE_SYNTHETIC_COMPARATOR_BODY') => ({ reviews: [{ id: 11,
   user: { id: 901, login: identity.login, type: 'Bot' }, state: 'COMMENTED', body, commit_id: head,
   submitted_at: '2026-11-08T12:00:00Z', pull_request_url: 'https://api.github.com/repos/owner-alpha/repository/pulls/7' }], inline: [], comments: [] });
-const observedRevision = { repositoryId: '101', prNumber: 7, headSha: head, baseSha: base };
+const observedRevision = { repositoryId: '101', prNumber: 7, headSha: head, baseSha: base, baseBranch: 'main' };
 const options = { connectionString: 'postgresql://g8s_comparison_qualification@127.0.0.1:55435/g8s_comparison_qualification',
   max: 10, connectionTimeoutMillis: 3000, statement_timeout: 5000, query_timeout: 8000,
   application_name: 'g8s-comparison-isolated-test' };
@@ -55,9 +56,10 @@ test('real PostgreSQL comparison capture, feedback and privacy controls', { time
   async function makeRun(n, state = 'complete') {
     await pool.query(`INSERT INTO g8s_product.webhook_deliveries(delivery_id,event,payload,payload_hash,status)
       VALUES($1,'synthetic_test',$2,$3,'processed')`, [uuid(n),JSON.stringify({ test: n }),tokenHash('test:'+n)]);
+    // The same synthetic identity is a UUID run ID and TEXT delivery FK: cast each explicitly.
     await pool.query(`INSERT INTO g8s_product.runs(id,owner_user_id,org_id,repository_id,installation_id,delivery_id,pr_number,
       head_sha,base_sha,base_branch,title,pr_url,trigger,dedup_key,state,result,finished_at,model)
-      VALUES($1,$2,$3,$4,$5,$1,7,$6,$7,'main','Synthetic PR','https://github.com/owner-alpha/repository/pull/7',
+      VALUES($1::uuid,$2,$3,$4,$5,$1::text,7,$6,$7,'main','Synthetic PR','https://github.com/owner-alpha/repository/pull/7',
         'pull_request',$8,$9,$10,clock_timestamp(),'synthetic-model')`,
     [uuid(n),uuid(101),uuid(102),uuid(104),uuid(103),head,base,'test:'+n,state,JSON.stringify({ summary: 'Synthetic G8S review', risk: 'low', verdict: 'COMMENT' })]);
     await pool.query(`INSERT INTO g8s_product.findings(id,run_id,owner_user_id,org_id,repository_id,pr_number,file,line,end_line,
@@ -75,6 +77,13 @@ test('real PostgreSQL comparison capture, feedback and privacy controls', { time
     await rejects(store.context(b, 'alpha', runId), 'not_found');
     await rejects(store.context({ kind: 'key', hash: 'f'.repeat(64) }, 'alpha', runId), 'forbidden');
   });
+  await t.test('store enforces head, base and branch even when a caller bypasses the HTTP checks', async () => {
+    const value = await input();
+    for (const patch of [{ headSha: 'c'.repeat(40) }, { baseSha: 'd'.repeat(40) }, { baseBranch: 'other' }])
+      await rejects(store.capture(a, 'alpha', runId, { ...value, observedRevision: { ...observedRevision, ...patch } }), 'revision_changed');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM g8s_product.comparison_snapshots')).rows[0].n, 0);
+    await rejects(store.capture(a, 'alpha', runId, { ...value, observedRevision: { ...observedRevision, extra: true } }), 'invalid_request');
+  });
   await t.test('independent pools concurrently import exactly one immutable capture', async () => {
     const value = await input();
     const results = await Promise.all(Array.from({ length: 8 }, (_, n) => (n%2 ? store : other).capture(a, 'alpha', runId, value)));
@@ -84,6 +93,7 @@ test('real PostgreSQL comparison capture, feedback and privacy controls', { time
     captured = results[0]; initialSnapshot = captured.snapshotId;
     const detail = await store.detail(a, 'alpha', captured.comparisonId);
     assert.equal(detail.g8s.headSha, head); assert.equal(detail.g8s.baseSha, base);
+    assert.equal(detail.observedRevision.baseBranch, 'main');
     assert.equal(detail.gitar.artifacts[0].revisionBinding, 'head_only');
     assert.equal(detail.metrics.baseRevisionVerified, false); assert.equal(detail.metrics.winner, null);
     assert.equal((await store.list(a, 'alpha')).comparisons.length, 1);
@@ -169,10 +179,23 @@ test('real PostgreSQL comparison capture, feedback and privacy controls', { time
       const judged = await request('/'+c.comparisonId+'/feedback','POST', label({snapshotId:c.snapshotId,
         linkedItemKey:'g8s:'+uuid(11004)}),'actual-http-judgment-01'); assert.equal(judged.status,200);
       const exported = await request('/'+c.comparisonId+'/candidates'); assert.equal(exported.status,200);
-      assert.equal(exported.body.data.candidates.length,1); assert.equal(exported.body.data.automaticTrainingEligible,false);
-      assert.equal(exported.body.data.trainingStarted,false);
+      assert.equal(exported.body.data.candidates.length,1); assert.equal(exported.body.data.items.length,2);
+      assert.equal(exported.body.data.automaticTrainingEligible,false); assert.equal(exported.body.data.trainingStarted,false);
       const read = await request('/'+c.comparisonId); assert.equal(read.body.data.metrics.winner,null);
     } finally { api.stop(); await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();}); }
+  });
+  await t.test('maximum feedback history remains readable and the next write refuses without damage', async () => {
+    const boundedRun = await makeRun(1005);
+    const capturedBound = await store.capture(a,'alpha',boundedRun,await input(boundedRun));
+    const body = label({ snapshotId:capturedBound.snapshotId, linkedItemKey:null, rationale:'X'.repeat(4000) });
+    for(let revision=0;revision<COMPARISON_LIMITS.feedbackEvents;revision++) {
+      const saved = await store.feedback(a,'alpha',capturedBound.comparisonId,{...body,expectedRevision:revision},'bounded-history-'+String(revision).padStart(6,'0'));
+      assert.equal(saved.revision,revision+1);
+    }
+    await rejects(store.feedback(a,'alpha',capturedBound.comparisonId,{...body,expectedRevision:COMPARISON_LIMITS.feedbackEvents},'bounded-history-overflow'),'comparison_limit');
+    const detail = await store.detail(a,'alpha',capturedBound.comparisonId);
+    assert.equal(detail.feedbackHistory.length,COMPARISON_LIMITS.feedbackEvents);
+    assert.ok(Buffer.byteLength(JSON.stringify({data:detail})) < COMPARISON_LIMITS.responseBytes);
   });
   await t.test('deleted comparison erases content and labels, keeps a non-recreation tombstone', async () => {
     const value = await input();
