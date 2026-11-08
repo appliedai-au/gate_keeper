@@ -13,9 +13,9 @@ const keyProjection = row => ({ id: row.id, name: row.name, scopes: row.scopes,
   revokedAt: row.revoked_at ? iso(row.revoked_at) : null });
 
 export function validateReviewRequest(body) {
-  if (!exact(body, ['repositoryId', 'prNumber', 'headSha', 'baseSha']) || !GITHUB_ID.test(body.repositoryId || '') ||
-      typeof body.repositoryId !== 'string' || !Number.isSafeInteger(body.prNumber) || body.prNumber < 1 || body.prNumber > 2147483647 ||
-      !SHA.test(body.headSha || '') || !SHA.test(body.baseSha || '')) fail();
+  if (!exact(body, ['repositoryId', 'prNumber', 'headSha', 'baseSha']) || typeof body.repositoryId !== 'string' ||
+      !GITHUB_ID.test(body.repositoryId) || !Number.isSafeInteger(body.prNumber) || body.prNumber < 1 || body.prNumber > 2147483647 ||
+      typeof body.headSha !== 'string' || !SHA.test(body.headSha) || typeof body.baseSha !== 'string' || !SHA.test(body.baseSha)) fail();
   return { repositoryId: body.repositoryId, prNumber: body.prNumber, headSha: body.headSha, baseSha: body.baseSha };
 }
 export function validateKeyRequest(body) {
@@ -55,8 +55,8 @@ export class ClientApiStore {
     if (rows.length !== 1 || rows[0].version !== 1) fail('setup_required', 503);
   }
   async identity(principal, client = this.pool, lock = false) {
-    if (!object(principal) || !['session', 'key'].includes(principal.kind) || !/^[0-9a-f]{64}$/u.test(principal.hash || ''))
-      fail('unauthenticated', 401);
+    if (!object(principal) || !['session', 'key'].includes(principal.kind) || typeof principal.hash !== 'string' ||
+        !/^[0-9a-f]{64}$/u.test(principal.hash)) fail('unauthenticated', 401);
     const session = principal.kind === 'session';
     const query = session
       ? `SELECT u.*,NULL::uuid AS key_id,NULL::uuid AS key_org,NULL::text[] AS repository_ids,NULL::text[] AS scopes
@@ -125,12 +125,13 @@ export class ClientApiStore {
     if (principal.kind !== 'session') fail('forbidden', 403);
     const { user, org } = await this.authority(principal, slug, 'reviews:read');
     const rows = (await this.pool.query(`SELECT * FROM g8s_product.client_keys
-      WHERE owner_user_id=$1 AND org_id=$2 ORDER BY created_at DESC,id DESC LIMIT 100`, [user.id, org.id])).rows;
-    return { keys: rows.map(keyProjection) };
+      WHERE owner_user_id=$1 AND org_id=$2
+      ORDER BY (revoked_at IS NULL AND expires_at>clock_timestamp()) DESC,created_at DESC,id DESC LIMIT 101`, [user.id, org.id])).rows;
+    return { keys: rows.slice(0, 100).map(keyProjection), hasMoreHistory: rows.length > 100 };
   }
   async revokeKey(principal, slug, id) {
     if (principal.kind !== 'session') fail('forbidden', 403);
-    if (!UUID.test(id || '')) fail();
+    if (typeof id !== 'string' || !UUID.test(id)) fail();
     return this.product.transaction(async client => {
       const { user, org } = await this.authority(principal, slug, 'reviews:write', null, client, true);
       const row = (await client.query(`UPDATE g8s_product.client_keys SET revoked_at=COALESCE(revoked_at,clock_timestamp())
@@ -190,7 +191,7 @@ export class ClientApiStore {
     });
   }
   async run(principal, slug, id) {
-    if (!UUID.test(id || '')) fail('not_found', 404);
+    if (typeof id !== 'string' || !UUID.test(id)) fail('not_found', 404);
     const auth = await this.authority(principal, slug, 'reviews:read');
     const row = (await this.pool.query(`SELECT p.github_repo_id FROM g8s_product.runs r
       JOIN g8s_product.repositories p ON p.id=r.repository_id AND p.owner_user_id=r.owner_user_id AND p.org_id=r.org_id
