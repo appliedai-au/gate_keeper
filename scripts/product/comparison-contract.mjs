@@ -3,6 +3,8 @@ import { GITHUB_ID, UUID, SHA, ACTOR_LOGIN, validPath } from './contracts.mjs';
 import { ProductError } from './store.mjs';
 
 export const COMPARISON_VERSION = 1;
+export const COMPARISON_LIMITS = Object.freeze({ feedbackEvents: 200, rationaleJsonBytes: 4096,
+  snapshotBytes: 1024 * 1024, responseBytes: 4 * 1024 * 1024 });
 export const VERDICTS = Object.freeze(['valid_defect', 'false_positive', 'intentional', 'duplicate',
   'already_fixed', 'insufficient_context', 'severity_correction', 'retracted']);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -58,7 +60,7 @@ export function normalizeComparator(evidence, { fullName, prNumber, headSha, ide
         reviewedHeadSha = raw.original_commit_id;
       }
       bytes += Buffer.byteLength(JSON.stringify(raw));
-      if (bytes > 1024 * 1024 || artifacts.length >= 500) fail('comparison_too_large', 413);
+      if (bytes > COMPARISON_LIMITS.snapshotBytes || artifacts.length >= 500) fail('comparison_too_large', 413);
       artifacts.push({ key, source: 'gitar', kind: sourceKind, sourceId: String(raw.id),
         actor: { userId: identity.userId, login: identity.login }, body: raw.body,
         rawDigest: comparisonDigest(raw), sourceUpdatedAt: observedAt,
@@ -81,11 +83,24 @@ export function validateFeedback(body) {
       typeof body.snapshotId !== 'string' || !UUID.test(body.snapshotId) || !comparisonKey(body.itemKey) ||
       !Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 0 || body.expectedRevision > 100000 ||
       !VERDICTS.includes(body.verdict) || !text(body.rationale, 4000, 1) || !body.rationale.trim() ||
+      Buffer.byteLength(JSON.stringify(body.rationale)) > COMPARISON_LIMITS.rationaleJsonBytes ||
       !['excluded', 'candidate'].includes(body.trainingUse) ||
       body.linkedItemKey !== null && (!comparisonKey(body.linkedItemKey) || body.linkedItemKey.split(':')[0] === body.itemKey.split(':')[0]) ||
       body.verdict === 'retracted' && body.trainingUse !== 'excluded') fail();
   return { snapshotId: body.snapshotId, itemKey: body.itemKey, expectedRevision: body.expectedRevision,
     verdict: body.verdict, rationale: body.rationale.trim(), trainingUse: body.trainingUse, linkedItemKey: body.linkedItemKey };
+}
+
+/** Export referenced artifacts once, not once per feedback edge to a shared item. */
+export function comparisonCandidates(detail) {
+  const candidates = detail.feedback.filter(label => label.trainingUse === 'candidate' && label.verdict !== 'retracted');
+  const keys = new Set(candidates.flatMap(label => [label.itemKey, label.linkedItemKey]).filter(Boolean));
+  const items = [...detail.g8s.findings, ...detail.gitar.artifacts].filter(item => keys.has(item.key));
+  if (new Set(items.map(item => item.key)).size !== keys.size) fail('product_unavailable', 503);
+  return { comparisonId: detail.comparisonId, snapshotId: detail.snapshotId, payloadHash: detail.payloadHash,
+    headSha: detail.g8s.headSha, baseSha: detail.g8s.baseSha, candidates, items,
+    automaticTrainingEligible: false, blockers: ['independence_not_verified', 'comparator_base_not_verified', 'held_out_evaluation_required'],
+    trainingStarted: false };
 }
 
 export function comparisonSummary(payload, labels = []) {
