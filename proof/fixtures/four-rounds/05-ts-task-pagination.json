@@ -1,0 +1,53 @@
+{
+  "id": "05-ts-task-pagination",
+  "title": "Tenant-scoped task pagination",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "src/api/tasks.ts",
+  "context": "Exports tasks belonging to the authenticated tenant. The cursor means the last task ID already delivered; the next page must start after it. Limit is required to be from 1 to 100.",
+  "code": [
+    "export async function listTasks(request, db, audit) {",
+    "  const tenantId = request.auth.tenantId;",
+    "  const cursor = request.query.cursor;",
+    "  const limit = Number(request.query.limit ?? 50);",
+    "  if (limit < 1 && limit > 100) {",
+    "    return Response.json({ error: \"Invalid limit\" }, { status: 400 });",
+    "  }",
+    "",
+    "  const tasks = await db.task.findMany({",
+    "    where: {",
+    "      tenantId,",
+    "      id: { gte: cursor },",
+    "    },",
+    "    orderBy: { id: \"asc\" },",
+    "    take: limit,",
+    "    select: { id: true, title: true, status: true },",
+    "  });",
+    "  audit.info(\"Task export authorization\", request.headers.authorization);",
+    "  return Response.json({ tasks });",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 5,
+      "categories": [
+        "bug"
+      ],
+      "why": "The condition limit < 1 && limit > 100 can never be true; invalid limits are never rejected."
+    },
+    {
+      "line": 12,
+      "categories": [
+        "bug"
+      ],
+      "why": "An inclusive cursor gte duplicates the last-delivered task on the next page; use exclusive continuation."
+    },
+    {
+      "line": 18,
+      "categories": [
+        "security"
+      ],
+      "why": "Logging the request authorization header can expose a bearer credential in audit logs."
+    }
+  ]
+}

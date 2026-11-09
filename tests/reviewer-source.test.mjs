@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { codeLines, language, fingerprint, post, hints } from '../proof/three-agent/gk-bag.mjs';
+import { composeReviewerInstructions, resolveReviewMode } from '../scripts/review-mode.mjs';
+const prompt = '```javascript\n1 | const x = 1;\n2 | return x;\n3 | }\n```';
+test('review code reads numbered source and language',()=>{assert.equal(codeLines(prompt).get(2),'return x;');assert.equal(language(prompt),'js');});
+test('postprocessing merges adjacent findings and drops structural-only lines',()=>{const r=post(prompt,[{start:1,end:1,comment:'first'},{start:2,end:2,comment:'duplicate'},{start:3,end:3,comment:'brace'}]);assert.equal(r.out.length,1);assert.equal(r.dropped,1);});
+test('review fingerprints are deterministic and hints are only hints',()=>{assert.equal(fingerprint('const value = 1;'),fingerprint('const value = 2;'));assert.ok(Array.isArray(hints(prompt).hints));});
+test('read-only review method composes and rejects unknown modes',()=>{assert.ok(composeReviewerInstructions(new URL('../agent/',import.meta.url).pathname,'adversarial').includes('Adversarial method'));assert.throws(()=>resolveReviewMode({GK_REVIEW_MODE:'execute'}));});
+test('website-linked reports and frozen prompt exist',()=>{for(const p of ['proof/submissions/gk-holdout-20261107-a/report.md','proof/submissions/gk-holdout-20261107-v13/report.md','proof/submissions/gk-live-20261101-g/report.md','proof/submissions/gk-live-20261101-g/summary.json','proof/submissions/gk-playground-deepseek-20261102-a/report.md','proof/submissions/gk-playground-deepseek-20261102-a/summary.json','docs/selfreview-20261108.md','proof/three-agent/gate-keeper-v13.1.md'])assert.ok(existsSync(new URL('../'+p,import.meta.url)),p);});

@@ -1,0 +1,82 @@
+{
+  "schema": "gate-keeper-public-proof-v1",
+  "run_id": "gk-proof-blocked-20261101",
+  "submitted_at": "2026-10-31T14:44:59Z",
+  "result": "BLOCKED",
+  "source": {
+    "repository": "appliedai-au/gate_keeper",
+    "gate_keeper_commit": "d62ae2facaf15b35b8b5a0662c9d8defd385085b",
+    "baseline_instructions_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "gate_keeper_instructions_sha256": "737280171cd0c48c5c2ca4cf84f5c52977e13f15e1127b5d302ad98627c97b83",
+    "scorer_sha256": "8096f1c871b327ba425ff3368cec34fbac400f777a4061f2ff7ae6ac55aecefd"
+  },
+  "environment": {
+    "trueforge_version": "not-connected (SDK @truefoundry/trueforge-sdk 0.180.0 installed; no host reachable)",
+    "model_id": "not-available (none registered or leased to this session)",
+    "provider": "not-available",
+    "sandbox_provider": "not-connected"
+  },
+  "benchmark": {
+    "id": "evals/tasks 01-04 (public, frozen at d62ae2f; digest = `cd evals/tasks && sha256sum *.json | sha256sum`); no owner-private holdout supplied",
+    "sha256": "8dc469adbc4e0606cfa8d891af99fd07f4d3b6dc3fd246e2d3c9c8f2709549d7",
+    "holdout_private": true
+  },
+  "fairness": {
+    "same_model": null,
+    "same_provider": null,
+    "same_inputs": null,
+    "same_scoring": null,
+    "same_limits": null
+  },
+  "arms": {
+    "baseline": {
+      "trials": 0,
+      "defect_recall": null,
+      "precision": null,
+      "explanation_correctness": null,
+      "severity_accuracy": null,
+      "median_latency_ms": null,
+      "total_tokens": null,
+      "actual_cost_usd": null
+    },
+    "gate_keeper": {
+      "trials": 0,
+      "defect_recall": null,
+      "precision": null,
+      "explanation_correctness": null,
+      "severity_accuracy": null,
+      "median_latency_ms": null,
+      "total_tokens": null,
+      "actual_cost_usd": null
+    }
+  },
+  "loop": {
+    "adversarial_review": "BLOCKED",
+    "sandbox_repair": "BLOCKED",
+    "v_model_validation": "BLOCKED",
+    "polling": "BLOCKED",
+    "post_repair_review": "BLOCKED",
+    "rollback_failure_drill": "BLOCKED",
+    "user_lesson_capture": "BLOCKED",
+    "core_candidate_selection": "BLOCKED",
+    "independent_qualification": "BLOCKED"
+  },
+  "evidence": [],
+  "blockers": [
+    "B1: No TrueForge host/URL or token reachable from this session (TRUEFORGE_BASE_URL unset); native-preflight exits HELD TRUEFORGE_HTTPS_URL_REQUIRED. Needs: TrueForge operator.",
+    "B2: No explicitly registered, provider-qualified model confirmed via tf.models.list(); GK_TRUEFORGE_MODEL unset, providers:status reports TrueForge routing NOT_CONFIGURED. Needs: TrueForge model operator.",
+    "B3: No TrueForge-managed sandbox provider or GitHub connector verified; no session/turn/event traces can exist. Needs: sandbox operator.",
+    "B4: No independent budget gateway / signed spending lease (finite total, per-run ceiling, expiry, settlement). Paid inference not started. Needs: budget-gateway operator.",
+    "B5: No independent verifier identity or signing key; no baseline or qualification receipt available. Needs: verifier operator.",
+    "B6: No disposable repair fixture repository authorised for writes, and no owner-private holdout set or private immutable evidence store supplied. Needs: repository owner.",
+    "B7: Arm A (standard TrueForge reviewer) instructions, tools and runtime version not obtainable without B1; baseline_instructions_sha256 is a zero sentinel meaning NOT COLLECTED."
+  ],
+  "limitations": [
+    "BLOCKED: zero trials were run for either arm; every measure is null. This submission contains no measured evidence of Gate Keeper superiority, inferiority or parity.",
+    "fairness.* are null (not applicable): no arm executed, so no like-for-like comparison exists to attest.",
+    "baseline_instructions_sha256 is the all-zero sentinel (not collected), not a real digest.",
+    "holdout_private attests only that no private holdout was accessed or published; evals/tasks/04-ts-fetch.json is flagged holdout but is committed publicly and so cannot serve as an unseen holdout.",
+    "Source-level tests (135/135 pass) and typecheck are code-quality signals only and are not evidence of live capability, review accuracy or repair reliability.",
+    "The structural validator does not authenticate metrics, costs or signatures; no verifier receipt exists for this run."
+  ]
+}

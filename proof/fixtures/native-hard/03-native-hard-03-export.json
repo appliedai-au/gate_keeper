@@ -1,0 +1,107 @@
+{
+  "schema": "gate-keeper-native-hard-v1",
+  "id": "native-hard-03-export",
+  "title": "Tenant export with signed callbacks, cursors and backpressure",
+  "holdout": false,
+  "language": "typescript",
+  "filename": "services/tenant-export.ts",
+  "context": "A server-side tenant export reads immutable objects and row pages for an authenticated tenant. Object keys are prefixed by tenants/<tenantId>/ (including trailing slash). The approved callback host is hooks.example.com or a dot-separated subdomain thereof. The client's Authorization bearer token must never be forwarded to the callback. Page limits are integers from 1 to 500, cursors are the last previously delivered row and MUST be exclusive. A huge page must not cause unbounded parallel object reads. Export-job updates must be tenant scoped.",
+  "code": [
+    "export async function exportPage(req, { db, store, fetcher }) {",
+    "  const tenantId = req.auth.tenantId;",
+    "  const jobId = req.params.jobId;",
+    "  if (!tenantId) return { status: 401 };",
+    "  const job = await db.exportJob.findFirst({",
+    "    where: { id: jobId, tenantId }",
+    "  });",
+    "  if (!job) return { status: 404 };",
+    "  const prefix = \"tenants/\" + tenantId;",
+    "  if (!job.storageKey.startsWith(prefix)) return { status: 403 };",
+    "  const limit = Number(req.query.limit ?? 100);",
+    "  if (limit < 1 && limit > 500) return { status: 400 };",
+    "  const cursor = String(req.query.after ?? \"\");",
+    "  const rows = await db.exportRow.findMany({",
+    "    where: { tenantId, id: { gte: cursor } },",
+    "    orderBy: { id: \"asc\" },",
+    "    take: limit",
+    "  });",
+    "  const callback = new URL(String(req.body.callbackUrl));",
+    "  if (!callback.hostname.endsWith(\"hooks.example.com\")) {",
+    "    return { status: 403, error: \"Callback host denied\" };",
+    "  }",
+    "  const payloads = await Promise.all(rows.map(async (row) => {",
+    "    return await store.getObject(row.storageKey);",
+    "  }));",
+    "  await fetcher(callback.toString(), {",
+    "    method: \"POST\",",
+    "    headers: {",
+    "      \"content-type\": \"application/json\",",
+    "      \"authorization\": req.headers.authorization",
+    "    },",
+    "    body: JSON.stringify({ jobId, payloads })",
+    "  });",
+    "  await db.exportJob.update({",
+    "    where: { id: jobId },",
+    "    data: { state: \"complete\", lastCursor: rows.at(-1)?.id ?? cursor }",
+    "  });",
+    "  return { status: 200, sent: rows.length };",
+    "}"
+  ],
+  "expected": [
+    {
+      "line": 9,
+      "categories": [
+        "security"
+      ],
+      "why": "Missing trailing path separator allows tenant-12 key prefix to accept tenant-123 data."
+    },
+    {
+      "line": 12,
+      "categories": [
+        "bug"
+      ],
+      "why": "Impossible conjunction never validates invalid or out-of-range page limits."
+    },
+    {
+      "line": 15,
+      "categories": [
+        "bug"
+      ],
+      "why": "Inclusive continuation duplicates the previously delivered row; cursor must be strictly exclusive."
+    },
+    {
+      "line": 20,
+      "categories": [
+        "security"
+      ],
+      "why": "Suffix-only hostname check admits attacker-controlled nothooks.example.com rather than a dot-separated subdomain."
+    },
+    {
+      "line": 23,
+      "categories": [
+        "performance"
+      ],
+      "why": "Unbounded parallel object downloads permit memory/concurrency exhaustion when client page limit is abused."
+    },
+    {
+      "line": 30,
+      "categories": [
+        "security"
+      ],
+      "why": "Forwards a tenant bearer credential to a callback endpoint not entitled to the original caller's Authorization token."
+    },
+    {
+      "line": 35,
+      "categories": [
+        "security"
+      ],
+      "why": "Export-job completion update drops tenant constraint and can affect another tenant's job."
+    }
+  ],
+  "hardness": {
+    "realistic_context": true,
+    "seeded_defects": 7,
+    "contains_decoys": true,
+    "public_exploratory": true
+  }
+}

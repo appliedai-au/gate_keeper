@@ -1,0 +1,63 @@
+{
+  "schema": "gate-keeper-baseline-v1",
+  "status": "LOCKED 2026-11-01 by owner instruction ('lock it in as a new baseline; we will tune further afterwards')",
+  "source_run": "gk-live-20261101-g",
+  "report": "proof/submissions/gk-live-20261101-g/report.md",
+  "harness_commit": "9d2c7249836689fbd772069b753e3375e73f6f7b",
+  "models": "agent/models.json",
+  "review_mode": "adversarial (default; GK_REVIEW_MODE=lean selectable)",
+  "benchmark": {
+    "tasks": "public evals/tasks (4) + owner-private holdout v3 (8)",
+    "private_holdout_sha256": "6ea7823d0b18d11d495774915b136c94d3848125f0e594013d07b55a25f70053",
+    "public_benchmark_sha256": "72bcee7d4bdcffe6ce9337f64cadc1ecdd9203d4e7596cd64983aea183708dd2",
+    "scorer_sha256": "8096f1c871b327ba425ff3368cec34fbac400f777a4061f2ff7ae6ac55aecefd",
+    "trials": 2,
+    "grader": "anthropic/claude-fable-5-1, blinded"
+  },
+  "instructions": {
+    "gate_keeper_instructions_sha256": "e2bd56f4c01fa87462156331f58ba60b21fdd8da14daf3f148f8aba3c9585b84",
+    "baseline_instructions_sha256": "59cd16ce41a81706f387efe3972e6f1e1a7c518f821f8ffa3ac37789eeb70741",
+    "output_contract_sha256": "2967a32a90a6b764d2f9d49d8636827e9651257ab79320327c0e97bcf5a15167"
+  },
+  "metrics": {
+    "gate_keeper_sonnet_5_5": {
+      "matched_issues": 48,
+      "expected_issues": 48,
+      "false_positives": 7,
+      "precision": 0.8833,
+      "severity_accuracy": 0.625,
+      "explanation_correctness": 1,
+      "total_tokens": 68451,
+      "median_latency_ms": 6234,
+      "reproducibility_mean_jaccard": 1
+    },
+    "plain_trueforge_sonnet_5_5": {
+      "matched_issues": 48,
+      "expected_issues": 48,
+      "false_positives": 15,
+      "precision": 0.7794,
+      "severity_accuracy": 0.6667,
+      "explanation_correctness": 1,
+      "total_tokens": 44263,
+      "median_latency_ms": 5759.5,
+      "reproducibility_mean_jaccard": 1
+    },
+    "est_cost_per_review_usd": {
+      "gate_keeper_sonnet_5_5": 0.0118,
+      "plain_trueforge_sonnet_5_5": 0.0091
+    }
+  },
+  "repair": {
+    "gate_keeper_sonnet_5_5": {
+      "cycles": 6,
+      "candidates": 6,
+      "first_attempt": 6,
+      "v_model_passing_patch": 6,
+      "oversize_rejections": 0,
+      "attempts": 6
+    },
+    "note": "fixture suite saturated: every arm 6/6 first attempt; harder fixtures needed before repair claims"
+  },
+  "replace_rule": "A tuning change replaces this baseline only when it is run on the same benchmark, grader and trials (or a fresh sealed holdout with the baseline re-run alongside it) and: key issues found stay 48/48 (no lost defect, compared by identity), false positives do not rise, and estimated cost per review rises by no more than the owner accepts. Model changes per role follow the same rule using method@model arms.",
+  "billing": "UNVERIFIED (provider/gateway account not yet confirmed)"
+}
